@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-06-14 (ADR-029 added during Phase 2 first vertical slice)
+**Last updated:** 2026-06-15 (ADR-030 added during first live dev deploy)
 
 ---
 
@@ -60,6 +60,7 @@ Each ADR has:
 | ADR-027 | Delete semantics — hard delete with UI confirm                     | Accepted   |
 | ADR-028 | GSI strategy — none at MVP                                         | Accepted   |
 | ADR-029 | Frontend auth integration library — react-oidc-context             | Accepted   |
+| ADR-030 | Environment-gated table protection + parameterized reserved concurrency | Accepted |
 
 ---
 
@@ -792,6 +793,43 @@ Use **`react-oidc-context`** (the React bindings) on top of **`oidc-client-ts`**
 
 ### Cross-cloud parallel
 `oidc-client-ts` is provider-agnostic — the same library works unchanged against **Azure Entra External ID** and **GCP Identity Platform** by swapping only the `authority` and `client_id`. The React binding pattern (`AuthProvider` + a `useAuth` hook) has direct equivalents in MSAL React (`MsalProvider` + `useMsal`) and Firebase (`useAuthState`), so the architectural shape transfers even where the library does not.
+
+---
+
+## ADR-030: Environment-gated table protection + parameterized reserved concurrency
+
+**Status:** Accepted
+**Date:** 2026-06-15
+
+### Context
+The first live `sam deploy` of the dev stack surfaced two real-account frictions that the architecture's blanket settings (Sections 4.7.3 and 4.7.4) did not account for:
+
+1. **DynamoDB Deletion Protection (§4.7.3) wedges dev rollbacks.** The settings Lambda's create failed (see point 2), so CloudFormation rolled the stack back — and could not delete the `CareerVaultTable` because Deletion Protection was enabled, leaving the stack stuck in `ROLLBACK_FAILED`. Recovery required manually disabling protection and deleting the table out-of-band. Every failed create/update during active dev iteration would repeat this.
+2. **Reserved Concurrency (§4.7.4) is unusable on the default account limit.** Setting `ReservedConcurrentExecutions: 5` was rejected: *"decreases account's UnreservedConcurrentExecution below its minimum value of [10]."* New AWS accounts ship with a total concurrent-execution limit of 10, and Lambda refuses any reservation that would leave fewer than 10 unreserved — so no function can reserve any concurrency until a Service Quotas increase is granted.
+
+Both of the architecture's original intents remain valid: protect irreplaceable career history (§4.7.3) and cap runaway Bedrock cost (§4.7.4). The issue is that both were expressed as unconditional values that don't hold across environments or account states.
+
+### Decision
+Express both as environment/parameter-gated values in the SAM template, preserving the production intent while unblocking dev:
+
+- **Deletion Protection** is gated to **prod only** via a `IsProd` condition (`DeletionProtectionEnabled: !If [IsProd, true, false]`). PITR remains enabled in **all** environments — it is near-zero cost and, unlike Deletion Protection, does not block deletes, so it never wedges a rollback.
+- **Reserved Concurrency** for `settings_lambda` becomes a template **parameter** (`SettingsReservedConcurrency`, default `-1`). `-1` omits the property entirely (via `!If ... !Ref AWS::NoValue`); a positive value applies it. Default-off keeps deploys working on the constrained account; once a concurrency-limit increase lands, the parameter is set to the intended cap (e.g. 5) with no template change.
+
+### Alternatives considered
+- **Keep Deletion Protection on everywhere; recover manually when rollbacks wedge.** Rejected — it makes the inner dev loop hostile, and dev data is throwaway, so the protection buys nothing there.
+- **Drop reserved concurrency from the template entirely.** Rejected — it discards the §4.7.4 cost guard for prod. Parameterizing keeps the guard one config value away.
+- **Request the Service Quotas increase first, keep `5` hard-coded.** Rejected as a blocker — the increase is asynchronous (support-gated) and shouldn't gate first deploys; the parameter lets the value land later without code changes.
+
+### Consequences
+- ✅ Dev deploys roll back cleanly (no stuck `ROLLBACK_FAILED` from a protected table).
+- ✅ Prod still gets Deletion Protection on the table holding real career history.
+- ✅ Deploys succeed on a default-limit account; the cost guard is re-enabled by setting one parameter after a quota increase.
+- ✅ The pattern (env-conditioned protection, parameterized guardrails) extends to future functions' reserved-concurrency caps and to any other prod-only safety setting.
+- ⚠️ Dev has **no** table Deletion Protection — acceptable because dev data is disposable, but worth remembering before pointing anything important at the dev table.
+- ⚠️ Until the account's Lambda concurrency limit is raised, **no** function carries a reserved-concurrency cap; the $10/month billing alarms (§4.1.4) remain the backstop in the interim.
+
+### Cross-cloud parallel
+The "protect prod, stay nimble in dev" gating is universal: **Azure** uses resource locks (`CanNotDelete`) typically applied only to prod resource groups, and Cosmos DB throughput caps per environment; **GCP** uses `deletion_protection` on resources (e.g. Cloud SQL, BigQuery tables) and per-project quota. On every cloud, account/project-level concurrency and throughput quotas start conservative and are raised via a support/quota request — designing the guardrail as a parameter rather than a constant is the portable lesson.
 
 ---
 

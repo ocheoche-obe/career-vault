@@ -26,6 +26,21 @@ Parameters:
     Type: String
     Default: http://localhost:5173
     Description: OAuth2 callback / logout URL for the SPA (localhost for the deferred-hosting slice).
+  SettingsReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for settings_lambda (cost guard, arch §4.7.4). -1 disables it
+      (omits the property) — required on accounts with the new-account default Lambda
+      concurrency limit of 10, where reserving any concurrency leaves <10 unreserved and is
+      rejected. Set to a positive value (e.g. 5) once a Service Quotas increase is in place.
+
+Conditions:
+  # Deletion Protection only in prod (arch §4.7.3 protects irreplaceable career history). In dev
+  # it would wedge the stack in ROLLBACK_FAILED whenever a create/update rolls back. PITR stays
+  # on everywhere — it's near-zero cost and does not block deletes.
+  IsProd: !Equals [!Ref Environment, prod]
+  HasSettingsReservedConcurrency: !Not [!Equals [!Ref SettingsReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -68,7 +83,7 @@ Resources:
       # Career history is irreplaceable; both are near-zero cost (Section 4.7.3).
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
-      DeletionProtectionEnabled: true
+      DeletionProtectionEnabled: !If [IsProd, true, false]
       # AWS-managed KMS key (aws/dynamodb) — satisfies NFR-4.2 at no extra cost, no kms:* on roles.
       SSESpecification:
         SSEEnabled: true
@@ -198,7 +213,10 @@ Resources:
       Handler: handler.handler
       MemorySize: 256
       Timeout: 5
-      ReservedConcurrentExecutions: 5
+      ReservedConcurrentExecutions: !If
+        - HasSettingsReservedConcurrency
+        - !Ref SettingsReservedConcurrency
+        - !Ref AWS::NoValue
       Layers:
         - !Ref SharedLayer
       Environment:
