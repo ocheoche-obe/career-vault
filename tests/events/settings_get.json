@@ -1,0 +1,17 @@
+{
+  "resource": "/settings",
+  "path": "/settings",
+  "httpMethod": "GET",
+  "headers": { "Authorization": "Bearer fake-for-local-invoke" },
+  "requestContext": {
+    "requestId": "local-req-0001",
+    "authorizer": {
+      "claims": {
+        "sub": "local-user-sub-0001",
+        "email": "dev@example.com"
+      }
+    }
+  },
+  "body": null,
+  "isBase64Encoded": false
+}

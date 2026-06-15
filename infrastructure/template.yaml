@@ -1,0 +1,234 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  CareerVault — first vertical slice (auth + GET /settings). Provisions the DynamoDB
+  single table, Cognito User Pool + Hosted UI (ADR-025), a REST API Gateway with a Cognito
+  authorizer, the careervault-shared Lambda layer (ADR-023), and settings_lambda.
+  Chat / resume agent / check-ins / S3 / SES / CloudFront are intentionally out of scope here.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: Deployment environment; suffixes resource names and selects the SSM config path.
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+    Description: POWERTOOLS_LOG_LEVEL for all functions (DEBUG in dev, INFO in prod).
+  CognitoDomainPrefix:
+    Type: String
+    Description: >
+      Prefix for the Cognito Hosted UI domain
+      (<prefix>.auth.<region>.amazoncognito.com). Must be globally unique within the region.
+  CallbackUrl:
+    Type: String
+    Default: http://localhost:5173
+    Description: OAuth2 callback / logout URL for the SPA (localhost for the deferred-hosting slice).
+
+Globals:
+  Function:
+    Runtime: python3.13
+    MemorySize: 512
+    Timeout: 30
+    Tracing: Active
+    Architectures:
+      - arm64
+    Tags:
+      Project: CareerVault
+      Environment: !Ref Environment
+      ManagedBy: SAM
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        POWERTOOLS_LOG_LEVEL: !Ref LogLevel
+        POWERTOOLS_METRICS_NAMESPACE: CareerVault
+        CAREERVAULT_TABLE_NAME: !Ref CareerVaultTable
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Data — single-table design (ADR-005 / Section 2)
+  # ---------------------------------------------------------------------------
+  CareerVaultTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'CareerVaultTable-${Environment}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      # Career history is irreplaceable; both are near-zero cost (Section 4.7.3).
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: true
+      # AWS-managed KMS key (aws/dynamodb) — satisfies NFR-4.2 at no extra cost, no kms:* on roles.
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: CareerVault
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: SAM
+
+  # ---------------------------------------------------------------------------
+  # Auth — Cognito Hosted UI, OAuth2 Authorization Code + PKCE (ADR-025)
+  # ---------------------------------------------------------------------------
+  CognitoUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub 'careervault-${Environment}'
+      # Single-tenant MVP: the one user is created administratively (ADR-006 / ADR-025).
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UserPoolTags:
+        Project: CareerVault
+        Environment: !Ref Environment
+        ManagedBy: SAM
+
+  CognitoUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: !Sub 'careervault-spa-${Environment}'
+      UserPoolId: !Ref CognitoUserPool
+      # Public SPA client — no secret; security comes from PKCE (ADR-025).
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - code
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+      CallbackURLs:
+        - !Ref CallbackUrl
+      LogoutURLs:
+        - !Ref CallbackUrl
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  CognitoUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      UserPoolId: !Ref CognitoUserPool
+
+  # ---------------------------------------------------------------------------
+  # API — REST API Gateway with a Cognito User Pools authorizer
+  # ---------------------------------------------------------------------------
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub 'careervault-api-${Environment}'
+      StageName: !Ref Environment
+      TracingEnabled: true
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        # Keep the CORS preflight (OPTIONS) unauthenticated so the browser can reach it.
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt CognitoUserPool.Arn
+            Identity:
+              Header: Authorization
+      Cors:
+        AllowOrigin: "'http://localhost:5173'"
+        AllowHeaders: "'Authorization,Content-Type'"
+        AllowMethods: "'GET,OPTIONS'"
+
+  # ---------------------------------------------------------------------------
+  # Shared Lambda layer (ADR-023 / Section 5.3) — attached to every function
+  # ---------------------------------------------------------------------------
+  SharedLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub 'careervault-shared-${Environment}'
+      Description: Shared CareerVault utilities — observability, DDB helpers, Pydantic models.
+      # ContentUri is the `python/` folder (with requirements.txt inside it): the python3.13
+      # build method copies ContentUri's *contents* into the artifact's python/ and installs
+      # deps there too, so `careervault/` lands at /opt/python/careervault (import `careervault`).
+      ContentUri: ../backend/shared/python/
+      CompatibleRuntimes:
+        - python3.13
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.13
+      BuildArchitecture: arm64
+
+  # ---------------------------------------------------------------------------
+  # Compute — settings_lambda (smallest blast radius; Section 4.2.3)
+  # ---------------------------------------------------------------------------
+  SettingsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-settings-${Environment}'
+      CodeUri: ../backend/functions/settings/
+      Handler: handler.handler
+      MemorySize: 256
+      Timeout: 5
+      ReservedConcurrentExecutions: 5
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: settings_lambda
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt CareerVaultTable.Arn
+      Events:
+        GetSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /settings
+            Method: get
+
+Outputs:
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID — frontend VITE_COGNITO_AUTHORITY is derived from this.
+    Value: !Ref CognitoUserPool
+  CognitoUserPoolClientId:
+    Description: Cognito User Pool App Client ID — frontend VITE_COGNITO_CLIENT_ID.
+    Value: !Ref CognitoUserPoolClient
+  CognitoHostedDomain:
+    Description: Cognito Hosted UI domain — frontend VITE_COGNITO_DOMAIN (logout endpoint).
+    Value: !Sub '${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+  ApiGatewayBaseUrl:
+    Description: REST API base URL — frontend VITE_API_BASE_URL.
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'

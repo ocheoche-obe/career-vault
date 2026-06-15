@@ -108,13 +108,28 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (starting)**
+**Phase 2 — Implementation (in progress)**
 
 Completed:
 - ✅ Phase 0 — Requirements gathering (`careervault-requirements.md` v0.4)
-- ✅ Phase 1 — Architecture design (`careervault-architecture.md` v1.0, all 5 sections + ADRs)
+- ✅ Phase 1 — Architecture design (`careervault-architecture.md` v1.1, all 5 sections + ADRs)
+- ✅ Phase 2 slice 1 — First vertical slice (auth + `GET /settings`):
+  - `infrastructure/template.yaml` — SAM template: DynamoDB `CareerVaultTable-${Environment}`
+    (PITR + Deletion Protection + AWS-managed SSE), Cognito User Pool + SPA client + Hosted UI
+    domain (ADR-025), REST API Gateway with Cognito authorizer, `careervault-shared` layer,
+    `settings_lambda` (`GET /settings`), Outputs for the frontend. `infrastructure/samconfig.toml`
+    with dev/prod sections.
+  - `backend/shared/python/careervault/` — `observability.py`, `ddb_helpers.py`,
+    `bedrock_client.py` (stub), `pydantic_models/profile.py`.
+  - `backend/functions/settings/handler.py` — `GET /settings`, returns default profile if none.
+  - `frontend/` — Vite React-TS + `react-oidc-context` (ADR-029); Sign in → Hosted UI →
+    renders `GET /settings` JSON. Run on `localhost:5173`; copy `.env.example` → `.env.local`.
+  - Unit tests in `tests/unit/`; sample API-GW event in `tests/events/settings_get.json`.
+  - Deploy: `cd infrastructure && sam build && sam deploy` (deletion protection blocks table
+    teardown — disable manually first). Create the one user via `aws cognito-idp admin-create-user`.
 
 Up next:
-- Phase 2 — Implementation, starting with SAM template scaffolding + first vertical slice (likely the auth + dashboard skeleton)
+- Phase 2 slice 2 — likely `chat_lambda` + `career_crud` (entry ingestion), filling in
+  `bedrock_client.py`, the entry Pydantic models, and the embedding helper.
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.

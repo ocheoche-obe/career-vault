@@ -1,7 +1,7 @@
 # CareerVault — Architecture Document
 
-**Version:** 1.0
-**Status:** **Complete** — architecture phase finalized
+**Version:** 1.1
+**Status:** **Complete** — architecture phase finalized (1.1: implementation-driven clarification)
 **Last updated:** 2026-06-14
 
 ---
@@ -1278,9 +1278,11 @@ Two things IAM can't enforce in this architecture, both handled in application c
 ```python
 def handler(event, context):
     # user_id comes from the JWT's sub claim, validated by API Gateway's Cognito authorizer
-    user_id = event["requestContext"]["authorizer"]["jwt"]["claims"]["sub"]
+    user_id = event["requestContext"]["authorizer"]["claims"]["sub"]
     # Every subsequent DDB call uses USER#{user_id} as PK — never anything from the body
 ```
+
+> **Claims-path note (v1.1).** CareerVault uses a **REST** API Gateway (`AWS::Serverless::Api`) with a Cognito User Pools authorizer per ADR-025, which exposes claims at `requestContext.authorizer.claims.<claim>` (shown above). The HTTP API / v2 (`AWS::Serverless::HttpApi`) JWT authorizer instead nests them one level deeper at `requestContext.authorizer.jwt.claims.<claim>` — an earlier draft of this snippet used that form. The shared `careervault.ddb_helpers.extract_user_id` helper reads the REST path.
 
 **(2) SK-prefix scoping.** Each Lambda only operates on the SK prefixes appropriate to its purpose. Belt-and-suspenders the invariant with a `ConditionExpression` on writes. Pattern, illustrated for `chat_lambda` (which should only ever touch `CONVO#*`):
 
@@ -1990,21 +1992,21 @@ careervault/
 │   │       ├── handler.py
 │   │       └── requirements.txt
 │   └── shared/                          # Lambda layer source — careervault-shared
-│       ├── python/                      # AWS Lambda layer convention (see below)
-│       │   └── careervault/
-│       │       ├── __init__.py
-│       │       ├── bedrock_client.py
-│       │       ├── ddb_helpers.py
-│       │       ├── embedding.py
-│       │       ├── observability.py
-│       │       └── pydantic_models/
-│       │           ├── __init__.py
-│       │           ├── entries.py
-│       │           ├── profile.py
-│       │           ├── goals.py
-│       │           ├── conversation.py
-│       │           └── tool_inputs.py
-│       └── requirements.txt
+│       └── python/                      # ContentUri for the layer (BuildMethod: python3.13)
+│           ├── requirements.txt         # manifest must sit at ContentUri root
+│           └── careervault/
+│               ├── __init__.py
+│               ├── bedrock_client.py
+│               ├── ddb_helpers.py
+│               ├── embedding.py
+│               ├── observability.py
+│               └── pydantic_models/
+│                   ├── __init__.py
+│                   ├── entries.py
+│                   ├── profile.py
+│                   ├── goals.py
+│                   ├── conversation.py
+│                   └── tool_inputs.py
 ├── frontend/                            # React + Vite (ADR-003)
 │   ├── src/
 │   ├── package.json
@@ -2054,7 +2056,7 @@ Attached to **every** Lambda. Contains the cross-Lambda code that would otherwis
 | `embedding.py` | Single and batch Titan embedding helpers (4.6.2) | `career_crud`, `resume_upload_parser`, `resume_agent` |
 | `observability.py` | Pre-configured `aws_lambda_powertools` Logger with the field schema from 4.1.1; X-Ray subsegment context managers; EMF metric helpers | All Lambdas |
 
-Size: ~5-10 MB depending on Pydantic version and dependency tree. Build method: `BuildMethod: python3.13` in the SAM template — SAM runs `pip install -r requirements.txt -t .` against a temporary build environment, producing a clean layer artifact.
+Size: ~5-10 MB depending on Pydantic version and dependency tree. Build method: `BuildMethod: python3.13` in the SAM template, with `ContentUri` pointing at `backend/shared/python/` (the manifest `requirements.txt` lives at that ContentUri root, alongside the `careervault/` package). SAM installs the dependencies *and* copies the package's contents into the artifact's `python/` directory, so the package resolves at `/opt/python/careervault/` and handlers import `from careervault import ...`. (Pointing `ContentUri` one level higher at `backend/shared/` would nest the source one level too deep — `/opt/python/python/careervault/` — and break the import.)
 
 #### `careervault-weasyprint` — PDF rendering with system deps
 
@@ -2328,4 +2330,5 @@ This is genuinely portable knowledge — the OIDC-to-cloud-IAM pattern works ide
 | 0.5     | 2026-06-08 | Section 3.3 (check-in pipeline) complete: formalizes ADR-011. Covers EventBridge Scheduler vs Rules and SES primitives, six-phase RAG flow with Haiku, scheduled-job idempotency via conditional UpdateItem on PROFILE (6h buffer), scheduled-job failure model (per-item isolation + DLQ + CloudWatch metrics), generic-reminder fallback (FR-4.5) via shared code path with `mode` flag, four cost scaling levers (prompt caching, Batch API, model swap to Nova Micro for generic path, tiered static fallback) with reference cost ladder, error/retry paths. **Section 3 complete.** Remaining: Sections 4–5 + ADR-025. |
 | 0.6     | 2026-06-13 | Section 4 introduction + Sections 4.1 (Observability), 4.2 (IAM and least-privilege), 4.3 (Secrets and configuration), 4.4 (Encryption), 4.5 (Async messaging surface), and 4.6 (Embedding generation reliability) complete. Section 4 split into seven subsections (4.1 Observability, 4.2 IAM, 4.3 Secrets/config, 4.4 Encryption, 4.5 Async messaging surface, 4.6 Embedding generation reliability [ADR-024], 4.7 Operational hygiene). 4.1 covers the three-pillar observability model, the `aws_lambda_powertools` Logger schema with sensitive-field handling, X-Ray configuration (100% sampling, manual subsegments per phase, annotation vs metadata distinction), CloudWatch custom metrics via EMF (canonical metric table per flow), a 7-alarm set wired to a single SNS topic, and dashboard layout. 4.2 covers ARN scoping conventions (including the `bedrock:Converse` no-op gotcha and the `LeadingKeys` limitation for Lambda-fronted architectures), universal baseline (Logs, X-Ray, SSM, no `kms:*`, `aws:RequestedRegion`-pinned), per-Lambda IAM policy table for all six Lambdas, application-code enforcement pattern for PK isolation and SK-prefix scoping with code examples, and role/policy naming conventions. 4.3 covers the secrets-vs-config distinction, CareerVault's "no secrets" reality, env-var vs Parameter Store Standard placement, Parameter Store path layout, runtime caching via `aws_lambda_powertools.parameters` (5-minute TTL default), and the Secrets Manager upgrade triggers. 4.4 covers the envelope-encryption primitive (DEK/KEK distinction), at-rest encryption per resource (S3 using SSE-S3 to preserve the no-`kms:*` IAM line), the three KMS key types with cost trade-offs, AWS-managed key rotation semantics, in-transit (TLS 1.2+) configuration knobs, and the KMS-vs-Secrets-Manager seam for signing keys. 4.5 covers the failure-routing-vs-event-routing pattern distinction, the EventBridge Scheduler DLQ for `checkin_lambda` and Lambda async DLQ for `ses_event_handler`, the SES Configuration Set → SNS → `ses_event_handler` event-routing pipeline with diagram, the dedicated `ses_event_handler` Lambda design and rationale, the two-SNS-topics-kept-apart commitment, and operational DLQ handling. 4.6 formalizes **ADR-024**: synchronous embedding generation in `career_crud` and `resume_upload_parser`'s write paths is the chosen MVP architecture; async via DynamoDB Streams is documented as a future lever with three named upgrade triggers (model-swap backfill at scale, multi-tenant write throughput, second embedding store). Includes the sync vs async flow comparison, decision rationale, the model-swap procedure under sync, and cross-cloud parallels. Architecture diagram (Mermaid in 1.1 and `render_architecture.py`) updated to include `ses_event_handler` and `careervault-ses-events` SNS topic; PNG/PDF artifacts regenerated. Section 1.2 "Scheduled flow" paragraph extended to reference the SES bounce/complaint feedback loop. Naming sweep: `resume_lambda` → `resume_agent`. Cross-cloud parallels (Azure, GCP) inline throughout. 4.7 stubbed. |
 | 0.7     | 2026-06-14 | Section 4.7 (Operational hygiene) complete; **Section 4 complete**. 4.7 covers log retention (consolidated from 4.1.2), the four-tag resource tagging strategy (`Project`/`Environment`/`Component`/`ManagedBy`) with cost-allocation rationale, DynamoDB Point-in-Time Recovery + Deletion Protection on the table (both enabled, near-zero cost vs irreplaceability of career history), per-Lambda reserved-concurrency caps and function-timeout values (with rationale per function), and an explicit "what's deliberately not in MVP" footnote (no provisioned concurrency, no AWS Config rules, no cross-region S3 replication, no DLQ replay tooling). Cross-cloud parallels for tagging/labels and PITR-equivalents (Cosmos DB Continuous Backup, Firestore PITR) inline. Architecture phase status: Sections 1–4 complete; Section 5 + ADR-023 + ADR-025 remaining. |
+| 1.1     | 2026-06-14 | Implementation-driven clarification during Phase 2's first vertical slice (auth + `GET /settings`). Section 4.2.4: corrected the handler code sample's JWT-claims path to the **REST** API Gateway shape (`requestContext.authorizer.claims.<claim>`) used by CareerVault, with a note distinguishing it from the HTTP-API/v2 (`...authorizer.jwt.claims...`) form; the shared `extract_user_id` helper reads the REST path. No architectural decisions changed. Section 5.2/5.3: corrected the `careervault-shared` layer layout — `requirements.txt` lives inside `backend/shared/python/` (the layer `ContentUri`) next to the `careervault/` package, since `BuildMethod: python3.13` copies ContentUri contents into the artifact's `python/`; a `ContentUri` at `backend/shared/` double-nests the package. (See ADR-029 in the ADL for the frontend auth-library choice settled in the same round.) |
 | 1.0     | 2026-06-14 | **Architecture phase complete.** Section 5 (SAM Template Structure) drafted across seven subsections: 5.1 single-template organization (vs nested-stacks alternative), 5.2 full repository layout (`backend/functions/<lambda>/`, `backend/shared/python/careervault/`, `infrastructure/`, `frontend/`, `tests/`, `docs/`), 5.3 Lambda layer composition formalizing **ADR-023** (two layers — `careervault-shared` attached to every Lambda for Pydantic/Bedrock/DDB/embedding/observability code, `careervault-weasyprint` attached only to `resume_agent` with system-deps via SAM Docker BuildMethod), 5.4 resource cross-references (`Globals.Function` defaults including ARM64 architecture, `!Ref`/`!GetAtt`/`!Sub` intrinsic functions, `Outputs` section exposing Cognito/API/CloudFront IDs to the frontend), 5.5 environment strategy (`dev`/`prod` in one account via `samconfig.toml` env-specific sections, resource naming via `${Environment}` parameter), 5.6 local development with SAM CLI (`sam build --use-container`, `sam local invoke`, `sam local start-api`, DynamoDB Local, plus honest note that Bedrock/SES/Cognito can't be locally emulated), 5.7 deployment story (manual `sam deploy` + frontend `aws s3 sync` + CloudFront invalidation for MVP, with a `make deploy` wrapper; smoke-test endpoints; GitHub Actions OIDC-to-IAM CI/CD as v1.x improvement with the cloud-neutral OIDC pattern noted). **ADR-025** also formalized in this round (Cognito hosted UI with OAuth2 Authorization Code + PKCE; sub-decisions for self-service signup, MFA, password policy, token TTLs, custom domain, social IdPs all settled inline). Document version bumped to 1.0; status changed from "In progress" to "Complete." Section 0 overview updated to reflect completion. Implementation phase follows. |
