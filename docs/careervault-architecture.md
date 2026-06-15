@@ -1179,6 +1179,8 @@ CloudWatch Alarms turn metrics into pages. The MVP set, deliberately small:
 
 All alarms publish to a single SNS topic (`careervault-alarms`) subscribed by the user's email. The SES bounce/complaint SNS topic from 4.5 is *separate* — those are per-event signals routed to a handler Lambda for per-user action (suppression-list management, future auto-disable on persistent bounces), not threshold-based pages.
 
+> **Implementation note (v1.2).** The account moved to paid billing (free-tier/credits lost on joining an AWS Organization), so the spend ceiling tightened from $10 to **$5**; the billing-alarm thresholds in IaC are correspondingly **$3 warning / $5 critical** (not the $5/$10 in the table above). Billing alarms are gated to the **prod** stack to avoid duplicate account-level alarms across environments; during dev-only periods an account-wide **AWS Budget** (`careervault-monthly-5usd`, email alerts) is the active guard. The first slice deploys the SNS topic and a per-Lambda `Errors` alarm; the full alarm set, the `careervault-shared` dashboard (4.1.5), and the Scheduler/DLQ alarms land with the functions that emit their metrics. Lambda log groups carry a 14-day retention.
+
 > **Cross-cloud parallel.** **Azure Monitor Action Groups** are the equivalent of SNS topics wired to alarms; **GCP Cloud Monitoring Notification Channels** likewise. The two-tier pattern (event-routing topic vs alarm-paging topic) is universal and worth keeping distinct from day one — collapsing them leads to alert fatigue when high-frequency events drown out genuine alarms.
 
 #### 4.1.5 Dashboards

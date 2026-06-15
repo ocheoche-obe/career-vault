@@ -102,9 +102,15 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Cost constraints
 
-- $10/month total spend ceiling (NFR-1.1)
-- Billing alarms at $5 (warning) and $10 (critical) (Section 4.1.4)
-- Reserved concurrency per Lambda as runaway-cost guard (Section 4.7.4)
+- **$5/month effective hard ceiling.** The account lost its 12-month free tier / credits when it
+  joined an AWS Organization (now paid), so the project tightened the original $10 NFR-1.1 ceiling
+  to $5. Bedrock usage (future slices) is the dominant cost driver; the deployed infra is ~cents/mo
+  at idle.
+- Guards in place: an account-wide **AWS Budget** `careervault-monthly-5usd` (email alerts at ~$1 /
+  $4 / $5 + forecast); template billing alarms tightened to **$3 warning / $5 critical** (prod-gated,
+  arch §4.1.4); 14-day CloudWatch log retention.
+- Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4) but is **parameterized and off by
+  default** until the account's Lambda concurrency quota (currently 10) is raised — see ADR-030.
 
 ## Current build phase
 
