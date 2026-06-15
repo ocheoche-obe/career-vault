@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+
+# Node / Vite
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+.pnpm-debug.log*
+frontend/dist/
+frontend/.vite/
+
+# SAM / AWS
+.aws-sam/
+packaged.yaml
+samconfig.toml.local
+aws-sam-deploy.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editors / OS
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+*.log
+logs/
