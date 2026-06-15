@@ -102,19 +102,40 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Cost constraints
 
-- $10/month total spend ceiling (NFR-1.1)
-- Billing alarms at $5 (warning) and $10 (critical) (Section 4.1.4)
-- Reserved concurrency per Lambda as runaway-cost guard (Section 4.7.4)
+- **$5/month effective hard ceiling.** The account lost its 12-month free tier / credits when it
+  joined an AWS Organization (now paid), so the project tightened the original $10 NFR-1.1 ceiling
+  to $5. Bedrock usage (future slices) is the dominant cost driver; the deployed infra is ~cents/mo
+  at idle.
+- Guards in place: an account-wide **AWS Budget** `careervault-monthly-5usd` (email alerts at ~$1 /
+  $4 / $5 + forecast); template billing alarms tightened to **$3 warning / $5 critical** (prod-gated,
+  arch §4.1.4); 14-day CloudWatch log retention.
+- Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4) but is **parameterized and off by
+  default** until the account's Lambda concurrency quota (currently 10) is raised — see ADR-030.
 
 ## Current build phase
 
-**Phase 2 — Implementation (starting)**
+**Phase 2 — Implementation (in progress)**
 
 Completed:
 - ✅ Phase 0 — Requirements gathering (`careervault-requirements.md` v0.4)
-- ✅ Phase 1 — Architecture design (`careervault-architecture.md` v1.0, all 5 sections + ADRs)
+- ✅ Phase 1 — Architecture design (`careervault-architecture.md` v1.1, all 5 sections + ADRs)
+- ✅ Phase 2 slice 1 — First vertical slice (auth + `GET /settings`):
+  - `infrastructure/template.yaml` — SAM template: DynamoDB `CareerVaultTable-${Environment}`
+    (PITR + Deletion Protection + AWS-managed SSE), Cognito User Pool + SPA client + Hosted UI
+    domain (ADR-025), REST API Gateway with Cognito authorizer, `careervault-shared` layer,
+    `settings_lambda` (`GET /settings`), Outputs for the frontend. `infrastructure/samconfig.toml`
+    with dev/prod sections.
+  - `backend/shared/python/careervault/` — `observability.py`, `ddb_helpers.py`,
+    `bedrock_client.py` (stub), `pydantic_models/profile.py`.
+  - `backend/functions/settings/handler.py` — `GET /settings`, returns default profile if none.
+  - `frontend/` — Vite React-TS + `react-oidc-context` (ADR-029); Sign in → Hosted UI →
+    renders `GET /settings` JSON. Run on `localhost:5173`; copy `.env.example` → `.env.local`.
+  - Unit tests in `tests/unit/`; sample API-GW event in `tests/events/settings_get.json`.
+  - Deploy: `cd infrastructure && sam build && sam deploy` (deletion protection blocks table
+    teardown — disable manually first). Create the one user via `aws cognito-idp admin-create-user`.
 
 Up next:
-- Phase 2 — Implementation, starting with SAM template scaffolding + first vertical slice (likely the auth + dashboard skeleton)
+- Phase 2 slice 2 — likely `chat_lambda` + `career_crud` (entry ingestion), filling in
+  `bedrock_client.py`, the entry Pydantic models, and the embedding helper.
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.

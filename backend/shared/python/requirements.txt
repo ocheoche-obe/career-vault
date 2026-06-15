@@ -1,0 +1,5 @@
+# careervault-shared layer dependencies (ADR-023 / Section 5.3).
+# boto3 is provided by the Lambda runtime and is intentionally NOT bundled here.
+aws-lambda-powertools[tracer]>=3.0,<4.0
+pydantic>=2.0,<3.0
+python-ulid>=2.0,<3.0

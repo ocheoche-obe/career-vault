@@ -1,0 +1,43 @@
+version = 0.1
+
+# `sam deploy` (no flags) uses [default] → dev. `sam deploy --config-env prod` → prod.
+# Per architecture Section 5.5: dev and prod coexist in one account, isolated by the
+# Environment parameter and resource-name suffixes.
+#
+# NOTE: CognitoDomainPrefix must be globally unique within the region. If deploy fails with
+# a domain-already-exists error, change the prefix below (e.g. add your initials/account).
+
+[default.deploy.parameters]
+stack_name = "careervault-dev"
+resolve_s3 = true
+s3_prefix = "careervault-dev"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = [
+    "Environment=dev",
+    "LogLevel=DEBUG",
+    "CognitoDomainPrefix=careervault-dev",
+    "CallbackUrl=http://localhost:5173",
+]
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[prod.deploy.parameters]
+stack_name = "careervault-prod"
+resolve_s3 = true
+s3_prefix = "careervault-prod"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+parameter_overrides = [
+    "Environment=prod",
+    "LogLevel=INFO",
+    "CognitoDomainPrefix=careervault-prod",
+    # No hosting yet (CloudFront deferred); update to the real web origin when it lands.
+    "CallbackUrl=http://localhost:5173",
+]
+
+[prod.build.parameters]
+cached = true
+parallel = true

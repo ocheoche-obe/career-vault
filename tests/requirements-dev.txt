@@ -1,0 +1,5 @@
+# Local test/dev dependencies. boto3 is provided by the Lambda runtime in production (so it is
+# NOT in the layer's requirements.txt) but is needed locally to import ddb_helpers under pytest.
+-r ../backend/shared/python/requirements.txt
+boto3
+pytest

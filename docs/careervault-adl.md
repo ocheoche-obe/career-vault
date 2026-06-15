@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-06-14
+**Last updated:** 2026-06-15 (ADR-030 added during first live dev deploy)
 
 ---
 
@@ -59,6 +59,8 @@ Each ADR has:
 | ADR-026 | Data model — entity types and PK/SK design                         | Accepted   |
 | ADR-027 | Delete semantics — hard delete with UI confirm                     | Accepted   |
 | ADR-028 | GSI strategy — none at MVP                                         | Accepted   |
+| ADR-029 | Frontend auth integration library — react-oidc-context             | Accepted   |
+| ADR-030 | Environment-gated table protection + parameterized reserved concurrency | Accepted |
 
 ---
 
@@ -763,6 +765,71 @@ Sub-decisions settled together with the main one:
 
 ### Cross-cloud parallel
 The hosted-UI-with-Authorization-Code-PKCE pattern is the recommended default on every cloud: **Azure Entra ID External ID** (formerly B2C) provides hosted authorization endpoints using the same OAuth2 flow; **GCP Identity Platform** offers hosted sign-in pages via FirebaseUI for the comparable use case. The cloud-neutral primitive is OAuth2 Authorization Code with PKCE — the right thing to internalize regardless of which cloud is in the picture.
+
+---
+
+## ADR-029: Frontend auth integration library — react-oidc-context
+
+**Status:** Accepted
+**Date:** 2026-06-14
+
+### Context
+ADR-025 settled the *protocol*: Cognito Hosted UI with OAuth2 Authorization Code + PKCE. It deliberately did not pick the client-side library that drives that flow in the React SPA. The first vertical slice (auth + `GET /settings`) forces the choice, because the SPA needs something to build the authorize-redirect URL, perform the PKCE code/verifier dance, exchange the authorization code for tokens at Cognito's token endpoint, store and silently renew tokens, and expose auth state to React components.
+
+### Decision
+Use **`react-oidc-context`** (the React bindings) on top of **`oidc-client-ts`** (the underlying OIDC/OAuth2 client). The app wraps its tree in `<AuthProvider>` configured with the Cognito User Pool issuer as `authority`; library discovery (`/.well-known/openid-configuration`) resolves the authorize/token/jwks endpoints. PKCE is automatic for `response_type: "code"`. Components consume auth state via the `useAuth()` hook. Cognito has no OIDC end-session endpoint, so logout is a manual redirect to Cognito's `/logout` Hosted UI URL with a registered `logout_uri`.
+
+### Alternatives considered
+- **AWS Amplify Auth (`aws-amplify`).** The official AWS library; can drive the Hosted UI. Rejected as the primary because it is a heavier dependency that pulls in Amplify's broader conventions and config surface, and ADR-025 already rejected the Amplify *SDK-driven forms* path. For a Hosted-UI redirect flow, a standards-based OIDC client carries less weight and less AWS coupling.
+- **Hand-rolled PKCE (~100 lines).** Build the authorize URL, handle the redirect, exchange the code at the token endpoint, store/refresh tokens manually. Maximally educational and zero auth dependencies, but it re-implements token storage, expiry, and silent renew — surface area that a well-tested library already covers correctly. Reserved as a learning exercise, not the production path.
+- **`@cognito/...` / `amazon-cognito-identity-js` directly.** Lower-level Cognito SDK; oriented toward the SDK-driven (non-Hosted-UI) flow ADR-025 rejected.
+
+### Consequences
+- ✅ Standards-based OIDC — the knowledge and most of the config port directly to Azure Entra External ID and GCP Identity Platform, matching ADR-025's "portable primitive" framing.
+- ✅ Token storage, expiry tracking, and silent renew are handled by the library rather than hand-maintained.
+- ✅ Small dependency footprint relative to Amplify; no AWS-specific SDK lock-in in the auth layer.
+- ⚠️ Cognito's non-standard logout (no RP-initiated end-session endpoint) requires a manual `/logout` redirect helper rather than the library's `signoutRedirect()`.
+- ⚠️ The library is community-maintained (not AWS-official); pinned to a major version (`^3`) and revisited if Cognito's OIDC surface changes.
+
+### Cross-cloud parallel
+`oidc-client-ts` is provider-agnostic — the same library works unchanged against **Azure Entra External ID** and **GCP Identity Platform** by swapping only the `authority` and `client_id`. The React binding pattern (`AuthProvider` + a `useAuth` hook) has direct equivalents in MSAL React (`MsalProvider` + `useMsal`) and Firebase (`useAuthState`), so the architectural shape transfers even where the library does not.
+
+---
+
+## ADR-030: Environment-gated table protection + parameterized reserved concurrency
+
+**Status:** Accepted
+**Date:** 2026-06-15
+
+### Context
+The first live `sam deploy` of the dev stack surfaced two real-account frictions that the architecture's blanket settings (Sections 4.7.3 and 4.7.4) did not account for:
+
+1. **DynamoDB Deletion Protection (§4.7.3) wedges dev rollbacks.** The settings Lambda's create failed (see point 2), so CloudFormation rolled the stack back — and could not delete the `CareerVaultTable` because Deletion Protection was enabled, leaving the stack stuck in `ROLLBACK_FAILED`. Recovery required manually disabling protection and deleting the table out-of-band. Every failed create/update during active dev iteration would repeat this.
+2. **Reserved Concurrency (§4.7.4) is unusable on the default account limit.** Setting `ReservedConcurrentExecutions: 5` was rejected: *"decreases account's UnreservedConcurrentExecution below its minimum value of [10]."* New AWS accounts ship with a total concurrent-execution limit of 10, and Lambda refuses any reservation that would leave fewer than 10 unreserved — so no function can reserve any concurrency until a Service Quotas increase is granted.
+
+Both of the architecture's original intents remain valid: protect irreplaceable career history (§4.7.3) and cap runaway Bedrock cost (§4.7.4). The issue is that both were expressed as unconditional values that don't hold across environments or account states.
+
+### Decision
+Express both as environment/parameter-gated values in the SAM template, preserving the production intent while unblocking dev:
+
+- **Deletion Protection** is gated to **prod only** via a `IsProd` condition (`DeletionProtectionEnabled: !If [IsProd, true, false]`). PITR remains enabled in **all** environments — it is near-zero cost and, unlike Deletion Protection, does not block deletes, so it never wedges a rollback.
+- **Reserved Concurrency** for `settings_lambda` becomes a template **parameter** (`SettingsReservedConcurrency`, default `-1`). `-1` omits the property entirely (via `!If ... !Ref AWS::NoValue`); a positive value applies it. Default-off keeps deploys working on the constrained account; once a concurrency-limit increase lands, the parameter is set to the intended cap (e.g. 5) with no template change.
+
+### Alternatives considered
+- **Keep Deletion Protection on everywhere; recover manually when rollbacks wedge.** Rejected — it makes the inner dev loop hostile, and dev data is throwaway, so the protection buys nothing there.
+- **Drop reserved concurrency from the template entirely.** Rejected — it discards the §4.7.4 cost guard for prod. Parameterizing keeps the guard one config value away.
+- **Request the Service Quotas increase first, keep `5` hard-coded.** Rejected as a blocker — the increase is asynchronous (support-gated) and shouldn't gate first deploys; the parameter lets the value land later without code changes.
+
+### Consequences
+- ✅ Dev deploys roll back cleanly (no stuck `ROLLBACK_FAILED` from a protected table).
+- ✅ Prod still gets Deletion Protection on the table holding real career history.
+- ✅ Deploys succeed on a default-limit account; the cost guard is re-enabled by setting one parameter after a quota increase.
+- ✅ The pattern (env-conditioned protection, parameterized guardrails) extends to future functions' reserved-concurrency caps and to any other prod-only safety setting.
+- ⚠️ Dev has **no** table Deletion Protection — acceptable because dev data is disposable, but worth remembering before pointing anything important at the dev table.
+- ⚠️ Until the account's Lambda concurrency limit is raised, **no** function carries a reserved-concurrency cap; the $10/month billing alarms (§4.1.4) remain the backstop in the interim.
+
+### Cross-cloud parallel
+The "protect prod, stay nimble in dev" gating is universal: **Azure** uses resource locks (`CanNotDelete`) typically applied only to prod resource groups, and Cosmos DB throughput caps per environment; **GCP** uses `deletion_protection` on resources (e.g. Cloud SQL, BigQuery tables) and per-project quota. On every cloud, account/project-level concurrency and throughput quotas start conservative and are raised via a support/quota request — designing the guardrail as a parameter rather than a constant is the portable lesson.
 
 ---
 
