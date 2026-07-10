@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-06-15 (ADR-030 added during first live dev deploy)
+**Last updated:** 2026-06-16 (ADR-031 added at the start of slice 2 — first live Bedrock calls)
 
 ---
 
@@ -61,6 +61,7 @@ Each ADR has:
 | ADR-028 | GSI strategy — none at MVP                                         | Accepted   |
 | ADR-029 | Frontend auth integration library — react-oidc-context             | Accepted   |
 | ADR-030 | Environment-gated table protection + parameterized reserved concurrency | Accepted |
+| ADR-031 | Bedrock invocation via cross-region inference profile (Haiku 4.5)  | Accepted   |
 
 ---
 
@@ -830,6 +831,47 @@ Express both as environment/parameter-gated values in the SAM template, preservi
 
 ### Cross-cloud parallel
 The "protect prod, stay nimble in dev" gating is universal: **Azure** uses resource locks (`CanNotDelete`) typically applied only to prod resource groups, and Cosmos DB throughput caps per environment; **GCP** uses `deletion_protection` on resources (e.g. Cloud SQL, BigQuery tables) and per-project quota. On every cloud, account/project-level concurrency and throughput quotas start conservative and are raised via a support/quota request — designing the guardrail as a parameter rather than a constant is the portable lesson.
+
+---
+
+## ADR-031: Bedrock invocation via cross-region inference profile (Haiku 4.5)
+
+**Status:** Accepted
+**Date:** 2026-06-16
+
+### Context
+Slice 2 (chat + entry ingestion) is the first code to actually call Bedrock, so the abstract "use Claude Haiku" of ADR-009 had to become a concrete, invokable model identifier. Probing the live account (`768396678224`, us-east-1) surfaced a constraint the architecture had not accounted for:
+
+- **`anthropic.claude-haiku-4-5-20251001-v1:0` advertises `inferenceTypesSupported: ["INFERENCE_PROFILE"]` only** — it has **no `ON_DEMAND` support**. A `Converse`/`InvokeModel` call against the bare foundation-model ID is rejected; the model is reachable *only* through an inference profile. Two system-defined profiles are `ACTIVE`: `us.anthropic.claude-haiku-4-5-20251001-v1:0` (US cross-region) and `global.anthropic.claude-haiku-4-5-20251001-v1:0` (global).
+- **`amazon.titan-embed-text-v2:0` is `ON_DEMAND`** — invoked by its bare model ID, no profile involved.
+
+This collides with the IAM guidance in architecture §4.2.3 ("Pinning model versions"), which assumed every model is a single, version-pinned foundation-model ARN. A cross-region inference profile is a *different* resource type and fans the call out across multiple regions, each of which needs its own foundation-model permission.
+
+### Decision
+- **Invoke Claude Haiku 4.5 through the `us.` cross-region inference profile** (`us.anthropic.claude-haiku-4-5-20251001-v1:0`). The `modelId` passed to the Converse API is the inference-profile ID, not the bare foundation-model ID. The `global.` profile is rejected for MVP (see alternatives).
+- **Invoke Titan Text Embeddings v2 by its bare model ID** (`amazon.titan-embed-text-v2:0`, `InvokeModel`) — unchanged from the architecture.
+- **IAM for the Haiku-using Lambdas grants `bedrock:InvokeModel` (and `bedrock:Converse`) on two resource shapes:**
+  1. the inference-profile ARN: `arn:aws:bedrock:us-east-1:<account>:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0`, **and**
+  2. the underlying foundation-model ARN in *every* region the `us.` profile can route to — `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`, plus the same for `us-east-2` and `us-west-2`.
+
+  Both halves are required: the profile ARN authorizes the profile call, the regional foundation-model ARNs authorize the actual inference wherever capacity routes it. This **refines §4.2.3** — "version-pinned ARN" becomes "version-pinned profile ARN + the set of regional foundation-model ARNs it fronts" for any inference-profile-only model.
+- **Model IDs stay in environment variables** (`BEDROCK_HAIKU_MODEL_ID`, `BEDROCK_TITAN_EMBED_MODEL_ID`), set in the SAM template, kept in lockstep with the IAM ARNs — consistent with the `bedrock_client` stub's stated design and §4.3.4.
+
+### Alternatives considered
+- **`global.` cross-region profile.** Best capacity/availability, but it can route inference to *any* AWS region, which (a) puts career-history text outside the US with no residency guarantee and (b) forces the foundation-model ARN grant to be effectively all-regions, widening the IAM blast radius. Rejected — single-user MVP has no availability problem that US-only routing doesn't already solve.
+- **Pin to an older on-demand Haiku** (e.g. `anthropic.claude-3-5-haiku-20241022-v1:0`, which still offers `ON_DEMAND`) to dodge inference profiles entirely. Rejected — those models are `LEGACY` in this account, and deliberately picking a worse, soon-to-be-retired model to avoid a one-time IAM nuance is the wrong trade. Inference profiles are where Bedrock is heading; learning the pattern now is the point.
+- **A self-defined (custom) inference profile** for fine-grained cost tagging. Useful at multi-tenant scale for per-tenant cost attribution; overkill for one user. The system-defined `us.` profile is sufficient. Revisit if cost-allocation-by-profile becomes a need.
+
+### Consequences
+- ✅ Uses the current-generation Haiku 4.5 the way Bedrock intends newer models to be called.
+- ✅ US-only routing keeps data residency predictable and bounds the IAM grant to three named regions.
+- ✅ The env-var + ARN-pinning discipline from §4.2.3 carries over intact — a model swap is still an IaC change (now: profile ID + the regional ARN set).
+- ⚠️ IAM is wordier: one foundation-model ARN becomes three (one per US region) alongside the profile ARN. A future region-set change to the `us.` profile would require an IAM update — acceptable, and the right friction.
+- ⚠️ Cross-region routing means a single request *may* execute in us-east-2 or us-west-2. Same per-token price as on-demand, but CloudWatch/Bedrock invocation logs for a call can land in a region other than us-east-1 — worth knowing when debugging.
+- ⚠️ The `resume_agent` (Sonnet, future slice) will almost certainly hit the same inference-profile-only constraint; this ADR sets the precedent its IAM will follow.
+
+### Cross-cloud parallel
+The "logical model alias that fans out across regions for capacity" pattern recurs: **Azure OpenAI** uses *deployments* (and Global/Data-Zone Standard deployment types) that decouple the called name from the physical region; **GCP Vertex AI** offers global and multi-region endpoints for the same reason. On every cloud the portable lesson is identical — the thing you invoke is an indirection over physical model capacity, and your access policy has to authorize every place that indirection can land.
 
 ---
 

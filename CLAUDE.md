@@ -134,8 +134,14 @@ Completed:
   - Deploy: `cd infrastructure && sam build && sam deploy` (deletion protection blocks table
     teardown — disable manually first). Create the one user via `aws cognito-idp admin-create-user`.
 
-Up next:
-- Phase 2 slice 2 — likely `chat_lambda` + `career_crud` (entry ingestion), filling in
-  `bedrock_client.py`, the entry Pydantic models, and the embedding helper.
+In progress:
+- 🚧 Phase 2 slice 2 — chat + entry ingestion (`chat_lambda` + `career_crud`), backend + tests
+  first (React chat UI deferred to slice 2b). Fills in `bedrock_client.py` (real `converse` +
+  `embed`), the entry/tool/conversation Pydantic models, and the conversation/entry DDB helpers.
+  - **ADR-031**: Claude Haiku 4.5 is invoked via the `us.` cross-region **inference profile**
+    (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) — it has no on-demand support. IAM grants
+    `bedrock:InvokeModel` on the profile ARN **plus** the foundation-model ARN in us-east-1 /
+    us-east-2 / us-west-2. Titan v2 (`amazon.titan-embed-text-v2:0`) stays on-demand. Model IDs
+    live in env vars in lockstep with the IAM ARNs.
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.
