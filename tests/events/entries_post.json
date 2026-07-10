@@ -1,0 +1,20 @@
+{
+  "resource": "/entries",
+  "path": "/entries",
+  "httpMethod": "POST",
+  "headers": {
+    "Authorization": "Bearer fake-for-local-invoke",
+    "Content-Type": "application/json"
+  },
+  "requestContext": {
+    "requestId": "local-req-0003",
+    "authorizer": {
+      "claims": {
+        "sub": "local-user-sub-0001",
+        "email": "dev@example.com"
+      }
+    }
+  },
+  "body": "{\"entry_id\": \"01HXAB3K9T8MQNJ4F5G6H7K8N9\", \"entry_type\": \"CERT\", \"title\": \"AWS Solutions Architect Associate\", \"content\": \"Passed the exam on the first attempt.\", \"issuer\": \"Amazon Web Services\", \"issued_date\": \"2026-05-01\", \"skills_tags\": [\"aws\", \"cloud-architecture\"]}",
+  "isBase64Encoded": false
+}

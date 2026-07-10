@@ -1,0 +1,20 @@
+{
+  "resource": "/chat",
+  "path": "/chat",
+  "httpMethod": "POST",
+  "headers": {
+    "Authorization": "Bearer fake-for-local-invoke",
+    "Content-Type": "application/json"
+  },
+  "requestContext": {
+    "requestId": "local-req-0002",
+    "authorizer": {
+      "claims": {
+        "sub": "local-user-sub-0001",
+        "email": "dev@example.com"
+      }
+    }
+  },
+  "body": "{\"message\": \"I just passed the AWS Solutions Architect Associate exam.\"}",
+  "isBase64Encoded": false
+}
