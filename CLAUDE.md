@@ -134,14 +134,34 @@ Completed:
   - Deploy: `cd infrastructure && sam build && sam deploy` (deletion protection blocks table
     teardown — disable manually first). Create the one user via `aws cognito-idp admin-create-user`.
 
-In progress:
-- 🚧 Phase 2 slice 2 — chat + entry ingestion (`chat_lambda` + `career_crud`), backend + tests
-  first (React chat UI deferred to slice 2b). Fills in `bedrock_client.py` (real `converse` +
-  `embed`), the entry/tool/conversation Pydantic models, and the conversation/entry DDB helpers.
+- ✅ Phase 2 slice 2a — chat + entry ingestion, **backend deployed to dev and smoke-tested
+  end-to-end** (`POST /chat` → clarification → multi-turn parse → `POST /entries` 201 → duplicate
+  confirm 200). React chat UI deferred to slice 2b.
+  - `backend/functions/chat/` — `POST /chat`, Phase A parse turn; two tools + `toolChoice=any`;
+    persists the user message *before* calling Bedrock; one validation-feedback retry (§3.1.6).
+  - `backend/functions/career_crud/` — `POST /entries`, Phase B; Pydantic validation → Titan embed
+    → conditional PutItem; 201/200/422/500 contract (§3.1.5). Only `GetItem`+`PutItem` in IAM;
+    Query/Update/Delete land with their routes.
+  - Shared layer: `pydantic_models/{entry,tools,conversation}.py`, real `bedrock_client.py`,
+    CONVO/ENTRY `ddb_helpers` + float↔Decimal marshalling.
   - **ADR-031**: Claude Haiku 4.5 is invoked via the `us.` cross-region **inference profile**
     (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) — it has no on-demand support. IAM grants
     `bedrock:InvokeModel` on the profile ARN **plus** the foundation-model ARN in us-east-1 /
     us-east-2 / us-west-2. Titan v2 (`amazon.titan-embed-text-v2:0`) stays on-demand. Model IDs
     live in env vars in lockstep with the IAM ARNs.
+  - Reserved concurrency is **live** (5/5/5) — the account's Lambda limit was restored from 10 to
+    1000, so ADR-030's parameterized §4.7.4 guard is switched on via `samconfig.toml`.
+  - **Bedrock gotcha:** Anthropic models 404 with `ResourceNotFoundException` until the account's
+    **Anthropic use-case form** is submitted (Bedrock console → Model access). Titan is unaffected;
+    Titan-works-while-Claude-404s is the diagnostic signature. Submitted for this account.
+  - Arch doc corrected to **v1.3** by two live-API findings: §4.6.2 (Titan v2 has no multi-input
+    request form — `embed_many` is a client-side loop) and §4.2.4 (an SK-prefix
+    `ConditionExpression` can never succeed; the invariant lives in `assert_sk_prefix`).
+
+Known wrinkle (slice 2b): retrying a failed chat turn re-persists the user's message, so a
+retried turn appears twice in CONVO history. Harmless (unique ULIDs) but worth a client-supplied
+message id or content dedupe when the chat UI lands.
+
+Next: Phase 2 slice 2b — React chat UI wired to `POST /chat` + `POST /entries`.
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.
