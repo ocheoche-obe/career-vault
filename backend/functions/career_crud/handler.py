@@ -128,12 +128,14 @@ def handler(event, context) -> dict:
         logger.info("Entry created")
         return _response(201, {"entry": _public_entry(item)})
 
-    # The conditional failed. Re-read to distinguish an idempotent duplicate confirm (the item is
-    # there — return it as 200) from a tripped `begins_with` prefix guard (it isn't — that's a
-    # bug in SK construction, and a 500 is the honest answer).
+    # The conditional failed, which now means exactly one thing: the entry already exists (the
+    # SK-prefix invariant is enforced in code before the write). Re-read it so the duplicate
+    # confirm returns the stored item rather than the one we just built.
     existing = get_entry(user_id, entry_id)
     if existing is None:
-        logger.error("Conditional put failed but entry is absent — SK prefix guard tripped")
+        # GetItem is eventually consistent by default, so a just-written item can briefly read
+        # as absent. Rare, and a retry resolves it — 500 is the honest answer, not a fabricated 200.
+        logger.error("Conditional put failed but entry read back absent")
         return _response(500, {"message": "Could not save entry — please retry."})
 
     metrics.add_metric(name="EntryDuplicateConfirm", unit=MetricUnit.Count, value=1)

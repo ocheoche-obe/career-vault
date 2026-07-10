@@ -74,20 +74,44 @@ def pk_for_user(user_id: str) -> str:
     return f"USER#{user_id}"
 
 
-def put_item_scoped(item: Mapping[str, Any], sk_prefix: str) -> None:
-    """Write ``item`` with an SK-prefix invariant enforced as a conditional expression.
+def assert_sk_prefix(item: Mapping[str, Any], sk_prefix: str) -> None:
+    """Enforce the SK-prefix invariant in application code (Section 4.2.4).
 
-    Defense in depth (Section 4.2.4): even if upstream code constructed an SK outside the
-    Lambda's allowed prefix, ``begins_with(SK, :prefix)`` rejects the write. ``item`` must
-    already contain valid ``PK`` and ``SK`` attributes.
+    **Why this is not a ``ConditionExpression``.** A DynamoDB condition is evaluated against the
+    item *already stored* at the target key, not against the item being written. So
+    ``begins_with(SK, :prefix)`` asks "does the **existing** item's SK start with the prefix?" —
+    which is false for every create, since no item exists yet. Worse, the combination
+    ``attribute_not_exists(SK) AND begins_with(SK, :prefix)`` is self-contradictory (the first
+    clause requires the item to be absent, the second requires it to be present) and therefore
+    fails unconditionally.
+
+    DynamoDB simply offers no way to constrain the key you are about to write. IAM cannot do it
+    either — ``dynamodb:LeadingKeys`` scopes the *partition* key only. So the invariant lives
+    here, as a loud precondition, and the condition expressions are reserved for the one thing
+    they can express: create-once idempotency.
+
+    Raises:
+        ValueError: if ``item``'s SK is missing or outside the caller's allowed prefix.
+    """
+    sk = item.get("SK", "")
+    if not isinstance(sk, str) or not sk.startswith(sk_prefix):
+        raise ValueError(f"SK {sk!r} is outside this caller's allowed prefix {sk_prefix!r}")
+
+
+def put_item_scoped(item: Mapping[str, Any], sk_prefix: str) -> None:
+    """Write ``item`` once, with its SK constrained to ``sk_prefix``.
+
+    The prefix invariant is checked in code (see :func:`assert_sk_prefix`); the conditional
+    write makes the operation create-only, so an unexpected key collision surfaces rather than
+    silently overwriting.
 
     Floats are marshalled to ``Decimal`` on the way in — LLM tool inputs (persisted on CONVO
     messages as ``tool_calls``) can carry them, and the resource API rejects floats outright.
     """
+    assert_sk_prefix(item, sk_prefix)
     get_table().put_item(
         Item=to_ddb_numbers(dict(item)),
-        ConditionExpression="begins_with(SK, :prefix)",
-        ExpressionAttributeValues={":prefix": sk_prefix},
+        ConditionExpression="attribute_not_exists(SK)",
     )
 
 
@@ -171,23 +195,24 @@ def get_entry(user_id: str, entry_id: str) -> dict[str, Any] | None:
 def put_entry_conditional(item: Mapping[str, Any]) -> bool:
     """Write an ENTRY item exactly once. Returns ``True`` if created, ``False`` if it existed.
 
-    Two conditions in one expression (Sections 3.1.4 + 4.2.4):
+    The ``ENTRY#`` prefix invariant is enforced in code by :func:`assert_sk_prefix` — a
+    mis-constructed SK raises ``ValueError`` before any write is attempted, rather than
+    corrupting a sibling item collection.
 
-    - ``attribute_not_exists(SK)`` makes the confirm idempotent. A duplicate confirm — double
-      click, network retry, browser back/forward — fails the condition rather than overwriting
-      the entry, and the caller turns that into a ``200 OK`` instead of a ``201 Created``.
-    - ``begins_with(SK, "ENTRY#")`` is defense in depth: a mis-constructed SK is rejected before
-      it can corrupt a sibling item collection.
+    ``attribute_not_exists(SK)`` is what makes the confirm idempotent (Section 3.1.4): a
+    duplicate confirm — double click, network retry, browser back/forward — fails the condition
+    rather than overwriting the entry, and the caller turns that into ``200 OK`` instead of
+    ``201 Created``. Because the prefix is already guaranteed, a ``ConditionalCheckFailedException``
+    here has exactly one meaning: the entry already exists.
 
-    A ``ConditionalCheckFailedException`` cannot tell us *which* clause failed, so callers that
-    need certainty should re-read with :func:`get_entry` — absence means the prefix guard
-    tripped, which is a bug, not an idempotent replay.
+    Raises:
+        ValueError: if the item's SK is not an ``ENTRY#`` key.
     """
+    assert_sk_prefix(item, "ENTRY#")
     try:
         get_table().put_item(
             Item=to_ddb_numbers(dict(item)),
-            ConditionExpression="attribute_not_exists(SK) AND begins_with(SK, :prefix)",
-            ExpressionAttributeValues={":prefix": "ENTRY#"},
+            ConditionExpression="attribute_not_exists(SK)",
         )
         return True
     except ClientError as exc:

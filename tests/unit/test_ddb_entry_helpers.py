@@ -79,13 +79,29 @@ def test_from_ddb_numbers_leaves_other_types_alone():
 
 # --- conversation ------------------------------------------------------------
 
-def test_put_conversation_message_enforces_convo_prefix(table):
+def test_put_conversation_message_writes_create_only(table):
     fake = table()
     put_conversation_message({"PK": "USER#u1", "SK": "CONVO#s1#m1", "role": "user"})
 
     call = fake.put_calls[0]
-    assert call["ConditionExpression"] == "begins_with(SK, :prefix)"
-    assert call["ExpressionAttributeValues"] == {":prefix": "CONVO#"}
+    # A condition can only inspect the *existing* item, so it can express create-once and
+    # nothing more. `begins_with(SK, ...)` here would be false for every create.
+    assert call["ConditionExpression"] == "attribute_not_exists(SK)"
+    assert "ExpressionAttributeValues" not in call
+
+
+def test_put_conversation_message_rejects_foreign_sk_prefix(table):
+    fake = table()
+    # chat_lambda must not be able to write an ENTRY item, even via a bug upstream.
+    with pytest.raises(ValueError, match="ENTRY#e1"):
+        put_conversation_message({"PK": "USER#u1", "SK": "ENTRY#e1"})
+    assert fake.put_calls == []  # rejected before it reached DynamoDB
+
+
+def test_put_item_scoped_rejects_missing_sk(table):
+    table()
+    with pytest.raises(ValueError):
+        ddb_helpers.put_item_scoped({"PK": "USER#u1"}, "CONVO#")
 
 
 def test_put_conversation_message_marshals_floats(table):
@@ -115,13 +131,23 @@ def test_put_entry_conditional_returns_true_on_create(table):
     assert put_entry_conditional({"PK": "USER#u1", "SK": "ENTRY#e1"}) is True
 
     call = fake.put_calls[0]
-    assert call["ConditionExpression"] == "attribute_not_exists(SK) AND begins_with(SK, :prefix)"
-    assert call["ExpressionAttributeValues"] == {":prefix": "ENTRY#"}
+    # `attribute_not_exists(SK) AND begins_with(SK, :prefix)` is self-contradictory — the first
+    # clause requires the item absent, the second requires it present — so it never succeeds.
+    # Idempotency is the only thing the condition can express; the prefix is checked in code.
+    assert call["ConditionExpression"] == "attribute_not_exists(SK)"
+    assert "ExpressionAttributeValues" not in call
 
 
 def test_put_entry_conditional_returns_false_on_duplicate(table):
     table(put_error=_conditional_failed())
     assert put_entry_conditional({"PK": "USER#u1", "SK": "ENTRY#e1"}) is False
+
+
+def test_put_entry_conditional_rejects_foreign_sk_prefix(table):
+    fake = table()
+    with pytest.raises(ValueError, match="CONVO#"):
+        put_entry_conditional({"PK": "USER#u1", "SK": "CONVO#s1#m1"})
+    assert fake.put_calls == []
 
 
 def test_put_entry_conditional_reraises_other_errors(table):
