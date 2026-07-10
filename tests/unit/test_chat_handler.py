@@ -20,12 +20,17 @@ VALID_CERT_INPUT = {
     "skills_tags": ["aws"],
 }
 
+# Client-supplied identifiers must be well-formed ULIDs (ADR-032); the spec's example ULID and a
+# sibling serve as fixed session/message ids.
+SESSION_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+MESSAGE_ULID = "01BX5ZZKBKACTAV9WEVGEMMVRZ"
+
 
 @pytest.fixture
 def fake_ddb(monkeypatch):
-    """Capture CONVO writes and serve empty history."""
+    """Capture CONVO writes (reporting each as created) and serve empty history."""
     writes: list[dict] = []
-    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: writes.append(msg))
+    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: writes.append(msg) or True)
     monkeypatch.setattr(chat, "query_conversation", lambda user_id, session_id: [])
     return writes
 
@@ -81,18 +86,18 @@ def test_ask_clarification_returns_question(monkeypatch, fake_ddb):
 
 def test_convo_writes_use_convo_sk_prefix(monkeypatch, fake_ddb):
     _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
-    chat.handler(api_event({"message": "hi", "session_id": "SESS1"}), FakeLambdaContext())
+    chat.handler(api_event({"message": "hi", "session_id": SESSION_ULID}), FakeLambdaContext())
 
     for msg in fake_ddb:
-        assert msg["SK"].startswith("CONVO#SESS1#")
+        assert msg["SK"].startswith(f"CONVO#{SESSION_ULID}#")
         assert msg["PK"] == "USER#user-sub-1"
         assert msg["entity_type"] == "CONVO_MESSAGE"
 
 
 def test_supplied_session_id_is_echoed(monkeypatch, fake_ddb):
     _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
-    body = body_of(chat.handler(api_event({"message": "hi", "session_id": "SESS1"}), FakeLambdaContext()))
-    assert body["session_id"] == "SESS1"
+    body = body_of(chat.handler(api_event({"message": "hi", "session_id": SESSION_ULID}), FakeLambdaContext()))
+    assert body["session_id"] == SESSION_ULID
 
 
 def test_invalid_tool_input_retries_once_then_succeeds(monkeypatch, fake_ddb):
@@ -157,7 +162,7 @@ def test_user_message_is_persisted_before_bedrock_is_called(monkeypatch):
 
 
 def test_history_is_replayed_into_the_prompt(monkeypatch):
-    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: None)
+    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: True)
     monkeypatch.setattr(
         chat,
         "query_conversation",
@@ -168,11 +173,73 @@ def test_history_is_replayed_into_the_prompt(monkeypatch):
     )
     seen = _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
 
-    chat.handler(api_event({"message": "AWS SAA", "session_id": "S1"}), FakeLambdaContext())
+    chat.handler(api_event({"message": "AWS SAA", "session_id": SESSION_ULID}), FakeLambdaContext())
 
     roles = [m["role"] for m in seen[0]]
     assert roles == ["user", "assistant", "user"]
     assert seen[0][-1]["content"][0]["text"] == "AWS SAA"
+
+
+# --- turn idempotency (ADR-032) ------------------------------------------------
+
+def test_client_message_id_names_the_persisted_user_message(monkeypatch, fake_ddb):
+    _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
+
+    chat.handler(
+        api_event({"message": "hi", "session_id": SESSION_ULID, "client_message_id": MESSAGE_ULID}),
+        FakeLambdaContext(),
+    )
+
+    assert fake_ddb[0]["message_id"] == MESSAGE_ULID
+    assert fake_ddb[0]["SK"] == f"CONVO#{SESSION_ULID}#{MESSAGE_ULID}"
+
+
+@pytest.mark.parametrize("field", ["session_id", "client_message_id"])
+def test_malformed_ulid_identifier_is_bad_request(field, fake_ddb):
+    response = chat.handler(api_event({"message": "hi", field: "not#a#ulid"}), FakeLambdaContext())
+    assert response["statusCode"] == 400
+    assert fake_ddb == []  # rejected before anything was persisted
+
+
+def test_retried_turn_proceeds_when_message_already_persisted(monkeypatch):
+    # put returning False means the SK collided — the client is retrying and the message is
+    # already durable. The turn must proceed into inference, not error out.
+    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: False)
+    monkeypatch.setattr(chat, "query_conversation", lambda u, s: [])
+    _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
+
+    body = body_of(
+        chat.handler(
+            api_event({"message": "hi", "session_id": SESSION_ULID, "client_message_id": MESSAGE_ULID}),
+            FakeLambdaContext(),
+        )
+    )
+
+    assert body["kind"] == "parse_candidate"
+
+
+def test_retried_turn_replays_its_own_message_exactly_once(monkeypatch):
+    # The failed attempt already persisted this turn's message, so it comes back in history.
+    # Replay must drop it — it is appended as the new turn — or the prompt would contain it twice.
+    monkeypatch.setattr(chat, "put_conversation_message", lambda msg: False)
+    monkeypatch.setattr(
+        chat,
+        "query_conversation",
+        lambda u, s: [
+            {"role": "user", "content": "I got a cert.", "message_id": "01BX5ZZKBKACTAV9WEVGEMMVR0"},
+            {"role": "assistant", "content": "Which one?", "message_id": "01BX5ZZKBKACTAV9WEVGEMMVR1"},
+            {"role": "user", "content": "AWS SAA", "message_id": MESSAGE_ULID},
+        ],
+    )
+    seen = _mock_converse(monkeypatch, [tool_use_response("propose_entry", VALID_CERT_INPUT)])
+
+    chat.handler(
+        api_event({"message": "AWS SAA", "session_id": SESSION_ULID, "client_message_id": MESSAGE_ULID}),
+        FakeLambdaContext(),
+    )
+
+    texts = [m["content"][0]["text"] for m in seen[0]]
+    assert texts == ["I got a cert.", "Which one?", "AWS SAA"]  # exactly once, as the final turn
 
 
 def test_no_tool_use_block_returns_chat_error(monkeypatch, fake_ddb):
