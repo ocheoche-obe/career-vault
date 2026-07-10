@@ -850,7 +850,7 @@ This collides with the IAM guidance in architecture §4.2.3 ("Pinning model vers
 ### Decision
 - **Invoke Claude Haiku 4.5 through the `us.` cross-region inference profile** (`us.anthropic.claude-haiku-4-5-20251001-v1:0`). The `modelId` passed to the Converse API is the inference-profile ID, not the bare foundation-model ID. The `global.` profile is rejected for MVP (see alternatives).
 - **Invoke Titan Text Embeddings v2 by its bare model ID** (`amazon.titan-embed-text-v2:0`, `InvokeModel`) — unchanged from the architecture.
-- **IAM for the Haiku-using Lambdas grants `bedrock:InvokeModel` (and `bedrock:Converse`) on two resource shapes:**
+- **IAM for the Haiku-using Lambdas grants `bedrock:InvokeModel` on two resource shapes** (the Converse API authorizes against `bedrock:InvokeModel`; there is no distinct `bedrock:Converse` action):
   1. the inference-profile ARN: `arn:aws:bedrock:us-east-1:<account>:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0`, **and**
   2. the underlying foundation-model ARN in *every* region the `us.` profile can route to — `arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`, plus the same for `us-east-2` and `us-west-2`.
 
