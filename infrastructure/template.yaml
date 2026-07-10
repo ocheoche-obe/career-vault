@@ -1,10 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CareerVault — first vertical slice (auth + GET /settings). Provisions the DynamoDB
-  single table, Cognito User Pool + Hosted UI (ADR-025), a REST API Gateway with a Cognito
-  authorizer, the careervault-shared Lambda layer (ADR-023), and settings_lambda.
-  Chat / resume agent / check-ins / S3 / SES / CloudFront are intentionally out of scope here.
+  CareerVault — slices 1 + 2. Provisions the DynamoDB single table, Cognito User Pool + Hosted UI
+  (ADR-025), a REST API Gateway with a Cognito authorizer, the careervault-shared Lambda layer
+  (ADR-023), settings_lambda (GET /settings), chat_lambda (POST /chat) and career_crud
+  (POST /entries) for conversational entry ingestion (Section 3.1, ADR-031).
+  Resume agent / check-ins / S3 / SES / CloudFront are intentionally out of scope here.
 
 Parameters:
   Environment:
@@ -34,6 +35,37 @@ Parameters:
       (omits the property) — required on accounts with the new-account default Lambda
       concurrency limit of 10, where reserving any concurrency leaves <10 unreserved and is
       rejected. Set to a positive value (e.g. 5) once a Service Quotas increase is in place.
+  ChatReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for chat_lambda (arch §4.7.4 target: 5). Same -1 sentinel as
+      SettingsReservedConcurrency (ADR-030). This is the primary runaway-Bedrock-cost guard.
+  CareerCrudReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for career_crud (arch §4.7.4 target: 5). Same -1 sentinel (ADR-030).
+  HaikuInferenceProfileId:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: >
+      Cross-region inference profile ID invoked for Claude Haiku 4.5 (ADR-031). Haiku 4.5 has no
+      on-demand support, so this — not the bare foundation-model ID — is what Converse is called
+      with. Kept in lockstep with HaikuFoundationModelId, which drives the IAM grant.
+  HaikuFoundationModelId:
+    Type: String
+    Default: anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: >
+      The foundation model behind HaikuInferenceProfileId. Needed separately because the `us.`
+      profile routes inference across us-east-1/us-east-2/us-west-2, and IAM must grant
+      bedrock:InvokeModel on the foundation-model ARN in *each* of those regions (ADR-031).
+  TitanEmbedModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+    Description: >
+      Titan Text Embeddings v2 model ID (ADR-016 / ADR-024). On-demand, so it is invoked by its
+      bare model ID and its IAM grant is a single us-east-1 foundation-model ARN.
   AlarmEmail:
     Type: String
     Default: oche.ocheobe@gmail.com
@@ -49,6 +81,8 @@ Conditions:
   # on everywhere — it's near-zero cost and does not block deletes.
   IsProd: !Equals [!Ref Environment, prod]
   HasSettingsReservedConcurrency: !Not [!Equals [!Ref SettingsReservedConcurrency, -1]]
+  HasChatReservedConcurrency: !Not [!Equals [!Ref ChatReservedConcurrency, -1]]
+  HasCareerCrudReservedConcurrency: !Not [!Equals [!Ref CareerCrudReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -68,6 +102,9 @@ Globals:
         POWERTOOLS_LOG_LEVEL: !Ref LogLevel
         POWERTOOLS_METRICS_NAMESPACE: CareerVault
         CAREERVAULT_TABLE_NAME: !Ref CareerVaultTable
+        # With Lambda proxy integration the function echoes the allow-origin header on real
+        # responses; API Gateway's Cors block below only covers the OPTIONS preflight.
+        CORS_ALLOW_ORIGIN: !Ref CallbackUrl
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -185,9 +222,9 @@ Resources:
             Identity:
               Header: Authorization
       Cors:
-        AllowOrigin: "'http://localhost:5173'"
+        AllowOrigin: !Sub "'${CallbackUrl}'"
         AllowHeaders: "'Authorization,Content-Type'"
-        AllowMethods: "'GET,OPTIONS'"
+        AllowMethods: "'GET,POST,OPTIONS'"
 
   # ---------------------------------------------------------------------------
   # Shared Lambda layer (ADR-023 / Section 5.3) — attached to every function
@@ -258,6 +295,117 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
+  # Compute — chat_lambda (Phase A parse turn, Section 3.1.1)
+  #
+  # Writes CONVO# items only. It deliberately has no ENTRY# write permission: entry creation is
+  # career_crud's exclusive privilege, so an LLM hallucination or prompt injection here cannot
+  # bypass the user's confirmation step (Section 4.2.3).
+  # ---------------------------------------------------------------------------
+  ChatFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-chat-${Environment}'
+      CodeUri: ../backend/functions/chat/
+      Handler: handler.handler
+      # One Bedrock call plus two DDB writes; 30s leaves headroom for Haiku cold-path latency.
+      Timeout: 30
+      ReservedConcurrentExecutions: !If
+        - HasChatReservedConcurrency
+        - !Ref ChatReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: chat_lambda
+          BEDROCK_HAIKU_MODEL_ID: !Ref HaikuInferenceProfileId
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:PutItem
+              Resource: !GetAtt CareerVaultTable.Arn
+            # ADR-031: Haiku 4.5 is INFERENCE_PROFILE-only. Invoking through the `us.` profile
+            # requires BOTH the profile ARN and the foundation-model ARN in every region the
+            # profile can route to — the call is authorized where it actually executes.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${HaikuInferenceProfileId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${HaikuFoundationModelId}'
+      Events:
+        PostChat:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /chat
+            Method: post
+
+  ChatLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-chat-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
+  # Compute — career_crud (Phase B confirm + persist, Section 3.1.3)
+  #
+  # The only Lambda that may write ENTRY# items. Embeds via Titan inline (ADR-024).
+  # IAM grants GetItem + PutItem only: §4.2.3 also lists Query/UpdateItem/DeleteItem for this
+  # function, but those routes (list/edit/delete) do not exist yet — the permissions land with
+  # them rather than ahead of them.
+  # ---------------------------------------------------------------------------
+  CareerCrudFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-career-crud-${Environment}'
+      CodeUri: ../backend/functions/career_crud/
+      Handler: handler.handler
+      # Titan embed (~200–500 ms) + conditional PutItem; 15s is ample (arch §4.7.4).
+      Timeout: 15
+      ReservedConcurrentExecutions: !If
+        - HasCareerCrudReservedConcurrency
+        - !Ref CareerCrudReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: career_crud
+          BEDROCK_TITAN_EMBED_MODEL_ID: !Ref TitanEmbedModelId
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt CareerVaultTable.Arn
+            # Titan v2 is ON_DEMAND (ADR-031): a single, version-pinned foundation-model ARN in
+            # this region. No inference profile involved.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${TitanEmbedModelId}'
+      Events:
+        PostEntries:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /entries
+            Method: post
+
+  CareerCrudLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-career-crud-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
   # Cost & operational guardrails (arch §4.1.4)
   # ---------------------------------------------------------------------------
   # Single SNS topic for all CareerVault alarms; the user's email is subscribed (confirm the
@@ -282,6 +430,44 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref SettingsFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  ChatErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-chat-errors-${Environment}'
+      AlarmDescription: chat_lambda errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ChatFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  CareerCrudErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-career-crud-errors-${Environment}'
+      AlarmDescription: career_crud errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CareerCrudFunction
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1

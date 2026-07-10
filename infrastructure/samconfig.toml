@@ -6,6 +6,11 @@ version = 0.1
 #
 # NOTE: CognitoDomainPrefix must be globally unique within the region. If deploy fails with
 # a domain-already-exists error, change the prefix below (e.g. add your initials/account).
+#
+# Reserved concurrency (arch §4.7.4, ADR-030) is switched on here rather than in the template so
+# the -1 "off" default still works on accounts whose Lambda concurrency limit has not been raised.
+# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 reserved leaves 985
+# unreserved, well above Lambda's 100-unreserved floor.
 
 [default.deploy.parameters]
 stack_name = "careervault-dev"
@@ -18,6 +23,9 @@ parameter_overrides = [
     "LogLevel=DEBUG",
     "CognitoDomainPrefix=careervault-dev",
     "CallbackUrl=http://localhost:5173",
+    "SettingsReservedConcurrency=5",
+    "ChatReservedConcurrency=5",
+    "CareerCrudReservedConcurrency=5",
 ]
 
 [default.build.parameters]
@@ -36,6 +44,9 @@ parameter_overrides = [
     "CognitoDomainPrefix=careervault-prod",
     # No hosting yet (CloudFront deferred); update to the real web origin when it lands.
     "CallbackUrl=http://localhost:5173",
+    "SettingsReservedConcurrency=5",
+    "ChatReservedConcurrency=5",
+    "CareerCrudReservedConcurrency=5",
 ]
 
 [prod.build.parameters]
