@@ -1,0 +1,3 @@
+# career_crud has no function-specific dependencies — Powertools, Pydantic, the Bedrock client,
+# and the DDB helpers all come from the careervault-shared layer (ADR-023 / Section 5.3).
+# boto3 is provided by the Lambda runtime.
