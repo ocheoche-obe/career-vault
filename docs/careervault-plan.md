@@ -59,7 +59,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | P1 | Architecture design | — | ✅ | — |
 | 1 | Auth + `GET /settings` | FR-1 | ✅ | [#1](https://github.com/ocheoche-obe/career-vault/pull/1) |
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
-| 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | 🔨 | — |
+| 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | — |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ⬜ ⚠ | — |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ⬜ ⚠ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
@@ -135,7 +135,7 @@ First vertical slice; proved the full stack end-to-end.
 
 ---
 
-## Slice 2b — Chat UI + turn idempotency 🔨
+## Slice 2b — Chat UI + turn idempotency ✅
 
 **Goal:** A user can hold the full ingestion conversation in the browser — chat, get clarifying
 questions, review a proposed entry, confirm it, and see it saved — with a clean retry story.
@@ -162,13 +162,36 @@ questions, review a proposed entry, confirm it, and see it saved — with a clea
 **⚠ Decisions:** none open — ADR-032 settled the one this slice forced.
 
 **Exit criteria:**
-- [ ] Unit tests green, including the four ADR-032 behaviors.
-- [ ] Deployed to dev; retried chat turn verified idempotent against real DynamoDB (one CONVO
+- [x] Unit tests green, including the four ADR-032 behaviors (100 passing).
+- [x] Deployed to dev; retried chat turn verified idempotent against real DynamoDB (one CONVO
       item, one prompt occurrence).
-- [ ] Full chat → clarify → propose → confirm → 201 flow smoke-tested *from the UI*.
-- [ ] Duplicate confirm from the UI surfaces the 200-duplicate path sanely.
+- [x] Full chat → clarify → propose → confirm → 201 flow smoke-tested *from the UI* (Oche,
+      2026-07-10: vague message → clarifying question; concrete message → card → edit → saved).
+- [x] Duplicate confirm 200 path — verified at the API level (same `entry_id` twice → 200 with
+      the stored item). *Reinterpreted at wrap:* after a successful save the card freezes, so
+      this path is UI-reachable only when a confirm fails mid-flight and is retried; the
+      duplicate a user actually produces is *semantic* (see completion notes).
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:** _(wrapped 2026-07-10, PR #TBD)_
+- **Backend (ADR-032):** `POST /chat` takes an optional client-minted `client_message_id`;
+  user message persisted with a conditional put (`False` = retry, proceed to inference);
+  history replay excludes the incoming id; both `client_message_id` and `session_id` validated
+  as ULIDs before SK construction — closing the previously unvalidated `session_id` gap.
+  `put_conversation_message` now mirrors `put_entry_conditional`'s True/False contract.
+- **Frontend:** chat pane (`frontend/src/chat/`) with clarification/error turns and
+  retry-reuses-the-ULID semantics; `ProposalCard` renders all eight entry types generically
+  with inline 422 field errors and saved/already-saved/failed states; self-contained ULID
+  generator (`src/lib/ulid.ts`, no new dependency); typed API client (`src/lib/api.ts`).
+  Replaced the slice-1 settings JSON dump.
+- **Verified:** deployed Lambda invoked twice with identical payload → exactly one user CONVO
+  item under the client-supplied SK; malformed `session_id` → 400; UI flow smoke-tested by Oche
+  against real Bedrock end-to-end.
+- **Finding → slice 3:** re-describing the same accomplishment mints a fresh `entry_id`, so it
+  saves as a new entry ("Saved", 201) rather than surfacing as a duplicate — §3.1.4 idempotency
+  only covers the same proposal card. Semantic duplicate detection via embedding similarity is
+  now a slice 3 ⚠ decision. Two real duplicates this produced in dev were hard-deleted.
+- Within-session field "memory" (e.g. a start date reappearing on a re-proposal) is AP-12
+  history replay, not an entry lookup — a fresh session will ask again.
 
 ---
 
@@ -195,6 +218,12 @@ ADR-027 (hard delete), ADR-028 (no GSIs — reads are PK Queries).
 - Re-embed on edit: ADR-024 puts embedding in the write path — confirm updates re-embed
   synchronously when text fields change (and skip when they don't). Likely an ADR note, not a
   new ADR.
+- **Semantic duplicate detection (found in 2b UI testing, 2026-07-10):** describing the same
+  accomplishment in a new message mints a fresh `entry_id`, so it saves as a brand-new entry —
+  §3.1.4 idempotency only covers retries of the *same* proposal card. Once Query IAM lands,
+  `career_crud` can cosine-compare the new entry's (already-computed) embedding against existing
+  entries at confirm time and surface a "possible duplicate — save anyway?" signal. Needs an ADR:
+  threshold, warn-vs-block, and response shape.
 
 **Exit criteria:** deployed to dev; list/edit/delete each smoke-tested from the UI; deleted
 entry verifiably gone from DynamoDB; edited entry's embedding refreshed.

@@ -115,10 +115,10 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Current slice: 2b — chat UI + turn idempotency (ADR-032).**
+**Phase 2 — Implementation (in progress). Current slice: 3 — entries dashboard + CRUD completion.**
 
-- Last completed: slice 2a — chat + entry ingestion backend, deployed to dev and smoke-tested
-  end-to-end (PR #2). Slice 1 (auth + `GET /settings`) landed via PR #1.
+- Last completed: slice 2b — chat UI + turn idempotency (ADR-032), deployed to dev and
+  smoke-tested from the browser. Before that: 2a chat backend (PR #2), 1 auth + settings (PR #1).
 - **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
   criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
   Bedrock gotchas that used to live here). Read the status board + current slice section at
