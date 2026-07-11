@@ -59,7 +59,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | P1 | Architecture design | — | ✅ | — |
 | 1 | Auth + `GET /settings` | FR-1 | ✅ | [#1](https://github.com/ocheoche-obe/career-vault/pull/1) |
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
-| 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | — |
+| 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ⬜ ⚠ | — |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ⬜ ⚠ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
@@ -172,7 +172,7 @@ questions, review a proposed entry, confirm it, and see it saved — with a clea
       this path is UI-reachable only when a confirm fails mid-flight and is retried; the
       duplicate a user actually produces is *semantic* (see completion notes).
 
-**Completion notes:** _(wrapped 2026-07-10, PR #TBD)_
+**Completion notes:** _(wrapped 2026-07-10, PR #3)_
 - **Backend (ADR-032):** `POST /chat` takes an optional client-minted `client_message_id`;
   user message persisted with a conditional put (`False` = retry, proceed to inference);
   history replay excludes the incoming id; both `client_message_id` and `session_id` validated
