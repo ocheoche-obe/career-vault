@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-06-16 (ADR-031 added at the start of slice 2 — first live Bedrock calls)
+**Last updated:** 2026-07-10 (ADR-032 added at the start of slice 2b — chat turn idempotency)
 
 ---
 
@@ -62,6 +62,7 @@ Each ADR has:
 | ADR-029 | Frontend auth integration library — react-oidc-context             | Accepted   |
 | ADR-030 | Environment-gated table protection + parameterized reserved concurrency | Accepted |
 | ADR-031 | Bedrock invocation via cross-region inference profile (Haiku 4.5)  | Accepted   |
+| ADR-032 | Chat turn idempotency — client-supplied message ID                 | Accepted   |
 
 ---
 
@@ -872,6 +873,42 @@ This collides with the IAM guidance in architecture §4.2.3 ("Pinning model vers
 
 ### Cross-cloud parallel
 The "logical model alias that fans out across regions for capacity" pattern recurs: **Azure OpenAI** uses *deployments* (and Global/Data-Zone Standard deployment types) that decouple the called name from the physical region; **GCP Vertex AI** offers global and multi-region endpoints for the same reason. On every cloud the portable lesson is identical — the thing you invoke is an indirection over physical model capacity, and your access policy has to authorize every place that indirection can land.
+
+---
+
+## ADR-032: Chat turn idempotency — client-supplied message ID
+
+**Status:** Accepted
+**Date:** 2026-07-10
+
+### Context
+`chat_lambda` persists the user's message *before* calling Bedrock (§3.1.1), so a failed inference never loses the user's input. The `message_id` in the SK (`CONVO#<session_id>#<message_id>`) is a **server-minted** ULID, minted fresh on every invocation — so when the client retries a failed turn, the same user message is persisted a second time under a new ULID. Two consequences:
+
+1. Duplicate CONVO items for one logical message (cosmetic — unique keys, no write conflict).
+2. Worse: the duplicate is **replayed into every later prompt** for that session, since history replay (`_to_converse_messages`) includes both copies. Duplicated turns skew the model's read of the conversation.
+
+Slice 2b builds the first real chat client, which needs a defined retry story before its network-error handling is written. A related latent issue surfaced during this review: `session_id` is client-echoed straight into the SK **without format validation** — a client could submit a value containing `#` and distort the SK structure. Blast radius is bounded (the PK is always the caller's own `USER#<sub>`, and `assert_sk_prefix` confines writes to `CONVO#`), but it violates the "keys are constructed, never concatenated from raw input" spirit of §4.2.4.
+
+### Decision
+- **`POST /chat` accepts an optional `client_message_id`** — a client-minted ULID identifying the user message for this logical turn. The first-party client (slice 2b) always sends it: minted once when the user hits send, reused verbatim on every retry of that turn.
+- **The server uses it as the `message_id`** in the SK and persists the user message with a `ConditionExpression: attribute_not_exists(PK)` conditional put. A `ConditionalCheckFailedException` means "this is a retry, the message is already durable" — the handler treats it as success and proceeds to the Bedrock call (re-running inference on retry is the *point* of retrying).
+- **History replay excludes the item whose `message_id` equals the incoming `client_message_id`**, so a retried turn's prompt contains the message exactly once (it is appended as the new turn, not replayed from history).
+- **Both `client_message_id` and `session_id` are validated as well-formed ULIDs** (26-character Crockford base32) before being embedded in the SK. Invalid → 400. This closes the unvalidated-`session_id` gap in the same change.
+- **When `client_message_id` is absent, the server mints one** — today's behavior, and the same optional-with-fallback convention `session_id` already uses. Callers that don't supply it don't get retry idempotency; the first-party client always supplies it.
+
+### Alternatives considered
+- **Content-based dedupe** (hash of message text + recency window). Heuristic — it misfires on genuinely repeated identical messages ("yes", "done", "same as last time"), which are common in chat. Rejected: identity should come from the client's intent, not from content similarity.
+- **Make the field required** (400 when absent). One code path, strongest contract — but it breaks the already-deployed dev API and every smoke-test invocation for no MVP gain, and it diverges from the established `session_id` optional-with-fallback convention. Rejected for now; revisit if a second client ever appears.
+- **Do nothing until it hurts.** The duplicate is harmless to storage but not to prompt quality, and the fix is cheapest now, while the handler is fresh and before the 2b client hard-codes a retry behavior around the old semantics. Rejected.
+
+### Consequences
+- ✅ Chat-turn retry becomes idempotent end-to-end, matching the `entry_id` pattern of §3.1.4 — both write paths now share one idiom: *the party that initiates the action mints the ID; conditional put makes replays no-ops*.
+- ✅ `session_id` gains the format validation it should always have had.
+- ⚠️ A client-minted ULID carries the client's clock. Skew can slightly misorder a user message against server-minted assistant ULIDs in the same session's SK sort. Acceptable at single-user MVP: within a turn, the user message is minted before the assistant reply exists, so per-turn ordering holds in practice.
+- ⚠️ Idempotency is opt-in by contract. Documented; the only real client opts in.
+
+### Cross-cloud parallel
+Client-generated idempotency keys are the industry-wide answer to "retried writes must not duplicate": Stripe's `Idempotency-Key` header, Azure's `x-ms-client-request-id`, GCP's `requestId` on mutating APIs. The portable lesson: only the *originator* of a request can distinguish "retry of the same intent" from "new identical intent," so the originator must name the intent.
 
 ---
 

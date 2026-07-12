@@ -16,6 +16,7 @@ Single-user MVP per ADR-006 and ADR-007, with the data model designed to be mult
 ## Canonical docs (always trust these first)
 
 - **`docs/careervault-architecture.md`** — full architecture document (v1.0, complete). Authoritative source for system design, data model, sequence diagrams, cross-cutting concerns, and SAM template structure.
+- **`docs/careervault-plan.md`** — implementation plan & roadmap. Authoritative for slice order, per-slice scope/exit criteria, status, and completion notes.
 - **`docs/careervault-requirements.md`** — functional and non-functional requirements (v0.4, complete).
 - **`docs/careervault-adl.md`** — Architectural Decision Records. The "why" behind every significant choice.
 - **`docs/careervault-glossary.md`** — terms, AWS services, cross-cloud parallels.
@@ -114,54 +115,14 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress)**
+**Phase 2 — Implementation (in progress). Current slice: 3 — entries dashboard + CRUD completion.**
 
-Completed:
-- ✅ Phase 0 — Requirements gathering (`careervault-requirements.md` v0.4)
-- ✅ Phase 1 — Architecture design (`careervault-architecture.md` v1.1, all 5 sections + ADRs)
-- ✅ Phase 2 slice 1 — First vertical slice (auth + `GET /settings`):
-  - `infrastructure/template.yaml` — SAM template: DynamoDB `CareerVaultTable-${Environment}`
-    (PITR + Deletion Protection + AWS-managed SSE), Cognito User Pool + SPA client + Hosted UI
-    domain (ADR-025), REST API Gateway with Cognito authorizer, `careervault-shared` layer,
-    `settings_lambda` (`GET /settings`), Outputs for the frontend. `infrastructure/samconfig.toml`
-    with dev/prod sections.
-  - `backend/shared/python/careervault/` — `observability.py`, `ddb_helpers.py`,
-    `bedrock_client.py` (stub), `pydantic_models/profile.py`.
-  - `backend/functions/settings/handler.py` — `GET /settings`, returns default profile if none.
-  - `frontend/` — Vite React-TS + `react-oidc-context` (ADR-029); Sign in → Hosted UI →
-    renders `GET /settings` JSON. Run on `localhost:5173`; copy `.env.example` → `.env.local`.
-  - Unit tests in `tests/unit/`; sample API-GW event in `tests/events/settings_get.json`.
-  - Deploy: `cd infrastructure && sam build && sam deploy` (deletion protection blocks table
-    teardown — disable manually first). Create the one user via `aws cognito-idp admin-create-user`.
-
-- ✅ Phase 2 slice 2a — chat + entry ingestion, **backend deployed to dev and smoke-tested
-  end-to-end** (`POST /chat` → clarification → multi-turn parse → `POST /entries` 201 → duplicate
-  confirm 200). React chat UI deferred to slice 2b.
-  - `backend/functions/chat/` — `POST /chat`, Phase A parse turn; two tools + `toolChoice=any`;
-    persists the user message *before* calling Bedrock; one validation-feedback retry (§3.1.6).
-  - `backend/functions/career_crud/` — `POST /entries`, Phase B; Pydantic validation → Titan embed
-    → conditional PutItem; 201/200/422/500 contract (§3.1.5). Only `GetItem`+`PutItem` in IAM;
-    Query/Update/Delete land with their routes.
-  - Shared layer: `pydantic_models/{entry,tools,conversation}.py`, real `bedrock_client.py`,
-    CONVO/ENTRY `ddb_helpers` + float↔Decimal marshalling.
-  - **ADR-031**: Claude Haiku 4.5 is invoked via the `us.` cross-region **inference profile**
-    (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) — it has no on-demand support. IAM grants
-    `bedrock:InvokeModel` on the profile ARN **plus** the foundation-model ARN in us-east-1 /
-    us-east-2 / us-west-2. Titan v2 (`amazon.titan-embed-text-v2:0`) stays on-demand. Model IDs
-    live in env vars in lockstep with the IAM ARNs.
-  - Reserved concurrency is **live** (5/5/5) — the account's Lambda limit was restored from 10 to
-    1000, so ADR-030's parameterized §4.7.4 guard is switched on via `samconfig.toml`.
-  - **Bedrock gotcha:** Anthropic models 404 with `ResourceNotFoundException` until the account's
-    **Anthropic use-case form** is submitted (Bedrock console → Model access). Titan is unaffected;
-    Titan-works-while-Claude-404s is the diagnostic signature. Submitted for this account.
-  - Arch doc corrected to **v1.3** by two live-API findings: §4.6.2 (Titan v2 has no multi-input
-    request form — `embed_many` is a client-side loop) and §4.2.4 (an SK-prefix
-    `ConditionExpression` can never succeed; the invariant lives in `assert_sk_prefix`).
-
-Known wrinkle (slice 2b): retrying a failed chat turn re-persists the user's message, so a
-retried turn appears twice in CONVO history. Harmless (unique ULIDs) but worth a client-supplied
-message id or content dedupe when the chat UI lands.
-
-Next: Phase 2 slice 2b — React chat UI wired to `POST /chat` + `POST /entries`.
+- Last completed: slice 2b — chat UI + turn idempotency (ADR-032), deployed to dev and
+  smoke-tested from the browser. Before that: 2a chat backend (PR #2), 1 auth + settings (PR #1).
+- **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
+  criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
+  Bedrock gotchas that used to live here). Read the status board + current slice section at
+  session start; update it when a slice wraps.
+- Session rituals: `/start-slice` and `/wrap-slice` (project skills in `.claude/skills/`).
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.

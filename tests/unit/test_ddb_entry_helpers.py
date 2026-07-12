@@ -12,6 +12,8 @@ from botocore.exceptions import ClientError
 from careervault import ddb_helpers
 from careervault.ddb_helpers import (
     from_ddb_numbers,
+    is_valid_ulid,
+    new_ulid,
     put_conversation_message,
     put_entry_conditional,
     query_conversation,
@@ -77,17 +79,53 @@ def test_from_ddb_numbers_leaves_other_types_alone():
     assert from_ddb_numbers({"s": "x", "b": True, "n": None}) == {"s": "x", "b": True, "n": None}
 
 
+# --- ULID validation (ADR-032) ------------------------------------------------
+
+def test_is_valid_ulid_accepts_minted_ulids():
+    assert is_valid_ulid(new_ulid()) is True
+    assert is_valid_ulid("01ARZ3NDEKTSV4RRFFQ69G5FAV") is True  # spec example
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "SESS1",  # too short
+        "01ARZ3NDEKTSV4RRFFQ69G5FA",  # 25 chars
+        "x#injected#CONVO",  # SK-structure injection attempt
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV extra",
+        "",
+        None,
+        42,
+    ],
+)
+def test_is_valid_ulid_rejects_malformed_values(value):
+    assert is_valid_ulid(value) is False
+
+
 # --- conversation ------------------------------------------------------------
 
 def test_put_conversation_message_writes_create_only(table):
     fake = table()
-    put_conversation_message({"PK": "USER#u1", "SK": "CONVO#s1#m1", "role": "user"})
+    assert put_conversation_message({"PK": "USER#u1", "SK": "CONVO#s1#m1", "role": "user"}) is True
 
     call = fake.put_calls[0]
     # A condition can only inspect the *existing* item, so it can express create-once and
     # nothing more. `begins_with(SK, ...)` here would be false for every create.
     assert call["ConditionExpression"] == "attribute_not_exists(SK)"
     assert "ExpressionAttributeValues" not in call
+
+
+def test_put_conversation_message_returns_false_on_duplicate(table):
+    # A retried chat turn reuses its client_message_id, so the SK collides — the caller treats
+    # False as "already durable, proceed" (ADR-032), mirroring put_entry_conditional.
+    table(put_error=_conditional_failed())
+    assert put_conversation_message({"PK": "USER#u1", "SK": "CONVO#s1#m1", "role": "user"}) is False
+
+
+def test_put_conversation_message_reraises_other_errors(table):
+    table(put_error=ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "PutItem"))
+    with pytest.raises(ClientError):
+        put_conversation_message({"PK": "USER#u1", "SK": "CONVO#s1#m1", "role": "user"})
 
 
 def test_put_conversation_message_rejects_foreign_sk_prefix(table):

@@ -10,7 +10,9 @@ Flow per turn:
 1. Extract ``user_id`` from the Cognito-validated JWT claims (never the body — Section 4.2.4).
 2. Query the session's history (AP-12).
 3. Persist the user's message *before* calling Bedrock — if Bedrock fails, the message is already
-   durably recorded and the user can retry without retyping (Section 3.1.1).
+   durably recorded and the user can retry without retyping (Section 3.1.1). The client names the
+   turn via ``client_message_id`` (a ULID it reuses on retry), so the persist is idempotent and a
+   retried turn never duplicates in history or replayed prompts (ADR-032).
 4. Call Haiku with two tools and ``toolChoice: any``, forcing structured output (Section 3.1.2).
 5. Validate the tool input; on ``propose_entry``, mint the ULID that makes the eventual confirm
    idempotent (Section 3.1.4) and hand the candidate back for the user to review.
@@ -31,6 +33,7 @@ from careervault import bedrock_client
 from careervault.bedrock_client import BedrockError
 from careervault.ddb_helpers import (
     extract_user_id,
+    is_valid_ulid,
     new_ulid,
     put_conversation_message,
     query_conversation,
@@ -138,22 +141,37 @@ def handler(event, context) -> dict:
         return _response(400, {"message": f"'message' exceeds {_MAX_MESSAGE_CHARS} characters"})
 
     # A missing session_id starts a new session. The client echoes it back on subsequent turns.
+    # Both client-supplied identifiers are embedded in the SK, so they must be well-formed ULIDs
+    # (ADR-032) — anything else could distort the key structure (Section 4.2.4).
     session_id = body.get("session_id") or new_ulid()
+    if not is_valid_ulid(session_id):
+        return _response(400, {"message": "'session_id' must be a valid ULID"})
     logger.append_keys(session_id=session_id)
 
-    history = query_conversation(user_id, session_id)
+    # The client mints this once per logical turn and reuses it verbatim on retry — that reuse is
+    # what makes the turn idempotent (ADR-032). Absent, the server mints one (no idempotency).
+    user_message_id = body.get("client_message_id") or new_ulid()
+    if not is_valid_ulid(user_message_id):
+        return _response(400, {"message": "'client_message_id' must be a valid ULID"})
+
+    # A retried turn's message is already in history from the failed attempt; drop it so the
+    # prompt contains it exactly once (it is appended below as the new turn).
+    history = [m for m in query_conversation(user_id, session_id) if m.get("message_id") != user_message_id]
 
     # Persist the user's message before calling Bedrock (Section 3.1.1): if inference fails, the
-    # input survives and retry is free.
-    put_conversation_message(
+    # input survives and retry is free. False means the SK already exists — this is a retry and
+    # the message is already durable, so continue into inference rather than erroring.
+    created = put_conversation_message(
         build_message(
             user_id=user_id,
             session_id=session_id,
-            message_id=new_ulid(),
+            message_id=user_message_id,
             role="user",
             content=message,
         ).model_dump()
     )
+    if not created:
+        logger.info("Retried turn: user message already persisted", extra={"message_id": user_message_id})
 
     messages = _to_converse_messages(history, message)
     tool_config = build_tool_config()

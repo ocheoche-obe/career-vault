@@ -48,6 +48,22 @@ def new_ulid() -> str:
     return str(ULID())
 
 
+def is_valid_ulid(value: Any) -> bool:
+    """True if ``value`` is a well-formed ULID string (26 chars, Crockford base32).
+
+    Client-supplied identifiers (``session_id``, ``client_message_id`` per ADR-032) are embedded
+    in sort keys, so they must be validated as ULIDs before key construction — a raw string
+    containing ``#`` would distort the SK structure (Section 4.2.4).
+    """
+    if not isinstance(value, str):
+        return False
+    try:
+        ULID.from_str(value)
+        return True
+    except ValueError:
+        return False
+
+
 def extract_user_id(event: Mapping[str, Any]) -> str:
     """Extract the Cognito ``sub`` from a REST API Gateway proxy event's JWT claims.
 
@@ -157,9 +173,28 @@ def from_ddb_numbers(value: Any) -> Any:
 MAX_HISTORY_MESSAGES = 20
 
 
-def put_conversation_message(message: Mapping[str, Any]) -> None:
-    """Persist a CONVO message, enforcing the ``CONVO#`` SK invariant (Section 4.2.4)."""
-    put_item_scoped(message, "CONVO#")
+def put_conversation_message(message: Mapping[str, Any]) -> bool:
+    """Persist a CONVO message exactly once. Returns ``True`` if created, ``False`` if it existed.
+
+    The ``CONVO#`` prefix invariant is enforced in code by :func:`assert_sk_prefix`. The
+    conditional write is what makes a retried chat turn idempotent (ADR-032): the client reuses
+    its ``client_message_id`` on retry, the SK collides, and the caller treats ``False`` as
+    "already durable — proceed" rather than an error. Same idiom as :func:`put_entry_conditional`.
+
+    Raises:
+        ValueError: if the item's SK is not a ``CONVO#`` key.
+    """
+    assert_sk_prefix(message, "CONVO#")
+    try:
+        get_table().put_item(
+            Item=to_ddb_numbers(dict(message)),
+            ConditionExpression="attribute_not_exists(SK)",
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
 
 
 def query_conversation(

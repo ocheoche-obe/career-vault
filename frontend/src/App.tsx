@@ -1,31 +1,15 @@
-import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { apiBaseUrl, buildLogoutUrl } from './auth/oidcConfig'
+import { buildLogoutUrl } from './auth/oidcConfig'
+import { Chat } from './chat/Chat'
 import './App.css'
 
 /**
- * First-slice UI: a single page that shows "Sign in" before auth and the GET /settings JSON
- * after auth. Auth is OAuth2 Authorization Code + PKCE against Cognito Hosted UI (ADR-025).
+ * Slice 2b UI: the ingestion chat (FR-2) behind Cognito auth. Sign in via Hosted UI with
+ * OAuth2 Authorization Code + PKCE (ADR-025), then converse — entries persist only after the
+ * user confirms a proposal card. The entries dashboard arrives in slice 3.
  */
 function App() {
   const auth = useAuth()
-  const [settings, setSettings] = useState<unknown>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  // Fetch GET /settings once authenticated, using the Cognito ID token as the bearer.
-  useEffect(() => {
-    if (!auth.isAuthenticated || !auth.user) return
-    setError(null)
-    fetch(`${apiBaseUrl}/settings`, {
-      headers: { Authorization: `Bearer ${auth.user.id_token}` },
-    })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`GET /settings → ${res.status}`)
-        return res.json()
-      })
-      .then(setSettings)
-      .catch((e) => setError(String(e)))
-  }, [auth.isAuthenticated, auth.user])
 
   if (auth.isLoading) return <main><p>Loading…</p></main>
   if (auth.error) return <main><p>Auth error: {auth.error.message}</p></main>
@@ -47,12 +31,14 @@ function App() {
 
   return (
     <main>
-      <h1>CareerVault</h1>
-      <p>Signed in as {auth.user?.profile.email ?? auth.user?.profile.sub}</p>
-      <button onClick={signOut}>Sign out</button>
-      <h2>GET /settings</h2>
-      {error && <p style={{ color: 'crimson' }}>{error}</p>}
-      <pre>{settings ? JSON.stringify(settings, null, 2) : 'Loading settings…'}</pre>
+      <header className="app-header">
+        <h1>CareerVault</h1>
+        <div className="app-header-user">
+          <span>{auth.user?.profile.email ?? auth.user?.profile.sub}</span>
+          <button onClick={signOut}>Sign out</button>
+        </div>
+      </header>
+      {auth.user?.id_token ? <Chat idToken={auth.user.id_token} /> : <p>No token — sign in again.</p>}
     </main>
   )
 }
