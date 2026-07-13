@@ -403,8 +403,10 @@ or explicitly parked.
 **Scope — in:** integration test suite against deployed dev + **DynamoDB Local** for
 conditional-write semantics (arch §5.6 — the v1.3 changelog explicitly calls for this net after
 the SK-prefix bug slipped past string-assertion tests); README refresh (currently describes only
-slice 1); FR/NFR coverage audit against requirements v0.4; cost review against the $5 ceiling
-with real Bedrock numbers; memory + docs sweep.
+slice 1); FR/NFR coverage audit against requirements v0.5; **MVP evaluation scorecard** — score
+the shipped MVP against the requirements §7 success criteria and the NFRs (cost, latency),
+capturing what worked / what to improve and routing each finding into the v1.1 plan or parking
+lot; cost review against the $5 ceiling with real Bedrock numbers; memory + docs sweep.
 
 **⚠ Decisions:**
 - Deploy the prod stack (billing alarms are already prod-gated) vs declare dev-as-MVP for a
@@ -412,7 +414,8 @@ with real Bedrock numbers; memory + docs sweep.
 - Which parking-lot items graduate to a v1.1 plan.
 
 **Exit criteria:** every FR maps to a verified slice or a documented deferral; integration tests
-runnable with one command; this doc's status board all ✅; MVP declared.
+runnable with one command; MVP scored against the §7 success criteria + NFRs with findings routed;
+this doc's status board all ✅; MVP declared.
 
 **Completion notes:** _(filled at wrap)_
 

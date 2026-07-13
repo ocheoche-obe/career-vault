@@ -19,6 +19,11 @@ Run these steps in order. The docs step is blocking: a slice is not done until t
   deployed/verified, gotchas discovered, wrinkles deferred — same altitude as the slice 1/2a
   notes), check off exit criteria, and sanity-check that the *next* slice's section still
   reflects reality. This is what makes the next session's cold start cheap.
+- **Evaluation beat** — close the loop inside the plan's Completion notes: did the slice meet
+  its exit criteria and NFR targets, what did it *actually* cost (record real $ vs the $5
+  ceiling once a slice adds Bedrock — slices 5–8), and one thing to improve. Route any finding
+  to a later slice, an ADR, or the parking lot. The full MVP-level scorecard against
+  requirements §7 + NFRs lands at slice 9.
 - **`CLAUDE.md` "Current build phase"** — refresh the pointer: current slice, last completed
   slice. It stays compact; detail belongs in the plan doc.
 - **`docs/careervault-adl.md`** — every decision the slice forced is captured as an ADR (they should already exist from /start-slice step 6; verify). Update the index table and the "Last updated" line.

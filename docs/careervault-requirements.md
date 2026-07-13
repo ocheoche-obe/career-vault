@@ -1,8 +1,8 @@
 # CareerVault — Requirements Document
 
-**Version:** 0.4
+**Version:** 0.5
 **Status:** Approved — requirements gathering phase complete
-**Last updated:** 2026-06-08
+**Last updated:** 2026-07-12
 
 ---
 
@@ -112,8 +112,8 @@ Numbered for traceability. Each requirement is testable.
 ## 5. Non-Functional Requirements
 
 ### Cost
-- **NFR-1.1** Total monthly AWS spend shall not exceed **$10/month** under normal personal usage.
-- **NFR-1.2** A CloudWatch billing alarm shall be configured at $5/month (warning) and $10/month (critical).
+- **NFR-1.1** Total monthly AWS spend shall not exceed **$5/month** under normal personal usage. (Tightened from the original $10 after the account lost its 12-month free tier / credits on joining an AWS Organization; enforced by the `careervault-monthly-5usd` AWS Budget.)
+- **NFR-1.2** CloudWatch billing alarms shall be configured at **$3/month (warning)** and **$5/month (critical)**, prod-gated (arch §4.1.4).
 - **NFR-1.3** Bedrock model selection shall default to Claude Haiku for low-complexity tasks (entry parsing, check-in prompt generation) and reserve Claude Sonnet for high-value tasks (resume tailoring, agent loops).
 - **NFR-1.4** All DynamoDB tables shall use on-demand billing mode (no provisioned capacity costs at low usage).
 
@@ -158,7 +158,7 @@ Numbered for traceability. Each requirement is testable.
 
 ### Business constraints
 - This is a personal weekend project; estimated effort is 5 phases of ~2 weeks part-time work.
-- $10/month spend ceiling (see NFR-1.1).
+- $5/month spend ceiling (see NFR-1.1).
 - Single developer (the user) with assistance from Claude Code.
 
 ### Assumptions
@@ -178,7 +178,7 @@ The MVP is "done enough to use" when all of the following are true:
 3. The user receives a personalized weekly check-in email referencing recent entries.
 4. The user can submit a job description and receive tailored resume bullets within 30 seconds.
 5. The user can download a generated resume as a PDF.
-6. Monthly AWS spend during normal usage stays under $10.
+6. Monthly AWS spend during normal usage stays under $5.
 
 Stretch (still v1 but nice to have):
 - A timeline visualization on the dashboard.
@@ -212,3 +212,4 @@ The glossary has graduated to its own document: `careervault-glossary.md`. It is
 | 0.2     | 2026-05-31 | Consolidation: locked MVP scope, success criteria, FR/NFR numbering; surfaced open questions.    |
 | 0.3     | 2026-06-03 | Resolved open questions Q-2 through Q-5; Q-1 formally deferred to architecture phase. Glossary extracted to standalone document. Requirements phase marked complete. |
 | 0.4     | 2026-06-08 | Added post-hoc named-entity verification for generated resumes to the deferred backlog (surfaced during Section 3.2 drafting; addresses content hallucination not programmatically caught in MVP). |
+| 0.5     | 2026-07-12 | Corrected the cost ceiling to the authoritative **$5** (NFR-1.1, §7.6) and billing-alarm thresholds to **$3 warning / $5 critical** (NFR-1.2), reconciling the requirements doc with CLAUDE.md and the `careervault-monthly-5usd` budget. The original $10 predated the account losing its free-tier/credits on joining an AWS Org. |
