@@ -60,7 +60,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 1 | Auth + `GET /settings` | FR-1 | ✅ | [#1](https://github.com/ocheoche-obe/career-vault/pull/1) |
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
-| 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | _(PR pending)_ |
+| 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ⬜ ⚠ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
@@ -233,7 +233,7 @@ entry verifiably gone from DynamoDB; edited entry's embedding refreshed only whe
 (and skipped when it didn't); a re-described accomplishment triggers the `409` "possible
 duplicate" warning and "save anyway" writes it.
 
-**Completion notes:** _(wrapped 2026-07-13)_
+**Completion notes:** _(wrapped 2026-07-13, PR #4)_
 - **Backend:** `career_crud` is now the full entry lifecycle — `GET /entries` (paginated AP-10
   list), `PUT /entries/{id}`, `DELETE /entries/{id}` alongside the original `POST`. New shared
   helpers `query_entries`/`put_entry_update`/`delete_entry` + a reusable `similarity` module
