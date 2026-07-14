@@ -1,15 +1,20 @@
+import { useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { buildLogoutUrl } from './auth/oidcConfig'
 import { Chat } from './chat/Chat'
+import { Dashboard } from './entries/Dashboard'
 import './App.css'
+import './entries/entries.css'
 
 /**
- * Slice 2b UI: the ingestion chat (FR-2) behind Cognito auth. Sign in via Hosted UI with
- * OAuth2 Authorization Code + PKCE (ADR-025), then converse — entries persist only after the
- * user confirms a proposal card. The entries dashboard arrives in slice 3.
+ * Authed shell (ADR-025). Two views behind Cognito auth: the ingestion Chat (FR-2) and the
+ * entries Dashboard (FR-3.2/3.3). Entries persist only after the user confirms a proposal card.
  */
+type View = 'chat' | 'entries'
+
 function App() {
   const auth = useAuth()
+  const [view, setView] = useState<View>('chat')
 
   if (auth.isLoading) return <main><p>Loading…</p></main>
   if (auth.error) return <main><p>Auth error: {auth.error.message}</p></main>
@@ -29,6 +34,8 @@ function App() {
     window.location.href = buildLogoutUrl()
   }
 
+  const idToken = auth.user?.id_token
+
   return (
     <main>
       <header className="app-header">
@@ -38,7 +45,17 @@ function App() {
           <button onClick={signOut}>Sign out</button>
         </div>
       </header>
-      {auth.user?.id_token ? <Chat idToken={auth.user.id_token} /> : <p>No token — sign in again.</p>}
+
+      <nav className="view-nav">
+        <button className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}>Chat</button>
+        <button className={view === 'entries' ? 'active' : ''} onClick={() => setView('entries')}>Entries</button>
+      </nav>
+
+      {idToken ? (
+        view === 'chat' ? <Chat idToken={idToken} /> : <Dashboard idToken={idToken} />
+      ) : (
+        <p>No token — sign in again.</p>
+      )}
     </main>
   )
 }

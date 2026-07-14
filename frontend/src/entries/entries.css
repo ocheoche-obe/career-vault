@@ -1,0 +1,133 @@
+/* Entries dashboard — theme-aware via the CSS custom properties in index.css.
+   Reuses .entry-fields, .card-actions, .field-error, .badge from chat.css (bundled globally). */
+
+.dashboard {
+  width: min(720px, 100%);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard-hint {
+  color: var(--text);
+  max-width: 52ch;
+  line-height: 1.5;
+}
+.dashboard-error {
+  color: crimson;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dashboard-count {
+  color: var(--text);
+  font-size: 14px;
+}
+.dashboard-head button,
+.dashboard-error button {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+
+.entry-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.entry-group h2 {
+  margin: 0 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.group-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  letter-spacing: 0;
+}
+
+.entry-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.entry-card.editing {
+  border-color: var(--accent-border);
+}
+.entry-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.entry-title {
+  color: var(--text-h);
+  font-size: 15px;
+}
+.entry-date {
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.entry-summary {
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent);
+}
+.entry-content {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 14px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Nav between Chat and Dashboard */
+.view-nav {
+  width: min(720px, 100%);
+  display: flex;
+  gap: 8px;
+}
+.view-nav button {
+  font: inherit;
+  font-size: 14px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-h);
+  cursor: pointer;
+}
+.view-nav button.active {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+}

@@ -139,23 +139,24 @@
   background: var(--accent-bg);
   color: var(--accent);
 }
-.proposal-fields {
+/* Shared entry-field grid (propose + edit flows) — globally available via this bundle. */
+.entry-fields {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.proposal-fields label {
+.entry-fields label {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.proposal-fields .field-name {
+.entry-fields .field-name {
   font-size: 12px;
   color: var(--text);
   text-transform: capitalize;
 }
-.proposal-fields input,
-.proposal-fields textarea {
+.entry-fields input,
+.entry-fields textarea {
   font: inherit;
   font-size: 14px;
   color: var(--text-h);
@@ -165,8 +166,8 @@
   padding: 6px 8px;
   resize: vertical;
 }
-.proposal-fields input:focus-visible,
-.proposal-fields textarea:focus-visible {
+.entry-fields input:focus-visible,
+.entry-fields textarea:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -175,8 +176,42 @@
   font-size: 13px;
   margin: 0;
 }
-.proposal-card > button {
-  align-self: flex-end;
+
+/* Duplicate warning (ADR-033) */
+.proposal-card.duplicate-warning {
+  border-color: #d98324;
+}
+.dup-lead {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 14px;
+}
+.dup-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  color: var(--text-h);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dup-score {
+  color: var(--text);
+  font-size: 13px;
+}
+.badge.small {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+/* Card action rows + button variants (shared by proposal + entry cards) */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.proposal-card > button,
+.card-actions button {
   padding: 7px 16px;
   border-radius: 8px;
   border: 1px solid var(--accent-border);
@@ -185,7 +220,21 @@
   font: inherit;
   cursor: pointer;
 }
-.proposal-card > button:disabled {
+.proposal-card > button {
+  align-self: flex-end;
+}
+.card-actions button.secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text-h);
+}
+.card-actions button.danger {
+  border-color: crimson;
+  background: transparent;
+  color: crimson;
+}
+.proposal-card > button:disabled,
+.card-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
