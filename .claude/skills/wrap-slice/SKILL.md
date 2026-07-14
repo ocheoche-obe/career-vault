@@ -1,6 +1,6 @@
 ---
 name: wrap-slice
-description: End-of-slice checklist for CareerVault — verify tests and deployment, bring all canonical docs current (CLAUDE.md phase marker is blocking), commit, push, open the PR, and hand off cleanly.
+description: End-of-slice checklist for CareerVault — verify tests and deployment, run a security review, bring all canonical docs current (CLAUDE.md phase marker is blocking), commit, push, open the PR, and hand off cleanly.
 ---
 
 # Wrap up a slice
@@ -9,10 +9,28 @@ Run these steps in order. The docs step is blocking: a slice is not done until t
 
 ## 1. Verify the work
 
-- Unit tests green: `python -m pytest tests/unit -q`.
+- Unit tests green: `python -m pytest tests/unit -q` (and `cd frontend && npm run build` if the slice touched the frontend).
 - If the slice changed deployed behavior, confirm it was actually deployed to dev and smoke-tested end-to-end (real API Gateway → Lambda → downstream, not just unit tests). If smoke testing didn't happen, say so plainly — do not mark the slice complete.
+- **Assert the AWS account before any deploy/verify command** — CareerVault shares an SSO login with a second project in a separate account:
 
-## 2. Bring the docs current (blocking)
+  ```bash
+  acct=$(AWS_PROFILE=careervault-dev aws sts get-caller-identity --query Account --output text) \
+    && [ "$acct" = "768396678224" ] && echo "✓ account $acct" || echo "✗ WRONG ACCOUNT $acct — stop"
+  ```
+
+## 2. Security review (blocking on unresolved findings)
+
+CareerVault stores users' career history, so **every slice that touches code gets a security review before it's committed**:
+
+```
+/security-review
+```
+
+- Triage each finding: fix it, or record an explicit, reasoned decision to accept/defer it (an ADR, or a plan/parking-lot note). **Do not commit with unexplained findings outstanding.**
+- Focus areas for this codebase: per-user data isolation (PK from JWT `sub`, never the body — §4.2.4), authz on every route, input validation at the Pydantic gate, IAM least-privilege on any new actions, no secrets in code/logs, CORS origin scoping.
+- This is the *local* gate. The *remote* net is GitHub Actions on the PR — **CodeQL** SAST (`.github/workflows/codeql.yml`) and **Dependabot** (`.github/dependabot.yml`). Treat a CodeQL alert or a Dependabot security update on the PR the same way: triage before merge, don't just merge past it.
+
+## 3. Bring the docs current (blocking)
 
 - **`docs/careervault-plan.md`** — the linchpin. Flip the slice to ✅ on the status board (add
   the PR link once it exists), fill in its **Completion notes** (what shipped, what was
@@ -30,25 +48,26 @@ Run these steps in order. The docs step is blocking: a slice is not done until t
 - **`docs/careervault-architecture.md`** — if implementation contradicted the doc, correct the doc (don't silently code around it — the user wants these corrections explained), bump the version, add a change-log row.
 - **Memory** — save durable gotchas (account-level constraints, API behaviors that contradict docs) that future sessions need; update `MEMORY.md` index.
 
-## 3. Commit and push
+## 4. Commit and push
 
-- Commits follow the existing conventional style (`feat(infra):`, `fix(ddb):`, `docs:`, `test:`), each ending with the Co-Authored-By trailer.
-- Logical commits: infra / backend / tests / docs separated where it's natural, matching the history's grain.
+- Commits follow the existing conventional style (`feat(infra):`, `fix(ddb):`, `docs:`, `test:`, `ci:`, `chore:`), each ending with the Co-Authored-By trailer.
+- Logical commits: infra / backend / tests / docs / ci separated where it's natural, matching the history's grain.
 - Push the slice branch to origin.
 
-## 4. Open the PR
+## 5. Open the PR
 
 ```bash
 gh pr create --base main
 ```
 
-PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), decisions/ADRs added, doc corrections made. End with the "Generated with Claude Code" footer.
+PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), decisions/ADRs added, doc corrections made. End with the "Generated with Claude Code" footer.
 
-## 5. Hand off
+## 6. Hand off
 
 Tell the user, explicitly:
 
 - PR URL and what's in it.
+- The security-review result and any CodeQL/Dependabot alerts the PR will surface.
 - That after they merge, the next `/start-slice` will fast-forward local `main` (or they can `git checkout main && git pull` themselves).
 - Any threads deliberately left open, so they land in the next session's plan rather than being forgotten.
 
