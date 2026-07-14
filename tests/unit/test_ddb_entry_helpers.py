@@ -22,11 +22,16 @@ from careervault.ddb_helpers import (
 
 
 class FakeTable:
-    def __init__(self, *, query_items=None, put_error=None):
+    def __init__(self, *, query_items=None, query_pages=None, put_error=None, delete_error=None):
         self.put_calls: list[dict] = []
         self.query_calls: list[dict] = []
+        self.delete_calls: list[dict] = []
         self._query_items = query_items or []
+        # query_pages: successive query responses (each a dict with Items and optional
+        # LastEvaluatedKey) — lets a test exercise pagination in query_entries.
+        self._query_pages = list(query_pages) if query_pages else None
         self._put_error = put_error
+        self._delete_error = delete_error
 
     def put_item(self, **kwargs):
         self.put_calls.append(kwargs)
@@ -36,7 +41,15 @@ class FakeTable:
 
     def query(self, **kwargs):
         self.query_calls.append(kwargs)
+        if self._query_pages is not None:
+            return self._query_pages.pop(0)
         return {"Items": self._query_items}
+
+    def delete_item(self, **kwargs):
+        self.delete_calls.append(kwargs)
+        if self._delete_error:
+            raise self._delete_error
+        return {}
 
 
 def _conditional_failed() -> ClientError:
@@ -198,3 +211,84 @@ def test_put_entry_conditional_marshals_embedding_floats(table):
     fake = table()
     put_entry_conditional({"PK": "USER#u1", "SK": "ENTRY#e1", "embedding": [0.1, 0.2]})
     assert all(isinstance(v, Decimal) for v in fake.put_calls[0]["Item"]["embedding"])
+
+
+# --- query_entries (AP-10) ---------------------------------------------------
+
+def test_query_entries_queries_the_entry_prefix(table):
+    fake = table(query_items=[{"SK": "ENTRY#a"}, {"SK": "ENTRY#b"}])
+    items = ddb_helpers.query_entries("u1")
+
+    assert [i["SK"] for i in items] == ["ENTRY#a", "ENTRY#b"]
+    # A single page with no LastEvaluatedKey means exactly one query and no ExclusiveStartKey.
+    assert len(fake.query_calls) == 1
+    assert "ExclusiveStartKey" not in fake.query_calls[0]
+
+
+def test_query_entries_follows_pagination_to_completion(table):
+    # Embedding-laden items blow past the 1 MB page limit, so query_entries must page — stopping
+    # at page one would silently drop entries from the dashboard and the resume-agent read.
+    fake = table(
+        query_pages=[
+            {"Items": [{"SK": "ENTRY#a"}], "LastEvaluatedKey": {"PK": "USER#u1", "SK": "ENTRY#a"}},
+            {"Items": [{"SK": "ENTRY#b"}]},  # no LastEvaluatedKey → last page
+        ]
+    )
+    items = ddb_helpers.query_entries("u1")
+
+    assert [i["SK"] for i in items] == ["ENTRY#a", "ENTRY#b"]
+    assert len(fake.query_calls) == 2
+    # The second query resumes from the first page's LastEvaluatedKey.
+    assert fake.query_calls[1]["ExclusiveStartKey"] == {"PK": "USER#u1", "SK": "ENTRY#a"}
+
+
+# --- put_entry_update (AP-5) -------------------------------------------------
+
+def test_put_entry_update_requires_existing_item(table):
+    fake = table()
+    assert ddb_helpers.put_entry_update({"PK": "USER#u1", "SK": "ENTRY#e1"}) is True
+
+    call = fake.put_calls[0]
+    # Overwrite-if-exists: the opposite condition to create-once.
+    assert call["ConditionExpression"] == "attribute_exists(SK)"
+
+
+def test_put_entry_update_returns_false_when_absent(table):
+    table(put_error=_conditional_failed())
+    assert ddb_helpers.put_entry_update({"PK": "USER#u1", "SK": "ENTRY#e1"}) is False
+
+
+def test_put_entry_update_rejects_foreign_sk_prefix(table):
+    fake = table()
+    with pytest.raises(ValueError, match="CONVO#"):
+        ddb_helpers.put_entry_update({"PK": "USER#u1", "SK": "CONVO#s1#m1"})
+    assert fake.put_calls == []
+
+
+def test_put_entry_update_reraises_other_errors(table):
+    table(put_error=ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "PutItem"))
+    with pytest.raises(ClientError):
+        ddb_helpers.put_entry_update({"PK": "USER#u1", "SK": "ENTRY#e1"})
+
+
+# --- delete_entry (AP-6 / ADR-027) -------------------------------------------
+
+def test_delete_entry_returns_true_and_scopes_the_key(table):
+    fake = table()
+    assert ddb_helpers.delete_entry("u1", "e1") is True
+
+    call = fake.delete_calls[0]
+    assert call["Key"] == {"PK": "USER#u1", "SK": "ENTRY#e1"}
+    # attribute_exists(SK) distinguishes "deleted" from "never existed" (→ 404).
+    assert call["ConditionExpression"] == "attribute_exists(SK)"
+
+
+def test_delete_entry_returns_false_when_absent(table):
+    table(delete_error=_conditional_failed())
+    assert ddb_helpers.delete_entry("u1", "missing") is False
+
+
+def test_delete_entry_reraises_other_errors(table):
+    table(delete_error=ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "DeleteItem"))
+    with pytest.raises(ClientError):
+        ddb_helpers.delete_entry("u1", "e1")

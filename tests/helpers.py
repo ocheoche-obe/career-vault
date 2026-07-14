@@ -36,8 +36,19 @@ class FakeLambdaContext:
         return 30_000
 
 
-def api_event(body: Any = None, *, sub: str | None = "user-sub-1", email: str = "dev@example.com") -> dict:
-    """Build a REST API Gateway proxy event with Cognito authorizer claims."""
+def api_event(
+    body: Any = None,
+    *,
+    sub: str | None = "user-sub-1",
+    email: str = "dev@example.com",
+    method: str = "POST",
+    path_params: dict | None = None,
+) -> dict:
+    """Build a REST API Gateway proxy event with Cognito authorizer claims.
+
+    ``method`` defaults to ``POST`` (the original single-route shape); pass ``GET``/``PUT``/
+    ``DELETE`` and ``path_params={"id": ...}`` to exercise the slice-3 entry CRUD routes.
+    """
     claims: dict[str, str] = {}
     if sub is not None:
         claims = {"sub": sub, "email": email}
@@ -50,6 +61,8 @@ def api_event(body: Any = None, *, sub: str | None = "user-sub-1", email: str = 
         raw_body = json.dumps(body)
 
     return {
+        "httpMethod": method,
+        "pathParameters": path_params,
         "requestContext": {"requestId": "req-1", "authorizer": {"claims": claims}},
         "body": raw_body,
         "isBase64Encoded": False,
