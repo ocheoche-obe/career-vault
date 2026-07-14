@@ -60,7 +60,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 1 | Auth + `GET /settings` | FR-1 | ✅ | [#1](https://github.com/ocheoche-obe/career-vault/pull/1) |
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
-| 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ⬜ ⚠ | — |
+| 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | _(PR pending)_ |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ⬜ ⚠ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
@@ -195,7 +195,7 @@ questions, review a proposed entry, confirm it, and see it saved — with a clea
 
 ---
 
-## Slice 3 — Entries dashboard + CRUD completion ⬜ ⚠
+## Slice 3 — Entries dashboard + CRUD completion ✅
 
 **Goal:** The user can see everything they've logged, grouped/chronological, and edit or delete
 any entry.
@@ -205,30 +205,65 @@ any entry.
 **Scope — in:** `GET /entries` (Query on `ENTRY#` prefix), `PUT /entries/{id}`,
 `DELETE /entries/{id}` in `career_crud` + the Query/UpdateItem/DeleteItem IAM that lands with
 them; dashboard UI (grouped by type, chronological within); edit form per entry type; hard delete
-with UI confirm (ADR-027).
+with UI confirm (ADR-027); **re-embed on edit only when embedded text changes** (ADR-024 edit-path
+note); **semantic duplicate detection at confirm — warn, not block** (ADR-033): a shared-layer
+cosine helper, a duplicate check in `POST /entries` returning `409` + `possible_duplicates`, and a
+"save anyway" affordance on the proposal card that re-confirms with `acknowledge_duplicate: true`.
 
 **Scope — out:** timeline visualization (stretch, parking lot); goals UI (data-model-only at MVP).
 
-**Key refs:** arch §2 (data model, AP-10 read pattern), §4.2.3/4.2.4 (IAM + key isolation),
-ADR-027 (hard delete), ADR-028 (no GSIs — reads are PK Queries).
+**Key refs:** arch §2 (data model, AP-10 read pattern), §3.1.4/3.1.5 (entry idempotency + status
+contract), §4.2.3/4.2.4 (IAM + key isolation), ADR-024 (embed in write path + slice-3 edit note),
+ADR-027 (hard delete), ADR-028 (no GSIs — reads are PK Queries), ADR-033 (semantic dedup).
 
 **New infra:** none (routes + IAM on existing Lambda).
 
-**⚠ Decisions:**
-- Re-embed on edit: ADR-024 puts embedding in the write path — confirm updates re-embed
-  synchronously when text fields change (and skip when they don't). Likely an ADR note, not a
-  new ADR.
-- **Semantic duplicate detection (found in 2b UI testing, 2026-07-10):** describing the same
-  accomplishment in a new message mints a fresh `entry_id`, so it saves as a brand-new entry —
-  §3.1.4 idempotency only covers retries of the *same* proposal card. Once Query IAM lands,
-  `career_crud` can cosine-compare the new entry's (already-computed) embedding against existing
-  entries at confirm time and surface a "possible duplicate — save anyway?" signal. Needs an ADR:
-  threshold, warn-vs-block, and response shape.
+**⚠ Decisions:** _(both resolved with Oche 2026-07-12)_
+- **Re-embed on edit → resolved:** re-embed synchronously **only when `embedding_input_text`
+  changes**, reuse the stored vector otherwise. Captured as an edit-path note on **ADR-024** (not a
+  new ADR).
+- **Semantic duplicate detection → resolved: include this slice, warn-not-block.** New **ADR-033**:
+  confirm-time cosine compare of the new entry's already-computed embedding against existing
+  entries (shared-layer helper); `max_similarity >= 0.90` (env-tunable) → `409` with
+  `possible_duplicates`, entry not written; client re-confirms with `acknowledge_duplicate: true`
+  to save. No new Bedrock cost; builds the retrieval primitive slices 6/7 need.
 
 **Exit criteria:** deployed to dev; list/edit/delete each smoke-tested from the UI; deleted
-entry verifiably gone from DynamoDB; edited entry's embedding refreshed.
+entry verifiably gone from DynamoDB; edited entry's embedding refreshed only when text changed
+(and skipped when it didn't); a re-described accomplishment triggers the `409` "possible
+duplicate" warning and "save anyway" writes it.
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:** _(wrapped 2026-07-13)_
+- **Backend:** `career_crud` is now the full entry lifecycle — `GET /entries` (paginated AP-10
+  list), `PUT /entries/{id}`, `DELETE /entries/{id}` alongside the original `POST`. New shared
+  helpers `query_entries`/`put_entry_update`/`delete_entry` + a reusable `similarity` module
+  (cosine + rank, for slices 6/7). IAM widened to `Query` + `DeleteItem`.
+- **ADR-033 — semantic dedup (warn, not block):** confirm-time cosine compare of the candidate's
+  write-time embedding vs existing entries; `max_similarity ≥ 0.90` (env `DUP_SIMILARITY_THRESHOLD`)
+  → `409 {possible_duplicates}`, entry unwritten; client re-confirms with
+  `acknowledge_duplicate: true`. Own `entry_id` excluded so §3.1.4 retry-idempotency holds. No new
+  Bedrock cost — reuses the write-path embedding.
+- **Edit path (ADR-024 note):** an edit is a conditional full-item `PutItem` (`attribute_exists`),
+  **not** `UpdateItem` — so no `UpdateItem` grant. Re-embeds only when `embedding_input_text`
+  changed; preserves `created_at`, advances `updated_at`. Arch **v1.4** corrects §2.5/§4.2.3 to
+  match and flags that AP-10 reads must paginate (embedding-laden items exceed the 1 MB Query page).
+- **Frontend:** entries dashboard grouped by type / newest-first, per-type inline edit, hard delete
+  with confirm (ADR-027), Chat/Entries nav; ProposalCard "possible duplicate — save anyway"; shared
+  `EntryFields` + `entryFields` helpers (DRY across propose + edit).
+- **Verified:** 139 unit tests green (39 new). Deployed to dev; 12 end-to-end smoke checks against
+  the real Lambda + DynamoDB + Titan passed (create / list / 409-dup at 0.96 similarity /
+  acknowledge / edit-reuses-vector / edit-refreshes-vector / delete-gone / 404). UI flows
+  (list/edit/delete/dup warning) smoke-tested from the browser by Oche; deleted entry confirmed
+  physically gone from DynamoDB. Security review clean.
+- **Bug found & fixed in UI testing:** the dashboard edit card stayed stuck on "Saving" after a
+  successful PUT (local state never returned to view; stable React key kept the instance) — fixed;
+  Refresh gained "Refreshing…" feedback. No frontend test framework exists yet, so this class of
+  UI-state bug is uncaught → routed to **slice 9** (Vitest + RTL).
+- **Evaluation:** all exit criteria met; no Bedrock $ beyond the existing Titan write-path embed
+  (dup-check reuses it, adds only a Query). One improvement → frontend tests at slice 9.
+- **Process addenda (this wrap):** `/security-review` is now a blocking wrap-slice gate; added
+  GitHub Actions **CodeQL** + **CI** + **Dependabot**; a `SessionStart` AWS-account guard for the
+  multi-account SSO safety concern; start-slice step 3 hardened to a hard account assertion.
 
 ---
 
@@ -402,7 +437,11 @@ or explicitly parked.
 
 **Scope — in:** integration test suite against deployed dev + **DynamoDB Local** for
 conditional-write semantics (arch §5.6 — the v1.3 changelog explicitly calls for this net after
-the SK-prefix bug slipped past string-assertion tests); README refresh (currently describes only
+the SK-prefix bug slipped past string-assertion tests); **frontend unit tests** (Vitest + React
+Testing Library) locking the UI-state flows — the propose/confirm card, the dashboard edit/delete
+cards, the 409 "save anyway" path — and wired into the CI workflow (the slice-3 stuck-"Saving"
+bug is the motivating example: it shipped because no automated test exercises component state);
+README refresh (currently describes only
 slice 1); FR/NFR coverage audit against requirements v0.5; **MVP evaluation scorecard** — score
 the shipped MVP against the requirements §7 success criteria and the NFRs (cost, latency),
 capturing what worked / what to improve and routing each finding into the v1.1 plan or parking

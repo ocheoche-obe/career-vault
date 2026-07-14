@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-10 (ADR-032 added at the start of slice 2b — chat turn idempotency)
+**Last updated:** 2026-07-13 (ADR-033 added at the start of slice 3 — semantic duplicate detection; ADR-024 gained an edit-path note)
 
 ---
 
@@ -63,6 +63,7 @@ Each ADR has:
 | ADR-030 | Environment-gated table protection + parameterized reserved concurrency | Accepted |
 | ADR-031 | Bedrock invocation via cross-region inference profile (Haiku 4.5)  | Accepted   |
 | ADR-032 | Chat turn idempotency — client-supplied message ID                 | Accepted   |
+| ADR-033 | Semantic duplicate detection at confirm — warn, not block          | Accepted   |
 
 ---
 
@@ -727,6 +728,8 @@ The async alternative (DynamoDB Streams → embedding Lambda → UpdateItem) is 
 ### Cross-cloud parallel
 The same decision frame applies to Azure (Cosmos DB Change Feed for async, inline `AzureOpenAIClient.GetEmbeddingsAsync` for sync) and GCP (Firestore Triggers for async, inline `aiplatform.TextEmbeddingModel.get_embeddings` for sync). The MVP recommendation is sync on every cloud; the upgrade triggers and target architecture are identical.
 
+> **Edit-path note (slice 3, 2026-07-12).** This ADR commits `career_crud` to embedding on "every entry create *or update*." Slice 3 adds the update route (`PUT /entries/{id}`) and refines *when* the Titan call fires on update, rather than re-embedding unconditionally: the handler compares `embedding_input_text(updated_entry)` against the same projection of the stored entry, and **re-embeds only when that text differs** — otherwise it reuses the stored vector. Edits that touch only non-embedded fields (an event date, a boolean, a non-indexed note) skip Titan entirely: no cost, no latency, and the stored vector remains correct because none of its inputs changed. This is a refinement of the sync-write-path commitment, not a departure from it — when the embedded text *does* change, the re-embed is still synchronous and inline before the write, exactly as the create path embeds before its `PutItem`. (The update itself is a conditional full-item `PutItem` guarded by `attribute_exists(SK)`, not an `UpdateItem` — see the §2.5 / §4.2.3 slice-3 note in the architecture doc.) It also keeps the "embedding stays coupled to the writing Lambda's code" property intact.
+
 ---
 
 ## ADR-025: Cognito user flow — hosted UI with OAuth2 Authorization Code + PKCE
@@ -909,6 +912,48 @@ Slice 2b builds the first real chat client, which needs a defined retry story be
 
 ### Cross-cloud parallel
 Client-generated idempotency keys are the industry-wide answer to "retried writes must not duplicate": Stripe's `Idempotency-Key` header, Azure's `x-ms-client-request-id`, GCP's `requestId` on mutating APIs. The portable lesson: only the *originator* of a request can distinguish "retry of the same intent" from "new identical intent," so the originator must name the intent.
+
+---
+
+## ADR-033: Semantic duplicate detection at confirm — warn, not block
+
+**Status:** Accepted
+**Date:** 2026-07-12
+
+### Context
+Entry-write idempotency (§3.1.4) is keyed on the `entry_id` ULID minted when a proposal card is created. It makes *retries of the same proposal card* no-ops — but it says nothing about the same accomplishment described a *second time*. Slice 2b's UI testing surfaced this concretely: re-describing an award or project in a fresh chat message mints a new `entry_id`, so it confirms as a brand-new entry ("Saved", 201). Two genuine duplicates this produced in dev had to be hard-deleted by hand.
+
+Slice 3 changes what is cheaply possible. It lands `dynamodb:Query` on `career_crud` (for `GET /entries`, the AP-10 full read), and **every entry already carries a Titan embedding computed at write time** (ADR-024). So at confirm time `career_crud` can compare the new entry's just-computed vector against the user's existing entries and detect near-duplicates — with **no new Bedrock cost** (the embedding is already in hand) and reusing the in-Lambda cosine-similarity primitive that ADR-016 retrieval needs for slices 6 and 7 regardless.
+
+The question this ADR settles: *what to do when a likely duplicate is detected* — and the mechanics (threshold, response shape).
+
+### Decision
+Detect at **confirm time**, **warn but never block**, and let the user be the authority on whether it's truly a duplicate.
+
+- **Where.** In `career_crud`'s `POST /entries` handler, after Pydantic validation and the (already-required) Titan embedding of the candidate, and *before* the conditional `PutItem`.
+- **How.** Query the caller's `ENTRY#` items (AP-10), compute cosine similarity of the new embedding against each stored embedding, and take the maximum. The cosine helper lives in the **shared layer** (`careervault` package) so slices 6/7 reuse it.
+- **Threshold.** A near-duplicate is `max_similarity >= DUP_SIMILARITY_THRESHOLD`, an env var defaulting to **0.90** (Titan v2 vectors; paraphrases of one accomplishment sit high). Env-var, not hard-coded, so it tunes against real dev data without a code change — matching the model-ID-in-env config discipline (§4.3, §4.2.3). It changes in lockstep with a deploy, which is fine for a tuning knob.
+- **Response shape (warn-not-block).** When a duplicate is suspected *and the client has not acknowledged it*, return **`409 Conflict`** with `{ "message": "possible_duplicate", "entry_id": "<the-candidate-ULID>", "possible_duplicates": [ { "entry_id", "entry_type", "title", "similarity" }, ... ] }`. The entry is **not** written. The proposal card renders "This looks similar to … — Save anyway?"; clicking re-`POST`s the *same* `entry_id` with **`acknowledge_duplicate: true`**, which skips the check and writes. Because the `entry_id` is preserved, the acknowledged write is still idempotent under §3.1.4.
+- **Contract.** This adds `409` to the `POST /entries` status contract (§3.1.5: 201 created · 200 idempotent duplicate · **409 possible duplicate, unacknowledged** · 422 validation · 500 embedding/DDB). The first-party client handles it; a caller that ignores 409 simply never saves the entry, which is a safe failure.
+
+### Alternatives considered
+- **Block / refuse outright.** Strongest guard, but false positives *strand* legitimately-similar-but-distinct entries — two certs from the same vendor, two awards from one program, a promotion at the same employer. The user, not a cosine threshold, is the authority on whether two accomplishments are the same. Rejected.
+- **Content/text-hash dedupe.** Cheap and stateless, but paraphrases don't hash-match — which is *exactly* the case §3.1.4 already misses. Embedding similarity is the tool that fits the miss. Rejected (also rejected for the same reason in ADR-032's chat-turn context).
+- **Detect at read/dashboard time** ("possible duplicates" grouping on the list view) instead of at confirm. Doesn't prevent the write, so the corpus still accretes dupes; a merge/dedupe tool over already-saved entries is a heavier v1.1 feature. Confirm-time catches it before it exists. Rejected for MVP.
+- **A GSI or dedicated similarity index.** Contradicts ADR-028 (no GSIs at MVP); the full read is single-digit RCUs and milliseconds at this corpus size (§2.5). Rejected.
+- **Save first, warn after (201 + `possible_duplicates` in the body).** Truly non-blocking, but the dupe is already written and "undo" means a delete round-trip. The 409-gate is barely more friction (one click) and keeps the corpus clean by default. Rejected.
+
+### Consequences
+- ✅ Closes the gap §3.1.4 leaves open: the same accomplishment reworded is caught *before* it is written, not discovered later as clutter.
+- ✅ No new Bedrock cost — the comparison reuses the write-time embedding. Marginal cost is the AP-10 Query (single-digit RCUs) plus in-Lambda cosine (microseconds per vector).
+- ✅ Builds the in-Lambda cosine-similarity primitive ADR-016 requires for slices 6 (resume retrieval) and 7 (chat over data). Slice 3 is where it first pays rent.
+- ✅ Warn-not-block keeps the user as the final authority; a false positive costs one extra click, never a lost entry.
+- ⚠️ The threshold is a heuristic. False negatives fall back to today's behavior (a dupe saves — now deletable via this slice's `DELETE`). The 0.90 default is a starting point to validate against real dev entries and tune.
+- ⚠️ The check reads all of a user's entries on every confirm — linear with corpus size, the same AP-10 tradeoff ADR-028 already accepts. Fine to low-thousands; revisit with the GSI trigger in ADR-028 if it ever degrades.
+- ⚠️ `409` is a new status on `POST /entries`; §3.1.5 and the client both learn it. A non-acknowledging caller can't save a flagged entry — an intentional, safe-side failure.
+
+### Cross-cloud parallel
+"Embed once, compare cosine, let a human adjudicate" is provider-neutral: the same flow runs on Azure (`AzureOpenAIClient` embeddings + in-app or AI Search vector query) and GCP (Vertex embeddings + Matching Engine). A managed vector store would push the similarity search server-side rather than looping in the function — the upgrade lever ADR-016 already names — but the *decision* (warn not block, user adjudicates, client-acknowledged override) is identical everywhere.
 
 ---
 
