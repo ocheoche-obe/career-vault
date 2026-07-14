@@ -9,7 +9,7 @@ Run these steps in order. The docs step is blocking: a slice is not done until t
 
 ## 1. Verify the work
 
-- Unit tests green: `python -m pytest tests/unit -q` (and `cd frontend && npm run build` if the slice touched the frontend).
+- Unit tests green: `python -m pytest tests/unit -q` (and `cd frontend && npm run build && npm run lint` if the slice touched the frontend — CI runs both `build` *and* `lint`, so run both locally).
 - If the slice changed deployed behavior, confirm it was actually deployed to dev and smoke-tested end-to-end (real API Gateway → Lambda → downstream, not just unit tests). If smoke testing didn't happen, say so plainly — do not mark the slice complete.
 - **Assert the AWS account before any deploy/verify command** — CareerVault shares an SSO login with a second project in a separate account:
 

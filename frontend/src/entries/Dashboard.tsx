@@ -56,9 +56,18 @@ export function Dashboard({ idToken }: { idToken: string }) {
     }
   }, [idToken]);
 
+  // Initial fetch on mount. Kept out of `load` so no setState fires synchronously inside the
+  // effect body (react-hooks/set-state-in-effect); the `active` flag drops a late response that
+  // resolves after unmount.
   useEffect(() => {
-    void load();
-  }, [load]);
+    let active = true;
+    listEntries(idToken)
+      .then((data) => { if (active) setEntries(data); })
+      .catch(() => { if (active) setError("Couldn't load your entries. Try again."); });
+    return () => {
+      active = false;
+    };
+  }, [idToken]);
 
   const onDeleted = (entryId: string) =>
     setEntries((prev) => (prev ? prev.filter((e) => e.entry_id !== entryId) : prev));
