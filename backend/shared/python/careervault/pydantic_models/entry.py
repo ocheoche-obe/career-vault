@@ -228,6 +228,31 @@ def embedding_input_text(entry: BaseModel) -> str:
     return "\n".join(parts)
 
 
+#: DynamoDB/system attributes added by :func:`to_entry_item` that are *not* part of any subtype
+#: schema — stripped before re-validating a stored item back into an :data:`Entry`.
+_SYSTEM_ITEM_KEYS: frozenset[str] = frozenset(
+    {"PK", "SK", "entity_type", "embedding", "embedding_model", "created_at", "updated_at"}
+)
+
+
+def entry_from_item(item: dict) -> BaseModel:
+    """Reconstruct a validated :data:`Entry` from a stored DynamoDB ENTRY item.
+
+    The inverse of :func:`to_entry_item`: drop the system attributes (keys, embedding, timestamps)
+    and re-validate the remainder against the per-type schema. ``event_date`` and ``entry_id`` are
+    genuine schema fields, so they survive the round-trip.
+
+    Used by the edit path to compute the *old* :func:`embedding_input_text` for comparison (so a
+    re-embed only fires when the embedded text actually changed, per the ADR-024 edit-path note),
+    and available to any later consumer that needs a typed entry back from storage.
+
+    Raises:
+        pydantic.ValidationError: if the stored item does not satisfy its schema.
+    """
+    payload = {key: value for key, value in item.items() if key not in _SYSTEM_ITEM_KEYS}
+    return validate_entry(payload)
+
+
 def to_entry_item(
     entry: BaseModel,
     *,
@@ -236,11 +261,16 @@ def to_entry_item(
     embedding: list[float],
     embedding_model: str,
     created_at: str | None = None,
+    updated_at: str | None = None,
 ) -> dict:
     """Project a validated candidate into the DynamoDB ENTRY item shape (Section 2.8).
 
+    On create, ``created_at`` and ``updated_at`` both default to now. On edit (AP-5) the caller
+    passes the stored ``created_at`` to preserve it and a fresh ``updated_at`` to record the edit —
+    so an update's ``created_at`` is immutable while ``updated_at`` advances.
+
     Floats in ``embedding`` are *not* converted to ``Decimal`` here — that is the DynamoDB
-    serialisation concern and lives in ``ddb_helpers.put_entry_conditional``.
+    serialisation concern and lives in ``ddb_helpers`` (``to_ddb_numbers``).
     """
     now = created_at or utcnow_iso()
 
@@ -258,7 +288,7 @@ def to_entry_item(
             "embedding": embedding,
             "embedding_model": embedding_model,
             "created_at": now,
-            "updated_at": now,
+            "updated_at": updated_at or now,
         }
     )
     return item
