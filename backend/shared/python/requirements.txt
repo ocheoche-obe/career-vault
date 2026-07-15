@@ -2,4 +2,4 @@
 # boto3 is provided by the Lambda runtime and is intentionally NOT bundled here.
 aws-lambda-powertools[tracer]>=3.31.1,<4.0
 pydantic>=2.13.4,<3.0
-python-ulid>=2.0,<3.0
+python-ulid>=3.1.0,<4.0
