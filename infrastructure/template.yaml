@@ -74,6 +74,12 @@ Parameters:
     Type: Number
     Default: 14
     Description: CloudWatch Logs retention for Lambda log groups (operational hygiene, arch §4.7).
+  DupSimilarityThreshold:
+    Type: String
+    Default: "0.90"
+    Description: >
+      Cosine-similarity threshold above which a confirmed entry is flagged a possible duplicate
+      (ADR-033). Parameterized so it can be calibrated against real entries without a code change.
 
 Conditions:
   # Deletion Protection only in prod (arch §4.7.3 protects irreplaceable career history). In dev
@@ -224,7 +230,8 @@ Resources:
       Cors:
         AllowOrigin: !Sub "'${CallbackUrl}'"
         AllowHeaders: "'Authorization,Content-Type'"
-        AllowMethods: "'GET,POST,OPTIONS'"
+        # PUT/DELETE land with the entry CRUD routes (slice 3, career_crud).
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
 
   # ---------------------------------------------------------------------------
   # Shared Lambda layer (ADR-023 / Section 5.3) — attached to every function
@@ -352,12 +359,15 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
-  # Compute — career_crud (Phase B confirm + persist, Section 3.1.3)
+  # Compute — career_crud (entry lifecycle, Sections 3.1.3–3.1.5 / ADR-027 / ADR-033)
   #
-  # The only Lambda that may write ENTRY# items. Embeds via Titan inline (ADR-024).
-  # IAM grants GetItem + PutItem only: §4.2.3 also lists Query/UpdateItem/DeleteItem for this
-  # function, but those routes (list/edit/delete) do not exist yet — the permissions land with
-  # them rather than ahead of them.
+  # The only Lambda that may write, update, or delete ENTRY# items. Embeds via Titan inline
+  # (ADR-024). Slice 3 adds GET/PUT/DELETE alongside the original POST.
+  #
+  # IAM: GetItem + PutItem + Query + DeleteItem. Note there is NO UpdateItem despite §4.2.3
+  # listing it — edits are a conditional full-item PutItem (attribute_exists(SK)), not an
+  # UpdateItem, since the client submits the whole re-validated entry (see the §2.5 / §4.2.3
+  # slice-3 note in the architecture doc). PutItem therefore covers both create and edit.
   # ---------------------------------------------------------------------------
   CareerCrudFunction:
     Type: AWS::Serverless::Function
@@ -365,7 +375,8 @@ Resources:
       FunctionName: !Sub 'careervault-career-crud-${Environment}'
       CodeUri: ../backend/functions/career_crud/
       Handler: handler.handler
-      # Titan embed (~200–500 ms) + conditional PutItem; 15s is ample (arch §4.7.4).
+      # Titan embed (~200–500 ms) + a full-corpus Query for the dup check (ADR-033) + a
+      # conditional PutItem; 15s is ample (arch §4.7.4).
       Timeout: 15
       ReservedConcurrentExecutions: !If
         - HasCareerCrudReservedConcurrency
@@ -377,12 +388,15 @@ Resources:
         Variables:
           POWERTOOLS_SERVICE_NAME: career_crud
           BEDROCK_TITAN_EMBED_MODEL_ID: !Ref TitanEmbedModelId
+          DUP_SIMILARITY_THRESHOLD: !Ref DupSimilarityThreshold
       Policies:
         - Statement:
             - Effect: Allow
               Action:
                 - dynamodb:GetItem
                 - dynamodb:PutItem
+                - dynamodb:Query      # AP-10 list + the ADR-033 dup-check read
+                - dynamodb:DeleteItem  # AP-6 hard delete (ADR-027)
               Resource: !GetAtt CareerVaultTable.Arn
             # Titan v2 is ON_DEMAND (ADR-031): a single, version-pinned foundation-model ARN in
             # this region. No inference profile involved.
@@ -398,6 +412,24 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /entries
             Method: post
+        GetEntries:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /entries
+            Method: get
+        PutEntry:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /entries/{id}
+            Method: put
+        DeleteEntry:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /entries/{id}
+            Method: delete
 
   CareerCrudLogGroup:
     Type: AWS::Logs::LogGroup

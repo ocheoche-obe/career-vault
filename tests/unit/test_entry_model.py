@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from careervault.pydantic_models.entry import (
     ENTRY_TYPES,
     embedding_input_text,
+    entry_from_item,
     resolve_event_date,
     to_entry_item,
     validate_entry,
@@ -121,3 +122,37 @@ def test_to_entry_item_shape():
     assert item["created_at"] == item["updated_at"] == "2026-07-09T10:00:00Z"
     # dates must be ISO strings, not date objects — DynamoDB stores strings.
     assert isinstance(item["start_date"], str)
+
+
+def test_to_entry_item_edit_preserves_created_at_and_advances_updated_at():
+    # On edit (AP-5) created_at is immutable while updated_at moves — the two diverge.
+    entry = validate_entry(dict(JOB))
+    item = to_entry_item(
+        entry,
+        user_id="u1",
+        entry_id="01ULID",
+        embedding=[0.1, 0.2],
+        embedding_model="amazon.titan-embed-text-v2:0",
+        created_at="2026-07-09T10:00:00Z",
+        updated_at="2026-07-13T12:00:00Z",
+    )
+    assert item["created_at"] == "2026-07-09T10:00:00Z"
+    assert item["updated_at"] == "2026-07-13T12:00:00Z"
+
+
+def test_entry_from_item_roundtrips_a_stored_item():
+    # A stored item projected back to a typed Entry drops the system attributes and re-validates.
+    entry = validate_entry(dict(JOB))
+    stored = to_entry_item(
+        entry,
+        user_id="u1",
+        entry_id="01ULID",
+        embedding=[0.1, 0.2],
+        embedding_model="amazon.titan-embed-text-v2:0",
+    )
+    reconstructed = entry_from_item(stored)
+
+    assert reconstructed.entry_type == "JOB"
+    assert reconstructed.employer == "Acme Corp"
+    # The embedded text is identical, which is what the edit path relies on to skip re-embedding.
+    assert embedding_input_text(reconstructed) == embedding_input_text(entry)

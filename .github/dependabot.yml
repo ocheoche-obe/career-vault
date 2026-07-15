@@ -1,0 +1,31 @@
+# Dependency vulnerability alerts + weekly update PRs. High-value, low-effort security net for a
+# project that stores users' career data — catches a CVE in a pinned dependency before it ships.
+version: 2
+updates:
+  # Backend shared Lambda layer (deps all seven Lambdas import).
+  - package-ecosystem: pip
+    directory: /backend/shared/python
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]
+
+  # Test/dev dependencies.
+  - package-ecosystem: pip
+    directory: /tests
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]
+
+  # Frontend (React + Vite).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]
+
+  # The GitHub Actions used by the workflows above.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]

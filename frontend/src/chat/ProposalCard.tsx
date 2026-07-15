@@ -1,38 +1,28 @@
 import { useState } from "react";
-import { confirmEntry, type ConfirmResult, type EntryCandidate, type FieldError } from "../lib/api";
+import {
+  confirmEntry,
+  type ConfirmResult,
+  type DuplicateMatch,
+  type EntryCandidate,
+  type FieldError,
+} from "../lib/api";
+import { editableFields, mergeEdits } from "../lib/entryFields";
+import { EntryFields } from "../components/EntryFields";
 
 /**
  * The Phase B confirm gate (FR-2.3): the user reviews — and may edit — the candidate before
- * anything is persisted. Fields render generically from the candidate's own keys, so all eight
- * entry types work without per-type forms; the server's discriminated union remains the single
- * source of truth (ADR-022), and its 422 field errors render inline here.
+ * anything is persisted. Fields render generically (ADR-022), and the server's 422 field errors
+ * render inline. A 409 "possible duplicate" (ADR-033) is surfaced as a soft warning the user can
+ * override with "Save anyway", which re-confirms with the acknowledge flag.
  */
-
-// Keys the user shouldn't edit: identity/type are fixed at propose time.
-const READONLY_KEYS = new Set(["entry_id", "entry_type"]);
 
 type CardState =
   | { phase: "review" }
   | { phase: "saving" }
+  | { phase: "duplicate"; matches: DuplicateMatch[] }
   | { phase: "saved"; duplicate: boolean }
   | { phase: "invalid"; errors: FieldError[] }
   | { phase: "failed"; message: string };
-
-function toInputValue(value: unknown): string {
-  if (Array.isArray(value)) return value.join(", ");
-  return value == null ? "" : String(value);
-}
-
-function fromInputValue(original: unknown, edited: string): unknown {
-  if (Array.isArray(original)) {
-    return edited.split(",").map((s) => s.trim()).filter(Boolean);
-  }
-  if (typeof original === "number") {
-    const n = Number(edited);
-    return Number.isNaN(n) ? edited : n;
-  }
-  return edited;
-}
 
 export function ProposalCard({
   idToken,
@@ -43,43 +33,29 @@ export function ProposalCard({
   candidate: EntryCandidate;
   onSaved: (entryType: string, title: string) => void;
 }) {
-  const [fields, setFields] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {};
-    for (const [key, value] of Object.entries(candidate)) {
-      if (!READONLY_KEYS.has(key)) initial[key] = toInputValue(value);
-    }
-    return initial;
-  });
+  const [fields, setFields] = useState<Record<string, string>>(() => editableFields(candidate));
   const [state, setState] = useState<CardState>({ phase: "review" });
 
-  const errorsFor = (key: string): string[] =>
-    state.phase === "invalid" ? state.errors.filter((e) => e.field === key).map((e) => e.error) : [];
-
-  const confirm = async () => {
+  const confirm = async (acknowledge = false) => {
     setState({ phase: "saving" });
-    const edited: EntryCandidate = { ...candidate };
-    for (const [key, value] of Object.entries(fields)) {
-      edited[key] = fromInputValue(candidate[key], value);
-    }
+    // entry_id rides along unchanged — a re-confirm (double click, retry) lands on the same SK
+    // and comes back 200 instead of duplicating (Section 3.1.4).
+    const edited = mergeEdits(candidate, fields) as EntryCandidate;
 
     let result: ConfirmResult;
     try {
-      // entry_id rides along unchanged — a re-confirm (double click, retry) lands on the same
-      // SK and comes back 200 instead of duplicating (Section 3.1.4).
-      result = await confirmEntry(idToken, edited);
+      result = await confirmEntry(idToken, edited, { acknowledge });
     } catch {
       setState({ phase: "failed", message: "Network error — your entry was not saved. Try again." });
       return;
     }
 
-    if (result.status === "invalid") {
-      setState({ phase: "invalid", errors: result.errors });
-      return;
+    if (result.status === "invalid") return setState({ phase: "invalid", errors: result.errors });
+    if (result.status === "possible_duplicate") {
+      return setState({ phase: "duplicate", matches: result.duplicates });
     }
-    if (result.status === "failed") {
-      setState({ phase: "failed", message: result.message });
-      return;
-    }
+    if (result.status === "failed") return setState({ phase: "failed", message: result.message });
+
     setState({ phase: "saved", duplicate: result.status === "duplicate" });
     onSaved(candidate.entry_type, fields.title ?? candidate.title);
   };
@@ -95,38 +71,42 @@ export function ProposalCard({
     );
   }
 
+  if (state.phase === "duplicate") {
+    return (
+      <div className="proposal-card duplicate-warning">
+        <span className="badge">{candidate.entry_type}</span>
+        <p className="dup-lead">This looks similar to something already in your vault:</p>
+        <ul className="dup-list">
+          {state.matches.map((m) => (
+            <li key={m.entry_id}>
+              <span className="badge small">{m.entry_type}</span> {m.title}
+              <span className="dup-score"> · {Math.round(m.similarity * 100)}% similar</span>
+            </li>
+          ))}
+        </ul>
+        <div className="card-actions">
+          <button onClick={() => void confirm(true)}>Save anyway</button>
+          <button className="secondary" onClick={() => setState({ phase: "review" })}>
+            Keep editing
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const busy = state.phase === "saving";
   return (
     <div className="proposal-card">
       <span className="badge">{candidate.entry_type}</span>
-      <div className="proposal-fields">
-        {Object.keys(fields).map((key) => (
-          <label key={key}>
-            <span className="field-name">{key.replaceAll("_", " ")}</span>
-            {key === "content" ? (
-              <textarea
-                value={fields[key]}
-                rows={3}
-                disabled={busy}
-                onChange={(e) => setFields((f) => ({ ...f, [key]: e.target.value }))}
-              />
-            ) : (
-              <input
-                value={fields[key]}
-                disabled={busy}
-                onChange={(e) => setFields((f) => ({ ...f, [key]: e.target.value }))}
-              />
-            )}
-            {errorsFor(key).map((msg) => (
-              <span key={msg} className="field-error">{msg}</span>
-            ))}
-          </label>
-        ))}
-      </div>
+      <EntryFields
+        fields={fields}
+        setFields={setFields}
+        errors={state.phase === "invalid" ? state.errors : []}
+        disabled={busy}
+      />
       {state.phase === "invalid" && (
         <p className="field-error">
           Fix the highlighted fields and confirm again.
-          {/* Errors on fields we don't render inline (e.g. the type discriminator) still surface. */}
           {state.errors
             .filter((e) => !(e.field in fields))
             .map((e) => ` ${e.field}: ${e.error}.`)

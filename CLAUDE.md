@@ -36,6 +36,15 @@ seems off or unclear, the ADL captures the reasoning behind it.
 - **Notifications:** EventBridge Scheduler → `checkin_lambda` → Claude Haiku → SES. Bounce/Complaint events route via SNS → `ses_event_handler` (Section 4.5).
 - **Region:** `us-east-1` only (ADR-012).
 
+## AWS account & profile (check before any AWS command)
+
+CareerVault lives in AWS account **`768396678224`**, region **`us-east-1`**, reached via the
+**`careervault-dev`** SSO profile. A second project shares the same SSO login but a *different*
+account under the same Organization — so **always prefix AWS/SAM commands with
+`AWS_PROFILE=careervault-dev`** and never rely on a default profile. Before deploying, assert the
+account resolves to `768396678224`. A `SessionStart` hook (`.claude/settings.json` →
+`.claude/check-aws-profile.sh`) and `/start-slice` step 3 both run this check.
+
 ## Lambda functions
 
 Seven Lambdas total. Per-function purpose, IAM, and event sources in architecture doc Section 4.2:
@@ -115,10 +124,11 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Current slice: 3 — entries dashboard + CRUD completion.**
+**Phase 2 — Implementation (in progress). Next slice: 4 — frontend hosting (S3 + CloudFront).**
 
-- Last completed: slice 2b — chat UI + turn idempotency (ADR-032), deployed to dev and
-  smoke-tested from the browser. Before that: 2a chat backend (PR #2), 1 auth + settings (PR #1).
+- Last completed: slice 3 — entries dashboard + CRUD completion (ADR-033 semantic dedup; edit =
+  conditional PutItem; arch v1.4), deployed to dev, smoke-tested end-to-end and from the browser.
+  Before that: 2b chat UI (PR #3), 2a chat backend (PR #2), 1 auth + settings (PR #1).
 - **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
   criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
   Bedrock gotchas that used to live here). Read the status board + current slice section at

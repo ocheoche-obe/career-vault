@@ -1,9 +1,10 @@
 /**
- * Typed client for the two chat-slice endpoints (Section 3.1).
+ * Typed client for the chat + entry endpoints (Sections 3.1, 3.1.3–3.1.5, ADR-033).
  *
- * `POST /chat` is Phase A (parse turn) — it never persists an entry, only proposes one or asks
- * a clarifying question. `POST /entries` is Phase B (confirm) — the reviewed candidate, carrying
- * the `entry_id` minted at propose time, which is what makes confirm idempotent (Section 3.1.4).
+ * `POST /chat` is Phase A (parse turn) — it never persists, only proposes or clarifies.
+ * `POST /entries` is Phase B (confirm) — the reviewed candidate, carrying the `entry_id` minted at
+ * propose time, which is what makes confirm idempotent (Section 3.1.4). Slice 3 adds the rest of
+ * the entry lifecycle: `GET /entries` (dashboard), `PUT /entries/{id}` (edit), `DELETE` (remove).
  */
 
 import { apiBaseUrl } from "../auth/oidcConfig";
@@ -17,6 +18,18 @@ export type EntryCandidate = {
   [key: string]: unknown;
 };
 
+/** A persisted entry as returned by GET /entries (embedding stripped server-side). */
+export type Entry = {
+  entry_id: string;
+  entry_type: string;
+  title: string;
+  content: string;
+  event_date?: string;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+};
+
 export type ChatResponse =
   | { kind: "clarification"; question: string; reason?: string; session_id: string }
   | { kind: "parse_candidate"; candidate: EntryCandidate; session_id: string }
@@ -24,37 +37,107 @@ export type ChatResponse =
 
 export type FieldError = { field: string; error: string };
 
-/** Outcome of a confirm, mapped from the 201/200/422/500 contract (Section 3.1.5). */
+/** One near-duplicate surfaced by the ADR-033 check at confirm time. */
+export type DuplicateMatch = {
+  entry_id: string;
+  entry_type: string;
+  title: string;
+  similarity: number;
+};
+
+/** Outcome of a confirm, mapped from the 201/200/409/422/500 contract (Section 3.1.5). */
 export type ConfirmResult =
   | { status: "created" | "duplicate"; entry: Record<string, unknown> }
+  | { status: "possible_duplicate"; entryId: string; duplicates: DuplicateMatch[] }
   | { status: "invalid"; errors: FieldError[] }
   | { status: "failed"; message: string };
 
-async function postJson(idToken: string, path: string, body: unknown): Promise<Response> {
-  return fetch(`${apiBaseUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: JSON.stringify(body),
-  });
+/** Outcome of an edit (PUT /entries/{id}). */
+export type UpdateResult =
+  | { status: "updated"; entry: Record<string, unknown> }
+  | { status: "invalid"; errors: FieldError[] }
+  | { status: "notfound" }
+  | { status: "failed"; message: string };
+
+function authHeaders(idToken: string): HeadersInit {
+  return { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` };
+}
+
+async function jsonOf(res: Response): Promise<Record<string, unknown>> {
+  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
 export async function postChat(
   idToken: string,
   body: { message: string; session_id?: string; client_message_id: string },
 ): Promise<ChatResponse> {
-  const res = await postJson(idToken, "/chat", body);
+  const res = await fetch(`${apiBaseUrl}/chat`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(body),
+  });
   if (!res.ok) throw new Error(`POST /chat → ${res.status}`);
   return (await res.json()) as ChatResponse;
 }
 
-export async function confirmEntry(idToken: string, candidate: EntryCandidate): Promise<ConfirmResult> {
-  const res = await postJson(idToken, "/entries", candidate);
-  const body = await res.json().catch(() => ({}));
-  if (res.status === 201) return { status: "created", entry: body.entry };
-  if (res.status === 200) return { status: "duplicate", entry: body.entry };
-  if (res.status === 422) return { status: "invalid", errors: body.errors ?? [] };
-  return { status: "failed", message: body.message ?? `POST /entries → ${res.status}` };
+/**
+ * Confirm an entry. Pass `{ acknowledge: true }` to save past a `possible_duplicate` warning —
+ * the same `entry_id` is reused, so an acknowledged save stays idempotent (Section 3.1.4).
+ */
+export async function confirmEntry(
+  idToken: string,
+  candidate: EntryCandidate,
+  opts: { acknowledge?: boolean } = {},
+): Promise<ConfirmResult> {
+  const body = opts.acknowledge ? { ...candidate, acknowledge_duplicate: true } : candidate;
+  const res = await fetch(`${apiBaseUrl}/entries`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(body),
+  });
+  const b = await jsonOf(res);
+  if (res.status === 201) return { status: "created", entry: b.entry as Record<string, unknown> };
+  if (res.status === 200) return { status: "duplicate", entry: b.entry as Record<string, unknown> };
+  if (res.status === 409) {
+    return {
+      status: "possible_duplicate",
+      entryId: b.entry_id as string,
+      duplicates: (b.possible_duplicates as DuplicateMatch[]) ?? [],
+    };
+  }
+  if (res.status === 422) return { status: "invalid", errors: (b.errors as FieldError[]) ?? [] };
+  return { status: "failed", message: (b.message as string) ?? `POST /entries → ${res.status}` };
+}
+
+export async function listEntries(idToken: string): Promise<Entry[]> {
+  const res = await fetch(`${apiBaseUrl}/entries`, { headers: authHeaders(idToken) });
+  if (!res.ok) throw new Error(`GET /entries → ${res.status}`);
+  const b = await jsonOf(res);
+  return (b.entries as Entry[]) ?? [];
+}
+
+export async function updateEntry(
+  idToken: string,
+  entryId: string,
+  fields: Record<string, unknown>,
+): Promise<UpdateResult> {
+  const res = await fetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
+    method: "PUT",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(fields),
+  });
+  const b = await jsonOf(res);
+  if (res.status === 200) return { status: "updated", entry: b.entry as Record<string, unknown> };
+  if (res.status === 422) return { status: "invalid", errors: (b.errors as FieldError[]) ?? [] };
+  if (res.status === 404) return { status: "notfound" };
+  return { status: "failed", message: (b.message as string) ?? `PUT /entries → ${res.status}` };
+}
+
+/** Hard delete (ADR-027). Returns true on success; a 404 (already gone) also resolves the intent. */
+export async function deleteEntry(idToken: string, entryId: string): Promise<boolean> {
+  const res = await fetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
+    method: "DELETE",
+    headers: authHeaders(idToken),
+  });
+  return res.status === 200 || res.status === 404;
 }

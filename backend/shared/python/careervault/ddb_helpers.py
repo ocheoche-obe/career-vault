@@ -254,3 +254,77 @@ def put_entry_conditional(item: Mapping[str, Any]) -> bool:
         if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
             return False
         raise
+
+
+def query_entries(user_id: str) -> list[dict[str, Any]]:
+    """Return all of a user's ENTRY items (AP-10), following pagination to completion.
+
+    Pagination is not optional here: each entry carries a ~1024-float Titan embedding stored as
+    DynamoDB numbers (~20 KB/item), so a few dozen entries already exceed the 1 MB per-Query page
+    limit. Stopping at the first page would silently drop entries from both the dashboard (AP-7/8)
+    and the resume agent's similarity read (ADR-016) — a correctness bug, not a perf nicety.
+
+    Items are returned in SK order (``ENTRY#<ulid>`` = creation order). Chronological/grouped
+    presentation is a client-side re-sort per Section 2.5; callers that need similarity ranking
+    use :mod:`careervault.similarity`.
+    """
+    table = get_table()
+    key_condition = Key("PK").eq(pk_for_user(user_id)) & Key("SK").begins_with("ENTRY#")
+
+    items: list[dict[str, Any]] = []
+    start_key: dict | None = None
+    while True:
+        kwargs: dict[str, Any] = {"KeyConditionExpression": key_condition}
+        if start_key:
+            kwargs["ExclusiveStartKey"] = start_key
+        response = table.query(**kwargs)
+        items.extend(response.get("Items", []))
+        start_key = response.get("LastEvaluatedKey")
+        if not start_key:
+            return items
+
+
+def put_entry_update(item: Mapping[str, Any]) -> bool:
+    """Overwrite an existing ENTRY item (AP-5). ``True`` if written, ``False`` if it was absent.
+
+    An edit submits the *whole* re-validated entry, so the update is a full-item ``PutItem``
+    guarded by ``attribute_exists(SK)`` rather than an ``UpdateItem`` with per-field SET/REMOVE
+    expressions — the replace semantics match "the user rebuilt this entry", and there is no
+    partial-update path to express. The condition makes the write reject (rather than resurrect)
+    an entry deleted between the caller's read and this write: ``False`` maps to ``404``. Because
+    the create path already guarantees the ``ENTRY#`` prefix, the same in-code assertion is the
+    only thing standing between a mis-built SK and a sibling collection.
+
+    Raises:
+        ValueError: if the item's SK is not an ``ENTRY#`` key.
+    """
+    assert_sk_prefix(item, "ENTRY#")
+    try:
+        get_table().put_item(
+            Item=to_ddb_numbers(dict(item)),
+            ConditionExpression="attribute_exists(SK)",
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def delete_entry(user_id: str, entry_id: str) -> bool:
+    """Hard-delete an ENTRY item (AP-6 / ADR-027). ``True`` if deleted, ``False`` if absent.
+
+    Hard delete is irreversible by design (ADR-027 — the UI confirm is the safety net). The
+    ``attribute_exists(SK)`` condition lets the caller distinguish "deleted" from "never existed"
+    so a delete of an already-gone entry returns ``404`` rather than a misleading success.
+    """
+    try:
+        get_table().delete_item(
+            Key={"PK": pk_for_user(user_id), "SK": f"ENTRY#{entry_id}"},
+            ConditionExpression="attribute_exists(SK)",
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise

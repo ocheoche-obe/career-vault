@@ -26,13 +26,30 @@ git status -sb
 - Read the ADRs and architecture-doc sections the slice's "Key refs" line names.
 - Check memory for gotchas that apply (e.g. the Bedrock Anthropic use-case form).
 
-## 3. Verify AWS access
+## 3. Verify AWS access — and that it's the *right* account
+
+CareerVault shares an AWS SSO login with a second project that lives in a **separate AWS account**
+under the same Organization. Both are reachable from the same SSO session via different profiles, so
+the real footgun is doing CareerVault work against the other account. Assert the account — don't just
+eyeball it:
 
 ```bash
-AWS_PROFILE=careervault-dev aws sts get-caller-identity
+acct=$(AWS_PROFILE=careervault-dev aws sts get-caller-identity --query Account --output text) \
+  && { [ "$acct" = "768396678224" ] \
+       && echo "✓ CareerVault account $acct (us-east-1)" \
+       || echo "✗ WRONG ACCOUNT $acct — expected 768396678224. Stop; do not run aws/sam."; }
 ```
 
-Expected account: `768396678224`, region `us-east-1`. If the SSO token is expired, ask the user to run `aws sso login --profile careervault-dev` — do not attempt to log in for them. Skip this step if the slice plan involves no AWS calls yet.
+- Expected account `768396678224`, region `us-east-1`. A mismatch means the profile points at the
+  wrong account — stop and fix before any `aws`/`sam` command.
+- **Always prefix AWS and SAM commands with `AWS_PROFILE=careervault-dev`.** Never rely on a default
+  profile; the default may be the other project's account.
+- If the SSO token is expired (the command errors), ask the user to run
+  `aws sso login --profile careervault-dev` — do not attempt to log in for them.
+- A project-level `SessionStart` hook (`.claude/settings.json` → `.claude/check-aws-profile.sh`) runs
+  this same assertion automatically at the start of every session in this repo; this step is the
+  manual belt-and-suspenders before you actually deploy.
+- Skip only if the slice plan involves no AWS calls at all.
 
 ## 4. Confirm cost posture
 

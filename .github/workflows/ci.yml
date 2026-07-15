@@ -1,0 +1,46 @@
+name: CI
+
+# Gate PRs on the same checks the wrap-slice ritual runs locally: backend unit tests + frontend
+# typecheck/build/lint. Complements the CodeQL security workflow (kept separate on purpose).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13' # matches the Lambda runtime (ADR-002)
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Run unit tests
+        run: python -m pytest tests/unit -q
+
+  frontend:
+    name: Frontend typecheck + build + lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Build (tsc + vite)
+        run: npm run build
+      - name: Lint
+        run: npm run lint
