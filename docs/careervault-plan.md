@@ -61,7 +61,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
-| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | 🔨 ⚠ | — |
+| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
@@ -267,7 +267,7 @@ duplicate" warning and "save anyway" writes it.
 
 ---
 
-## Slice 4 — Frontend hosting ⬜ ⚠
+## Slice 4 — Frontend hosting ✅
 
 **Goal:** The app lives at a real URL — usable from any device, and every later slice is testable
 against a deployed frontend.
@@ -285,14 +285,50 @@ build/deploy steps documented (manual `aws s3 sync` + invalidation at MVP per §
 
 **New infra:** S3 site bucket, CloudFront distribution, OAC.
 
-**⚠ Decisions:**
-- Default `*.cloudfront.net` domain vs custom domain (+ Route 53 + ACM cert). Cost and effort
-  both small but nonzero; default domain is the likely MVP answer.
+**⚠ Decisions (resolved):**
+- Default `*.cloudfront.net` domain vs custom domain (+ Route 53 + ACM cert). **Resolved: default
+  domain** — custom domain deferred to v1.x (ADR-019 amendment). Zero recurring cost, HTTPS out of
+  the box, and the app client auto-allows the distribution's own domain.
 
 **Exit criteria:** sign in → chat → confirm entry → dashboard, all from the CloudFront URL on a
-device that isn't the dev machine.
+device that isn't the dev machine. **✅ Met** — verified from a laptop and a phone (2026-07-16).
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:** _(wrapped 2026-07-16, PR #TBD)_
+- **Shipped:** private S3 site bucket (`careervault-web-${Env}-${AccountId}`, all public access
+  blocked, SSE-S3) fronted by a CloudFront distribution (PriceClass_100, HTTP/2+3, default
+  `*.cloudfront.net` cert) via **Origin Access Control** — bucket policy trusts only the
+  distribution's `SourceArn`. SPA routing via CloudFront `CustomErrorResponses` (S3 403/404 →
+  `/index.html` 200). Cognito app client now allowlists both `localhost:5173` and the CloudFront
+  origin for callback/logout (distribution domain wired via `!GetAtt` within the stack). Three new
+  stack Outputs: `SiteBucketName`, `CloudFrontDistributionId`, `CloudFrontUrl`.
+- **Deployed & verified (dev):** `d2qzo95316tvzl.cloudfront.net`. Smoke-tested root (200), SPA
+  deep-link fallback (`/entries` → 200), OAC asset fetch from the private bucket, CORS preflight
+  (`Access-Control-Allow-Origin: *`), and the Cognito redirect allowlist. Full human exit-criterion
+  path (sign in → chat → confirm → dashboard) confirmed cross-device.
+- **Decisions forced:** ADR-019 amended (default domain, custom domain → v1.x); **new ADR-034**
+  (wildcard CORS — safe for this non-credentialed Bearer-token API; must be revisited if
+  cookie/session auth is ever introduced). Security review: clean (OAC least-privilege confirmed;
+  wildcard CORS reviewed and cleared for this threat model).
+- **Tooling:** `make deploy-frontend` (regenerate env → `npm ci && npm run build` → `s3 sync` →
+  CloudFront invalidation) + `make deploy-all`; `write-frontend-env.sh` now emits
+  `.env.production.local` (CloudFront redirect for builds) alongside `.env.local` (localhost for
+  dev), leaning on Vite's env precedence.
+- **Cost:** unchanged in practice — MTD ~$0.05; CloudFront/S3 at single-user scale is cents. No
+  Bedrock added this slice.
+- **Also landed this branch (pre-slice-4 commit):** Dependabot cadence fix — grouped/monthly
+  `dependabot.yml` + the transferred `dependabot-triage` skill, after the first 15-PR wave was
+  triaged by hand (12 merged; see the parking lot for the two workflow-scope PRs + TS 7).
+- **One thing to improve:** the frontend CI gate is typecheck+build+lint only — no runtime test, so
+  "green CI" doesn't prove the app renders. The transferred skill flags this; a minimal smoke test
+  (render app root, assert landing state) is worth adding before auto-merging any green frontend
+  Dependabot PR. Tracked in the parking lot.
+
+**Threads left open (for the next session / parking lot):**
+- Dependabot PRs **#6 (checkout v4→7)** and **#8 (setup-node v4→7)** — green and mergeable but touch
+  `.github/workflows/`; the `gh` token lacks the `workflow` scope. Merge via web UI or
+  `gh auth refresh -s workflow`.
+- Dependabot **#11 (typescript 6→7)** — parked as unmergeable-solo (typescript-eslint peer range);
+  the new `lint-toolchain` group should let it land atomically next cadence.
 
 ---
 

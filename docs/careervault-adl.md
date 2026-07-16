@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-13 (ADR-033 added at the start of slice 3 — semantic duplicate detection; ADR-024 gained an edit-path note)
+**Last updated:** 2026-07-15 (slice 4 — ADR-034 added [wildcard CORS for the token-auth API]; ADR-019 amended [default CloudFront domain, custom domain deferred to v1.x])
 
 ---
 
