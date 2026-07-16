@@ -124,11 +124,14 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 4 — frontend hosting (S3 + CloudFront).**
+**Phase 2 — Implementation (in progress). Next slice: 5 — resume upload bootstrap (S3 data bucket + `resume_upload_parser`).**
 
-- Last completed: slice 3 — entries dashboard + CRUD completion (ADR-033 semantic dedup; edit =
-  conditional PutItem; arch v1.4), deployed to dev, smoke-tested end-to-end and from the browser.
-  Before that: 2b chat UI (PR #3), 2a chat backend (PR #2), 1 auth + settings (PR #1).
+- Last completed: slice 4 — frontend hosting (private S3 + CloudFront via OAC, default
+  `*.cloudfront.net` domain per ADR-019 amendment; wildcard CORS per ADR-034; arch v1.5), deployed
+  to dev and verified cross-device (laptop + phone). App URL is a stack Output (`CloudFrontUrl`);
+  `make deploy-frontend` builds + syncs + invalidates. Also flipped Dependabot to grouped/monthly.
+  Before that: slice 3 — entries dashboard + CRUD (ADR-033; arch v1.4, PR #4); 2b chat UI (PR #3);
+  2a chat backend (PR #2); 1 auth + settings (PR #1).
 - **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
   criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
   Bedrock gotchas that used to live here). Read the status board + current slice section at

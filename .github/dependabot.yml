@@ -1,31 +1,104 @@
-# Dependency vulnerability alerts + weekly update PRs. High-value, low-effort security net for a
-# project that stores users' career data — catches a CVE in a pinned dependency before it ships.
+# Dependency vulnerability alerts + grouped monthly update PRs. High-value, low-effort security net
+# for a project that stores users' career data — catches a CVE in a pinned dependency before it ships.
+#
+# Cadence rationale (see .claude/skills/dependabot-triage/SKILL.md):
+# - Monthly interval: SECURITY updates ignore this schedule and arrive immediately, so a slow
+#   version-update cadence costs nothing on the safety side — it only cuts routine noise.
+# - One minor/patch catch-all group per ecosystem -> routine bumps arrive as a single PR.
+# - Named groups covering ALL update types for peer-coupled families (react + types; the
+#   typescript/eslint toolchain) -> majors land atomically instead of as solo PRs that fail peer
+#   resolution by construction (e.g. the typescript 7 bump that typescript-eslint's peer range
+#   rejects until it too moves).
+# - Catch-alls exclude the named-group packages so group membership stays unambiguous.
 version: 2
 updates:
   # Backend shared Lambda layer (deps all seven Lambdas import).
   - package-ecosystem: pip
     directory: /backend/shared/python
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
     labels: [dependencies, security]
+    groups:
+      backend-minor-patch:
+        update-types:
+          - minor
+          - patch
 
   # Test/dev dependencies.
   - package-ecosystem: pip
     directory: /tests
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
     labels: [dependencies, security]
+    groups:
+      tests-minor-patch:
+        update-types:
+          - minor
+          - patch
 
   # Frontend (React + Vite).
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
     labels: [dependencies, security]
+    groups:
+      react:                          # all update types: React + its type stubs move together
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      oidc:                           # react-oidc-context peers on oidc-client-ts + react
+        patterns:
+          - oidc-client-ts
+          - react-oidc-context
+      lint-toolchain:                 # peer-coupled: typescript <-> typescript-eslint <-> eslint
+        patterns:
+          - typescript
+          - typescript-eslint
+          - "@typescript-eslint/*"
+          - eslint
+          - "@eslint/*"
+          - eslint-plugin-*
+          - globals
+      vite:
+        patterns:
+          - vite
+          - "@vitejs/*"
+      frontend-minor-patch:
+        exclude-patterns:             # keep named-group packages out of the catch-all
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+          - oidc-client-ts
+          - react-oidc-context
+          - typescript
+          - typescript-eslint
+          - "@typescript-eslint/*"
+          - eslint
+          - "@eslint/*"
+          - eslint-plugin-*
+          - globals
+          - vite
+          - "@vitejs/*"
+        update-types:
+          - minor
+          - patch
 
-  # The GitHub Actions used by the workflows above.
+  # The GitHub Actions used by the CI/CodeQL workflows.
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 5
     labels: [dependencies, security]
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch
