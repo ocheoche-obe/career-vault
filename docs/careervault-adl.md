@@ -64,6 +64,7 @@ Each ADR has:
 | ADR-031 | Bedrock invocation via cross-region inference profile (Haiku 4.5)  | Accepted   |
 | ADR-032 | Chat turn idempotency — client-supplied message ID                 | Accepted   |
 | ADR-033 | Semantic duplicate detection at confirm — warn, not block          | Accepted   |
+| ADR-034 | CORS — wildcard allow-origin for the token-auth API                 | Accepted   |
 
 ---
 
@@ -515,6 +516,9 @@ The React frontend needs a hosting target. AWS offers Amplify Hosting (managed) 
 ### Decision
 Host the built React app in a private S3 bucket fronted by CloudFront, using Origin Access Control (OAC). ACM provisions the TLS certificate; Route 53 provides the custom domain. The entire setup lives in the SAM template. A CloudFront function (or custom error response) handles the SPA routing fallback.
 
+### Amendment (2026-07-15, slice 4)
+At implementation the custom-domain half of this decision was deferred. **MVP ships on the default `*.cloudfront.net` domain and its default CloudFront TLS certificate — no Route 53 hosted zone and no ACM certificate.** Rationale: the custom domain adds recurring cost (hosted zone) plus DNS/cert-validation setup for zero MVP functional benefit on a single-user app; the CloudFront default domain is HTTPS out of the box. The S3 + CloudFront + OAC + SPA-fallback core of the decision stands unchanged. Custom domain (Route 53 + ACM in us-east-1 + alias records + Cognito callback-URL updates) is a v1.x upgrade; revisit if the app is ever shared under a branded URL.
+
 ### Alternatives considered
 - **AWS Amplify Hosting** — fully managed, but Git-build pipeline fragments the IaC story.
 - **S3 + CloudFront direct** — more code; every piece is exposed and educational.
@@ -954,6 +958,70 @@ Detect at **confirm time**, **warn but never block**, and let the user be the au
 
 ### Cross-cloud parallel
 "Embed once, compare cosine, let a human adjudicate" is provider-neutral: the same flow runs on Azure (`AzureOpenAIClient` embeddings + in-app or AI Search vector query) and GCP (Vertex embeddings + Matching Engine). A managed vector store would push the similarity search server-side rather than looping in the function — the upgrade lever ADR-016 already names — but the *decision* (warn not block, user adjudicates, client-acknowledged override) is identical everywhere.
+
+---
+
+## ADR-034: CORS — wildcard allow-origin for the token-auth API
+
+**Status:** Accepted
+**Date:** 2026-07-15
+
+### Context
+Slice 4 puts the frontend on a CloudFront URL while local development keeps running on
+`http://localhost:5173` (Vite dev server) and — per the deployed `.env.local` — pointing at the
+*same* deployed API Gateway. So the API now has **two legitimate browser origins** calling it
+cross-origin: the CloudFront distribution domain and localhost. The prior template hard-coded a
+single `AllowOrigin` (`CallbackUrl`, i.e. localhost), which would block the deployed app.
+
+REST API Gateway's CORS support (and the SAM `Cors` block) emits a **single static
+`Access-Control-Allow-Origin`** on the MOCK `OPTIONS` preflight — it cannot name two origins, and
+the CORS spec forbids a comma-joined list or space-separated origins in that header. Supporting an
+allowlist of two origins would require reflecting the request `Origin` at preflight, which on REST
+API Gateway means a Lambda-backed `OPTIONS` integration replacing the mock — real machinery.
+
+Crucially, **every request is authenticated with a Cognito JWT sent as `Authorization: Bearer`**,
+and the frontend `fetch` calls do **not** set `credentials: 'include'` — there are no cookies and
+no ambient session credential. In CORS terms these are *non-credentialed* requests.
+
+### Decision
+Set `Access-Control-Allow-Origin: *` for the API — both on the API Gateway `OPTIONS` preflight and
+on the Lambda proxy responses (via `CORS_ALLOW_ORIGIN=*`). Do **not** set
+`Access-Control-Allow-Credentials`. Cognito callback/logout URLs remain an explicit allowlist
+(localhost + the CloudFront origin) — that is a separate, unrelated control and is *not* loosened.
+
+### Alternatives considered
+- **Allowlist origin reflection** (localhost + CloudFront) — tighter origin control, but requires a
+  Lambda-backed `OPTIONS` handler to reflect two origins at preflight, plus reflection logic in all
+  three handlers. Meaningful complexity for marginal benefit on an API with no ambient credential.
+- **Single CloudFront-only origin** — would break the documented local-dev-against-deployed-API
+  workflow (localhost:5173 → deployed API), which the `.env.local`/`VITE_API_BASE_URL` setup relies
+  on.
+
+### Why `*` is safe here (and would not be with cookies)
+CORS is not an authentication control; it governs which origins a browser lets *read* a
+cross-origin response. The security of every endpoint rests on the JWT, which a malicious origin
+cannot obtain without the user completing the Cognito PKCE login (whose redirect targets stay
+allowlisted). Because no cookie/credential is sent ambiently, there is no CSRF surface for `*` to
+widen — a third-party page can *issue* a request but cannot attach the victim's token, and the spec
+forbids pairing `Allow-Origin: *` with `Allow-Credentials: true` anyway. This is the same posture
+most public Bearer-token APIs adopt. The moment the app introduces cookie-based sessions, this ADR
+must be revisited: `*` would then have to become an explicit reflected allowlist.
+
+### Consequences
+- ✅ One-line, origin-agnostic config: preview builds, additional devices, or a future custom
+  domain all work with no CORS change.
+- ✅ No Lambda-backed `OPTIONS` handler, no per-handler reflection logic — less code to maintain.
+- ✅ Local-dev-against-deployed-API keeps working unchanged.
+- ⚠️ Any origin may issue requests to the API. Harmless while auth is 100% Bearer-token with no
+  cookies; becomes a real concern if cookie/session auth is ever added (revisit trigger above).
+- ⚠️ The Cognito callback/logout allowlist is now the *only* origin-shaped restriction; it must
+  stay tight (no wildcards there).
+
+### Cross-cloud parallel
+The "wildcard CORS is fine for a non-credentialed token API, tighten it the moment cookies appear"
+reasoning is provider-neutral — the same call applies to Azure API Management / Front Door and GCP
+API Gateway / Cloud CDN. All three distinguish credentialed from non-credentialed CORS identically,
+because it is a browser (Fetch spec) behavior, not a cloud-specific one.
 
 ---
 

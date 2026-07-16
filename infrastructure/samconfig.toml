@@ -42,7 +42,9 @@ parameter_overrides = [
     "Environment=prod",
     "LogLevel=INFO",
     "CognitoDomainPrefix=careervault-prod",
-    # No hosting yet (CloudFront deferred); update to the real web origin when it lands.
+    # The template now creates CloudFront in every env, and the app client auto-allows the
+    # distribution's own domain. CallbackUrl only needs listing extra (non-CloudFront) origins;
+    # prod isn't deployed yet, so localhost is a harmless placeholder until prod's first deploy.
     "CallbackUrl=http://localhost:5173",
     "SettingsReservedConcurrency=5",
     "ChatReservedConcurrency=5",

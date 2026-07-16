@@ -61,7 +61,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
-| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ⬜ ⚠ | — |
+| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | 🔨 ⚠ | — |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |

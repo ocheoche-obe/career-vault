@@ -1,11 +1,13 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CareerVault — slices 1 + 2. Provisions the DynamoDB single table, Cognito User Pool + Hosted UI
+  CareerVault — slices 1–4. Provisions the DynamoDB single table, Cognito User Pool + Hosted UI
   (ADR-025), a REST API Gateway with a Cognito authorizer, the careervault-shared Lambda layer
   (ADR-023), settings_lambda (GET /settings), chat_lambda (POST /chat) and career_crud
-  (POST /entries) for conversational entry ingestion (Section 3.1, ADR-031).
-  Resume agent / check-ins / S3 / SES / CloudFront are intentionally out of scope here.
+  (POST /entries) for conversational entry ingestion (Section 3.1, ADR-031), plus frontend hosting
+  (slice 4): a private S3 site bucket + CloudFront distribution with Origin Access Control on the
+  default *.cloudfront.net domain (ADR-019).
+  Resume agent / check-ins / data S3 bucket / SES are intentionally out of scope here.
 
 Parameters:
   Environment:
@@ -110,7 +112,8 @@ Globals:
         CAREERVAULT_TABLE_NAME: !Ref CareerVaultTable
         # With Lambda proxy integration the function echoes the allow-origin header on real
         # responses; API Gateway's Cors block below only covers the OPTIONS preflight.
-        CORS_ALLOW_ORIGIN: !Ref CallbackUrl
+        # Wildcard is safe here: the API is Bearer-token auth with no cookies (ADR-034).
+        CORS_ALLOW_ORIGIN: "*"
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -186,10 +189,15 @@ Resources:
         - openid
         - email
         - profile
+      # localhost (CallbackUrl param) for `npm run dev`, plus the CloudFront origin for the
+      # deployed app. GetAtt on the distribution resolves the chicken-and-egg within the stack
+      # (the *.cloudfront.net domain isn't known until the distribution is created). Slice 4.
       CallbackURLs:
         - !Ref CallbackUrl
+        - !Sub "https://${SiteDistribution.DomainName}"
       LogoutURLs:
         - !Ref CallbackUrl
+        - !Sub "https://${SiteDistribution.DomainName}"
       SupportedIdentityProviders:
         - COGNITO
       ExplicitAuthFlows:
@@ -228,7 +236,9 @@ Resources:
             Identity:
               Header: Authorization
       Cors:
-        AllowOrigin: !Sub "'${CallbackUrl}'"
+        # Wildcard preflight origin — safe for this non-credentialed Bearer-token API (ADR-034).
+        # No AllowCredentials (the spec forbids pairing it with '*', and the app sends no cookies).
+        AllowOrigin: "'*'"
         AllowHeaders: "'Authorization,Content-Type'"
         # PUT/DELETE land with the entry CRUD routes (slice 3, career_crud).
         AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
@@ -552,6 +562,107 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # ---------------------------------------------------------------------------
+  # Frontend hosting — private S3 bucket + CloudFront with Origin Access Control
+  # (ADR-019, arch §5.7). Default *.cloudfront.net domain; custom domain deferred
+  # to v1.x (ADR-019 amendment 2026-07-15). Slice 4.
+  # ---------------------------------------------------------------------------
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    # Retain in prod so an accidental stack delete can't take the site content with it; in dev
+    # let it delete cleanly (empty on teardown handled by the deploy tooling / manual `rm`).
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      BucketName: !Sub 'careervault-web-${Environment}-${AWS::AccountId}'
+      # Private bucket — CloudFront reaches it via OAC (signed requests), never the public.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - { Key: Project, Value: CareerVault }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: SAM }
+
+  SiteOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub 'careervault-web-oac-${Environment}'
+        Description: OAC so CloudFront can read the private site bucket via SigV4.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'CareerVault frontend (${Environment})'
+        DefaultRootObject: index.html
+        # PriceClass_100 = North America + Europe edges only — the cheapest tier, right for the
+        # $5 ceiling and a single-user app.
+        PriceClass: PriceClass_100
+        HttpVersion: http2and3
+        Origins:
+          - Id: SiteBucketOrigin
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref SiteOAC
+            # OAC replaces the legacy Origin Access Identity, so OAI must be empty string.
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: SiteBucketOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          # AWS managed "CachingOptimized" policy — no cookies/query/headers in the cache key.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # SPA routing: the React Router owns client-side paths. S3 returns 403 (OAC) or 404 for
+        # any key that isn't a real object, so map both to index.html/200 and let the app route.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 10
+        ViewerCertificate:
+          # Default *.cloudfront.net cert — no ACM/custom domain at MVP (ADR-019 amendment).
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - { Key: Project, Value: CareerVault }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: SAM }
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          # Grant only this distribution read access, via the OAC service principal + SourceArn.
+          - Sid: AllowCloudFrontOACRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution.Id}'
+
 Outputs:
   CognitoUserPoolId:
     Description: Cognito User Pool ID — frontend VITE_COGNITO_AUTHORITY is derived from this.
@@ -565,3 +676,12 @@ Outputs:
   ApiGatewayBaseUrl:
     Description: REST API base URL — frontend VITE_API_BASE_URL.
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  SiteBucketName:
+    Description: S3 bucket the built frontend syncs into (`aws s3 sync dist/`).
+    Value: !Ref SiteBucket
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID — used for `create-invalidation` after each deploy.
+    Value: !Ref SiteDistribution
+  CloudFrontUrl:
+    Description: Public HTTPS URL of the deployed frontend (default *.cloudfront.net domain).
+    Value: !Sub 'https://${SiteDistribution.DomainName}'
