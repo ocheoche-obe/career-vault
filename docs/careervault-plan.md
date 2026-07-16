@@ -61,7 +61,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 2a | Chat + entry ingestion (backend) | FR-2 (backend), FR-6.2 | ✅ | [#2](https://github.com/ocheoche-obe/career-vault/pull/2) |
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
-| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | — |
+| 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
@@ -293,7 +293,7 @@ build/deploy steps documented (manual `aws s3 sync` + invalidation at MVP per §
 **Exit criteria:** sign in → chat → confirm entry → dashboard, all from the CloudFront URL on a
 device that isn't the dev machine. **✅ Met** — verified from a laptop and a phone (2026-07-16).
 
-**Completion notes:** _(wrapped 2026-07-16, PR #TBD)_
+**Completion notes:** _(wrapped 2026-07-16, [PR #20](https://github.com/ocheoche-obe/career-vault/pull/20))_
 - **Shipped:** private S3 site bucket (`careervault-web-${Env}-${AccountId}`, all public access
   blocked, SSE-S3) fronted by a CloudFront distribution (PriceClass_100, HTTP/2+3, default
   `*.cloudfront.net` cert) via **Origin Access Control** — bucket policy trusts only the
