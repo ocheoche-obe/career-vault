@@ -476,8 +476,13 @@ conditional-write semantics (arch §5.6 — the v1.3 changelog explicitly calls 
 the SK-prefix bug slipped past string-assertion tests); **frontend unit tests** (Vitest + React
 Testing Library) locking the UI-state flows — the propose/confirm card, the dashboard edit/delete
 cards, the 409 "save anyway" path — and wired into the CI workflow (the slice-3 stuck-"Saving"
-bug is the motivating example: it shipped because no automated test exercises component state);
-README refresh (currently describes only
+bug is the motivating example: it shipped because no automated test exercises component state).
+This subsumes the **slice-4 frontend-render smoke test** flag (a minimal "app root renders + lands
+in the expected auth state" gate): the current frontend CI job is typecheck+build+lint only, so
+green CI does not prove the app renders. **Pull-earlier trigger:** if we ever enable auto-merge for
+green frontend Dependabot PRs, add at least the render smoke test as a standalone PR *first* — a
+hollow gate + auto-merge is how a broken build ships silently (see the `dependabot-triage` skill).
+Then: README refresh (currently describes only
 slice 1); FR/NFR coverage audit against requirements v0.5; **MVP evaluation scorecard** — score
 the shipped MVP against the requirements §7 success criteria and the NFRs (cost, latency),
 capturing what worked / what to improve and routing each finding into the v1.1 plan or parking
@@ -507,7 +512,8 @@ Not scheduled; revisit at slice 9 / v1.1 planning.
   planner, mobile push, interview prep, named-entity verification of generated resumes.
 - **Stretch (requirements §7)** — timeline visualization; goal tracking with progress indicators
   (GOAL entity is data-model + ingestion-tag only at MVP).
-- **Custom domain** (if slice 4 decides against it).
+- **Custom domain** — slice 4 shipped the default `*.cloudfront.net` domain (ADR-019 amendment);
+  Route 53 + ACM + alias records + Cognito callback-URL updates are the deferred v1.x upgrade.
 - **CONVO history growth** — no TTL on chat messages at MVP; fine single-user, revisit before
   multi-tenant.
 
