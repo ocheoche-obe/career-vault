@@ -1,6 +1,6 @@
 ---
 name: start-slice
-description: Session-start ritual for beginning a new CareerVault slice — reconcile git, reload canonical context, verify AWS access, cut the branch, and agree exit criteria before any code is written.
+description: Session-start ritual for beginning a new CareerVault slice — reconcile git, triage open Dependabot PRs, reload canonical context, verify AWS access, cut the branch, and agree exit criteria before any code is written.
 ---
 
 # Start a new slice
@@ -17,6 +17,29 @@ git status -sb
 - Local `main` must equal `origin/main`. If behind: `git checkout main && git merge --ff-only origin/main`. If it won't fast-forward, stop and show the user the divergence — never force anything.
 - Working tree must be clean. If not, show the user what's dirty and ask before proceeding.
 - Slice branches whose PRs are merged can be offered for local deletion (`git branch -d`), but only mention it — deletion is the user's call.
+
+### Triage open Dependabot PRs (the routine sweep lives here)
+
+Dependabot's `dependabot.yml` `interval: monthly` only controls when PRs are *opened* — **nothing
+merges them automatically**, and there is no other scheduled sweep. So start-slice is the cadence
+hook: clear the Dependabot backlog into `main` *before* cutting the slice branch, so the updates
+flow into the new branch instead of piling up.
+
+```bash
+gh pr list --search "author:app/dependabot" --state open
+```
+
+- If any are open, invoke the **`dependabot-triage`** skill — it scopes/classifies them
+  (green → merge; unmergeable/major → root-cause and hold), merges the safe ones, verifies the
+  merged state locally, and keeps `dependabot.yml` healthy. Then **re-sync local `main`**
+  (`git fetch origin && git merge --ff-only origin/main`) so the branch you cut in step 5 includes
+  the merges.
+- **Frontend PRs — do not merge past a green gate blindly.** The frontend CI is
+  typecheck + build + lint only; it does not prove the app renders, so a green check is not a full
+  safety net (see the backlog's render-smoke-test item). Merge those on judgement, not autopilot.
+- Security updates bypass the monthly schedule and arrive immediately; version bumps are the ones
+  that accumulate, which is exactly what this sweep drains. If nothing is open, say so in one line
+  and move on.
 
 ## 2. Reload canonical context
 
