@@ -62,7 +62,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
-| 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | _PR pending_ |
+| 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
@@ -374,7 +374,7 @@ confirmed → entries visible on the dashboard with embeddings; a junk/duplicate
 the 409 "possible duplicate" path on save; **measured parse latency noted** (drives the sync-vs-async
 trigger); budget check after (first Bedrock slice since slice 3 — Haiku parse + Titan-per-confirm).
 
-**Completion notes:** _(wrapped 2026-07-21)_
+**Completion notes:** _(wrapped 2026-07-21, [PR #25](https://github.com/ocheoche-obe/career-vault/pull/25))_
 - **Shipped (all per ADR-035):** private S3 data bucket `careervault-data-${Env}-${AccountId}`
   (SSE-S3, all public access blocked, bucket CORS scoped to the browser's presigned `PUT`, 1-day
   lifecycle on `uploads/`); `resume_upload_parser` Lambda owning **both** routes —
