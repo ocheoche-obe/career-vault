@@ -119,19 +119,24 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 - Guards in place: an account-wide **AWS Budget** `careervault-monthly-5usd` (email alerts at ~$1 /
   $4 / $5 + forecast); template billing alarms tightened to **$3 warning / $5 critical** (prod-gated,
   arch §4.1.4); 14-day CloudWatch log retention.
-- Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4) but is **parameterized and off by
-  default** until the account's Lambda concurrency quota (currently 10) is raised — see ADR-030.
+- Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4), parameterized per ADR-030
+  (template default `-1` = off). The account's Lambda quota was restored to 1000, so the caps are
+  **live** via `samconfig.toml`: chat/career_crud/settings = 5, `resume_upload_parser` = 2.
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 5 — resume upload bootstrap (S3 data bucket + `resume_upload_parser`).**
+**Phase 2 — Implementation (in progress). Next slice: 6 — resume agent (`resume_agent` Lambda, six-phase bounded loop, WeasyPrint layer, Sonnet via inference profile).**
 
-- Last completed: slice 4 — frontend hosting (private S3 + CloudFront via OAC, default
-  `*.cloudfront.net` domain per ADR-019 amendment; wildcard CORS per ADR-034; arch v1.5), deployed
-  to dev and verified cross-device (laptop + phone). App URL is a stack Output (`CloudFrontUrl`);
-  `make deploy-frontend` builds + syncs + invalidates. Also flipped Dependabot to grouped/monthly.
-  Before that: slice 3 — entries dashboard + CRUD (ADR-033; arch v1.4, PR #4); 2b chat UI (PR #3);
-  2a chat backend (PR #2); 1 auth + settings (PR #1).
+- Last completed: slice 5 — resume upload bootstrap (ADR-035; arch v1.7). Private S3 data bucket
+  (`careervault-data-${Env}-${AccountId}`, `uploads/`+`resumes/`) + `resume_upload_parser` owning
+  `POST /uploads/presign` and `POST /uploads/parse` — a **parse-only** Haiku transform (no Titan, no
+  DDB grant): presigned PUT → parse to entry candidates → select-all review table → saved through
+  the existing `POST /entries` (the single embedding site). Pure-Python extraction (pypdf + stdlib
+  `zipfile`/`xml.etree` for DOCX — deliberately no python-docx/lxml). Deployed to dev, backend +
+  UI smoke passed; parse ~3.4–4s (sync route holds). Dedup-precision gap for exact-identity certs
+  → backlog B-003. Before that: slice 4 — frontend hosting (S3 + CloudFront via OAC; ADR-019
+  amendment; ADR-034 wildcard CORS; arch v1.5, PR #20); slice 3 — entries dashboard + CRUD (ADR-033;
+  arch v1.4, PR #4); 2b chat UI (PR #3); 2a chat backend (PR #2); 1 auth + settings (PR #1).
 - **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
   criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
   Bedrock gotchas that used to live here). Read the status board + current slice section at

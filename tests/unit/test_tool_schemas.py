@@ -5,7 +5,11 @@ validate-time contracts cannot drift. These tests pin that property.
 """
 
 from careervault.pydantic_models.entry import ENTRY_TYPES
-from careervault.pydantic_models.tools import CLARIFICATION_REASONS, build_tool_config
+from careervault.pydantic_models.tools import (
+    CLARIFICATION_REASONS,
+    build_extract_tool_config,
+    build_tool_config,
+)
 
 
 def _propose_schema():
@@ -73,3 +77,30 @@ def test_ask_clarification_schema():
     schema = spec["inputSchema"]["json"]
     assert schema["required"] == ["question", "reason"]
     assert schema["properties"]["reason"]["enum"] == list(CLARIFICATION_REASONS)
+
+
+# --- extract_entries (resume bulk-parse, ADR-035) ---------------------------------------------
+
+def _extract_schema():
+    config = build_extract_tool_config()
+    spec = next(t["toolSpec"] for t in config["tools"] if t["toolSpec"]["name"] == "extract_entries")
+    return spec["inputSchema"]["json"]
+
+
+def test_extract_forces_the_single_tool():
+    config = build_extract_tool_config()
+    assert config["toolChoice"] == {"tool": {"name": "extract_entries"}}
+    assert [t["toolSpec"]["name"] for t in config["tools"]] == ["extract_entries"]
+
+
+def test_extract_wraps_the_propose_entry_schema_in_an_array():
+    schema = _extract_schema()
+    assert schema["required"] == ["entries"]
+    entries = schema["properties"]["entries"]
+    assert entries["type"] == "array"
+    # The per-item schema is exactly the propose_entry schema — so a resume candidate and a chat
+    # candidate validate against the same contract (ADR-035).
+    item = entries["items"]
+    assert item["properties"]["entry_type"]["enum"] == list(ENTRY_TYPES)
+    assert item["required"] == ["entry_type", "title", "content"]
+    assert "entry_id" not in item["properties"]

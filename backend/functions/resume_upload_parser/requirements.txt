@@ -1,0 +1,7 @@
+# resume_upload_parser is the only Lambda that parses uploaded files, so its PDF reader lives here
+# rather than in the careervault-shared layer (which is attached to all seven functions). pypdf is
+# pure-Python and ARM64-safe — no Docker build needed. DOCX is handled with the standard library
+# (zipfile + xml.etree), deliberately avoiding python-docx so the compiled lxml wheel never enters
+# the bundle. Everything else (Powertools, Pydantic, the Bedrock client, the tool schemas) comes
+# from the shared layer; boto3 is provided by the Lambda runtime (ADR-023 / ADR-035).
+pypdf>=6.1.1,<7.0

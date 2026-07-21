@@ -62,7 +62,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 2b | Chat UI + turn idempotency | FR-2.3, FR-2.4 (UI), FR-6.2 | ✅ | [#3](https://github.com/ocheoche-obe/career-vault/pull/3) |
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
-| 5 | Resume upload bootstrap | ADR-013 ingestion path | ⬜ ⚠ | — |
+| 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
@@ -332,7 +332,7 @@ device that isn't the dev machine. **✅ Met** — verified from a laptop and a 
 
 ---
 
-## Slice 5 — Resume upload bootstrap ⬜ ⚠
+## Slice 5 — Resume upload bootstrap ✅
 
 **Goal:** A user with an existing resume doesn't start from zero — upload a PDF/DOCX and have it
 parsed into confirmable entries.
@@ -340,28 +340,81 @@ parsed into confirmable entries.
 **FRs:** ADR-013 (upload supported in MVP); feeds FR-2.3's confirm-before-persist.
 
 **Scope — in:** S3 data bucket `careervault-data-${Environment}-${AccountId}` with `uploads/` +
-`resumes/` prefixes and SSE-S3 (arch §4.4.3); presigned-URL upload flow; `resume_upload_parser`
-Lambda (PDF/DOCX → entry candidates via Haiku, then N *sequential* Titan embeds per corrected
-§4.6.2 — the 5-min timeout in §4.7.4 exists for this); bulk-confirm UI feeding the existing
-`POST /entries`.
+`resumes/` prefixes and SSE-S3 (arch §4.4.3); **presigned S3 PUT** upload (file goes straight to
+`uploads/${user_id}/…`, never through API Gateway/Lambda); `resume_upload_parser` Lambda as a
+**parse-only** transform — reads the object, one Claude Haiku tool-use pass → entry *candidates*
+(no vectors, no write), returned in a **synchronous** parse-endpoint response; **select-all review
+table** UI where the user unchecks junk / edits and saves the kept rows through the existing
+`POST /entries` (which embeds via Titan at confirm, so ADR-033 dedup + §3.1.4 idempotency apply for
+free). All per **ADR-035**.
 
 **Scope — out:** DOCX *export* (v1.1); the `resumes/` prefix is provisioned here but first
-written by slice 6.
+written by slice 6; async (S3-event + poll) parse — deferred behind ADR-035's measured-latency
+trigger; a bulk-write endpoint (client makes N `POST /entries` calls).
 
-**Key refs:** arch §4.4 (S3 design), §4.6.2 (sequential embeds), §4.7.4 (timeout), ADR-013,
-ADR-024.
+**Key refs:** **ADR-035** (the whole flow), ADR-013, ADR-024 (+ its slice-5 parser-correction note),
+ADR-031 (Haiku IAM precedent for the parser), ADR-033 (§3.1.4 dedup/idempotency the confirm reuses);
+arch §4.4 (S3 design), §4.6.2 + §4.7.4 (both carry v1.6 corrections — parser does not embed).
 
-**New infra:** S3 data bucket + prefix-scoped IAM, `resume_upload_parser` Lambda + route(s).
+**New infra:** S3 data bucket + prefix-scoped IAM; **`resume_upload_parser` Lambda owning both
+routes** — presigned-URL issuance (`s3:PutObject` on `uploads/${user_id}/*`) and the synchronous
+parse call (`s3:GetObject` on the same prefix + Haiku IAM per ADR-031). **No** Titan, **no**
+DDB-write grant on this Lambda.
 
-**⚠ Decisions:**
-- Bulk-confirm UX: confirm entries one-by-one (reuses the 2b card) vs a select-all review table.
-- Parse job shape: synchronous request/response vs presigned-upload + poll — depends on realistic
-  parse latency for a multi-page resume; measure before choosing.
+**⚠ Decisions:** _(all three resolved with Oche 2026-07-21 → **ADR-035**)_
+- **Embedding site → resolved:** parser is **parse-only**; embedding stays at the single confirm
+  site (`POST /entries`). Corrects ADR-024 + arch §4.6.2/§4.7.4 (which had the parser embedding).
+- **Parse job shape → resolved:** presigned PUT + **synchronous** parse call. Start sync, measure
+  real parse latency (exit criterion); escalate to async only if it nears the API GW 29 s ceiling.
+- **Bulk-confirm UX → resolved:** **select-all review table** (built for the 5–20 candidates a
+  resume yields), not the one-by-one 2b card.
 
-**Exit criteria:** real multi-page resume uploaded from the UI → parsed → confirmed → entries
-visible on the dashboard with embeddings; budget check after (first multi-call Bedrock slice).
+**Exit criteria:** real multi-page resume uploaded from the UI → parsed → select-all review →
+confirmed → entries visible on the dashboard with embeddings; a junk/duplicate candidate exercises
+the 409 "possible duplicate" path on save; **measured parse latency noted** (drives the sync-vs-async
+trigger); budget check after (first Bedrock slice since slice 3 — Haiku parse + Titan-per-confirm).
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:** _(wrapped 2026-07-21, [PR #25](https://github.com/ocheoche-obe/career-vault/pull/25))_
+- **Shipped (all per ADR-035):** private S3 data bucket `careervault-data-${Env}-${AccountId}`
+  (SSE-S3, all public access blocked, bucket CORS scoped to the browser's presigned `PUT`, 1-day
+  lifecycle on `uploads/`); `resume_upload_parser` Lambda owning **both** routes —
+  `POST /uploads/presign` (user-scoped presigned PUT URL) and `POST /uploads/parse` (one Haiku
+  `extract_entries` pass → validated candidates). **Parse-only:** no Titan grant, no DDB grant;
+  embedding + persistence stay at `career_crud`'s `POST /entries` (the single embedding site), so
+  ADR-033 dedup and §3.1.4 idempotency cover uploaded entries for free.
+- **Shared layer:** `build_extract_tool_config()` reuses the exact `propose_entry` per-entry schema,
+  so a résumé candidate and a chat candidate validate against the same discriminated union.
+- **Text extraction is genuinely pure-Python (no Docker):** pypdf for PDF; **stdlib
+  `zipfile`+`xml.etree` for DOCX** — deliberately *not* python-docx, which drags in the compiled
+  `lxml` wheel (`sam build` on macOS bundled the Darwin build; it would fail on Lambda arm64 Linux).
+  Caught during the first `sam build` inspection; swapped before deploy.
+- **Frontend:** presign→PUT→parse client, an Upload view, and a **select-all review table** (per-row
+  edit/uncheck, "Save N", per-row 409 "save anyway") wired to the existing `POST /entries`. New
+  **Upload résumé** nav tab.
+- **Robustness finding (from live testing) — candidate salvage:** the permissive union tool schema
+  invites Haiku to (a) attach `impact_metric` (a MILESTONE field) to a JOB whose bullets quantify
+  impact and (b) omit the required `content` on terse cert/award lines. Chat recovers via its
+  retry loop (§3.1.6); the bulk parser has none, so it prunes stray out-of-type fields and backfills
+  a missing `content` from `title`, then revalidates once — turning "drop the whole entry" into
+  "keep it." Before this, 2 of 7 entries dropped per run (and *which* two varied — Bedrock isn't
+  fully deterministic at temp 0); after, a consistent **7/7, 0 dropped** across runs.
+- **Verified:** 162 unit tests green (22 new). Deployed to dev; backend smoke against real
+  S3 + Haiku + Titan + DynamoDB: presign 200 → S3 PUT 200 → parse 200 (7/7 candidates, **no
+  embeddings**, each with a minted `entry_id`) → confirm **201 (embedded at confirm) → 200 idempotent
+  → 409 possible-duplicate (1.0 match) → delete 200**. API Gateway routes 401 unauthenticated,
+  preflight 200. UI exit-criterion path confirmed by Oche (upload → itemized review → edit → save →
+  dashboard). Security review clean; advisory code review surfaced 3 findings (size-guard before
+  read, "Save N" count vs duplicate rows, CORS GET/HEAD unused) — **all fixed in-slice** and
+  re-verified.
+- **Latency & the sync-vs-async trigger:** measured Haiku parse **~3.4–4.0 s** for a one-page
+  résumé — far under API Gateway's 29 s integration timeout, so ADR-035's synchronous choice holds
+  and the async-escalation trigger stays untriggered.
+- **Cost / budget:** MTD **~$0.09**, unchanged through all testing — a Haiku parse is ~2.5K tokens
+  (~$0.0004) and confirm-time Titan embeds are fractions of a cent. Far under the $5 ceiling.
+- **Evaluation:** all exit criteria met. One limitation surfaced by Oche and **routed to the backlog
+  (B-003)** rather than fixed here: ADR-033 semantic dedup (cosine ≥ 0.90) misses *same credential,
+  different wording* — two AZ-900 certs measured 0.86 and both saved. It's a cross-cutting ADR-033
+  precision question (affects the chat path too), so it deserves its own pass, not a slice-5 bolt-on.
 
 ---
 

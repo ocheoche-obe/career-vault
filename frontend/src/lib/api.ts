@@ -141,3 +141,69 @@ export async function deleteEntry(idToken: string, entryId: string): Promise<boo
   });
   return res.status === 200 || res.status === 404;
 }
+
+/**
+ * Resume upload bootstrap (ADR-035). Three steps, all synchronous:
+ *   1. presignUpload — POST /uploads/presign → a short-lived S3 PUT URL scoped to the user's prefix
+ *   2. putFileToS3   — the browser uploads the file straight to S3 (off the compute plane)
+ *   3. parseUpload   — POST /uploads/parse → entry candidates (parse-only: no embed, no write)
+ * Each returned candidate is then saved through confirmEntry, exactly like a chat proposal.
+ */
+
+/** The presigned target for a browser→S3 PUT. `contentType` must be echoed on the PUT. */
+export type PresignedUpload = { url: string; key: string; contentType: string };
+
+export type ParseResult =
+  | { status: "ok"; candidates: EntryCandidate[]; dropped: number; charCount: number; parseMs: number }
+  | { status: "failed"; message: string };
+
+/** Map an upload extension to the content type the presign route expects. */
+export function contentTypeForFilename(filename: string): string | null {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  if (ext === "pdf") return "application/pdf";
+  if (ext === "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  return null;
+}
+
+export async function presignUpload(
+  idToken: string,
+  body: { filename: string; content_type: string },
+): Promise<PresignedUpload> {
+  const res = await fetch(`${apiBaseUrl}/uploads/presign`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(body),
+  });
+  const b = await jsonOf(res);
+  if (!res.ok) throw new Error((b.message as string) ?? `POST /uploads/presign → ${res.status}`);
+  return { url: b.url as string, key: b.key as string, contentType: b.content_type as string };
+}
+
+/** PUT the raw file to the presigned URL. The Content-Type must match what was signed. */
+export async function putFileToS3(upload: PresignedUpload, file: File): Promise<void> {
+  const res = await fetch(upload.url, {
+    method: "PUT",
+    headers: { "Content-Type": upload.contentType },
+    body: file,
+  });
+  if (!res.ok) throw new Error(`Upload to S3 failed → ${res.status}`);
+}
+
+export async function parseUpload(idToken: string, key: string): Promise<ParseResult> {
+  const res = await fetch(`${apiBaseUrl}/uploads/parse`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ key }),
+  });
+  const b = await jsonOf(res);
+  if (res.status === 200) {
+    return {
+      status: "ok",
+      candidates: (b.candidates as EntryCandidate[]) ?? [],
+      dropped: (b.dropped as number) ?? 0,
+      charCount: (b.char_count as number) ?? 0,
+      parseMs: (b.parse_ms as number) ?? 0,
+    };
+  }
+  return { status: "failed", message: (b.message as string) ?? `POST /uploads/parse → ${res.status}` };
+}

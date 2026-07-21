@@ -6,8 +6,10 @@ Description: >
   (ADR-023), settings_lambda (GET /settings), chat_lambda (POST /chat) and career_crud
   (POST /entries) for conversational entry ingestion (Section 3.1, ADR-031), plus frontend hosting
   (slice 4): a private S3 site bucket + CloudFront distribution with Origin Access Control on the
-  default *.cloudfront.net domain (ADR-019).
-  Resume agent / check-ins / data S3 bucket / SES are intentionally out of scope here.
+  default *.cloudfront.net domain (ADR-019). Slice 5 adds resume upload bootstrap: a private S3
+  data bucket (uploads/ + resumes/) and resume_upload_parser (presign + parse routes) — a
+  parse-only Haiku transform, no embedding, no DDB writes (ADR-013 / ADR-035).
+  Resume agent / check-ins / SES are intentionally out of scope here.
 
 Parameters:
   Environment:
@@ -48,6 +50,12 @@ Parameters:
     Default: -1
     Description: >
       Reserved concurrency for career_crud (arch §4.7.4 target: 5). Same -1 sentinel (ADR-030).
+  ResumeParserReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for resume_upload_parser (arch §4.7.4 target: 2). Same -1 sentinel
+      (ADR-030). A parse is one Haiku call; a low cap bounds runaway-Bedrock cost (slice 5).
   HaikuInferenceProfileId:
     Type: String
     Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
@@ -91,6 +99,7 @@ Conditions:
   HasSettingsReservedConcurrency: !Not [!Equals [!Ref SettingsReservedConcurrency, -1]]
   HasChatReservedConcurrency: !Not [!Equals [!Ref ChatReservedConcurrency, -1]]
   HasCareerCrudReservedConcurrency: !Not [!Equals [!Ref CareerCrudReservedConcurrency, -1]]
+  HasResumeParserReservedConcurrency: !Not [!Equals [!Ref ResumeParserReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -448,6 +457,120 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
+  # Data — resume upload/output bucket (ADR-013 / ADR-035, arch §4.4.3). Slice 5.
+  #
+  # Private (all public access blocked), SSE-S3. Two logical prefixes: uploads/ (raw resumes the
+  # user PUTs via a presigned URL) and resumes/ (generated PDFs — provisioned here, first written
+  # by slice 6). CORS allows the browser's cross-origin presigned PUT/GET; wildcard origin matches
+  # the non-credentialed posture of ADR-034 (the presigned URL, not the Origin, is the authority).
+  # ---------------------------------------------------------------------------
+  DataBucket:
+    Type: AWS::S3::Bucket
+    # Career uploads/outputs are user data — retain in prod, delete cleanly in dev (arch §4.7.3).
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      BucketName: !Sub 'careervault-data-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          # The browser only ever does the presigned PUT; parse/read is server-side, so PUT is the
+          # only cross-origin method needed. Wildcard origin matches ADR-034 (the presigned
+          # signature, not the Origin, is the authority) — the bucket stays private.
+          - AllowedMethods: [PUT]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          # A raw upload is only needed during the synchronous parse; expire it the next day so no
+          # resume bytes linger. resumes/ (slice 6) will carry its own ADR-015 lifecycle later.
+          - Id: ExpireRawUploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 1
+      Tags:
+        - { Key: Project, Value: CareerVault }
+        - { Key: Environment, Value: !Ref Environment }
+        - { Key: ManagedBy, Value: SAM }
+
+  # ---------------------------------------------------------------------------
+  # Compute — resume_upload_parser (ADR-013 / ADR-035). Parse-only: presigns uploads and turns an
+  # uploaded PDF/DOCX into entry candidates via one Haiku call. It has NO Titan grant and NO
+  # DynamoDB grant — embedding and persistence stay at career_crud's POST /entries (the single
+  # embedding site). Bedrock IAM mirrors chat_lambda's Haiku profile grant (ADR-031).
+  # ---------------------------------------------------------------------------
+  ResumeUploadParserFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-resume-upload-parser-${Environment}'
+      CodeUri: ../backend/functions/resume_upload_parser/
+      Handler: handler.handler
+      # PDF/DOCX extraction is CPU-bound; more memory buys proportional CPU for a snappier sync parse.
+      MemorySize: 1024
+      # Fronted by a synchronous API route, so it is bounded in practice by API Gateway's 29s
+      # integration timeout; 60s is headroom for Haiku cold-path latency (arch §4.7.4 v1.6 note).
+      Timeout: 60
+      ReservedConcurrentExecutions: !If
+        - HasResumeParserReservedConcurrency
+        - !Ref ResumeParserReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: resume_upload_parser
+          BEDROCK_HAIKU_MODEL_ID: !Ref HaikuInferenceProfileId
+          DATA_BUCKET_NAME: !Ref DataBucket
+      Policies:
+        - Statement:
+            # Presign (PutObject) + parse read-back (GetObject), scoped to the uploads/ prefix. IAM
+            # can't scope to a per-request user, so the handler asserts the uploads/<user_id>/
+            # prefix in code (Section 4.2.4). No resumes/ access — that's slice 6's resume_agent.
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource: !Sub '${DataBucket.Arn}/uploads/*'
+            # ADR-031: Haiku 4.5 is INFERENCE_PROFILE-only — grant the profile ARN plus the
+            # foundation-model ARN in every region the profile can route to. No Titan grant.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${HaikuInferenceProfileId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${HaikuFoundationModelId}'
+      Events:
+        PostPresign:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /uploads/presign
+            Method: post
+        PostParse:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /uploads/parse
+            Method: post
+
+  ResumeUploadParserLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-resume-upload-parser-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
   # Cost & operational guardrails (arch §4.1.4)
   # ---------------------------------------------------------------------------
   # Single SNS topic for all CareerVault alarms; the user's email is subscribed (confirm the
@@ -510,6 +633,25 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref CareerCrudFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  ResumeUploadParserErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-resume-upload-parser-errors-${Environment}'
+      AlarmDescription: resume_upload_parser errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ResumeUploadParserFunction
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -676,6 +818,9 @@ Outputs:
   ApiGatewayBaseUrl:
     Description: REST API base URL — frontend VITE_API_BASE_URL.
     Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  DataBucketName:
+    Description: S3 data bucket for resume uploads (uploads/) and generated resumes (resumes/).
+    Value: !Ref DataBucket
   SiteBucketName:
     Description: S3 bucket the built frontend syncs into (`aws s3 sync dist/`).
     Value: !Ref SiteBucket

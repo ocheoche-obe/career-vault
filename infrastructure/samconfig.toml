@@ -9,8 +9,8 @@ version = 0.1
 #
 # Reserved concurrency (arch §4.7.4, ADR-030) is switched on here rather than in the template so
 # the -1 "off" default still works on accounts whose Lambda concurrency limit has not been raised.
-# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 reserved leaves 985
-# unreserved, well above Lambda's 100-unreserved floor.
+# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 + 2 reserved leaves
+# 983 unreserved, well above Lambda's 100-unreserved floor.
 
 [default.deploy.parameters]
 stack_name = "careervault-dev"
@@ -26,6 +26,7 @@ parameter_overrides = [
     "SettingsReservedConcurrency=5",
     "ChatReservedConcurrency=5",
     "CareerCrudReservedConcurrency=5",
+    "ResumeParserReservedConcurrency=2",
 ]
 
 [default.build.parameters]
@@ -49,6 +50,7 @@ parameter_overrides = [
     "SettingsReservedConcurrency=5",
     "ChatReservedConcurrency=5",
     "CareerCrudReservedConcurrency=5",
+    "ResumeParserReservedConcurrency=2",
 ]
 
 [prod.build.parameters]
