@@ -30,7 +30,22 @@ CareerVault stores users' career history, so **every slice that touches code get
 - Focus areas for this codebase: per-user data isolation (PK from JWT `sub`, never the body — §4.2.4), authz on every route, input validation at the Pydantic gate, IAM least-privilege on any new actions, no secrets in code/logs, CORS origin scoping.
 - This is the *local* gate. The *remote* net is GitHub Actions on the PR — **CodeQL** SAST (`.github/workflows/codeql.yml`) and **Dependabot** (`.github/dependabot.yml`). Treat a CodeQL alert or a Dependabot security update on the PR the same way: triage before merge, don't just merge past it.
 
-## 3. Bring the docs current (blocking)
+## 3. Advisory code review (non-blocking)
+
+Run a general code review on the slice diff — a different lens than the security review
+(correctness, reuse, simplification, efficiency, not vulnerabilities):
+
+```
+/code-review
+```
+
+- **Advisory, not a gate.** Fix the quick, clear wins in-slice. Anything that isn't a quick fix
+  does **not** block the PR and is **not** chased in this slice — append it to
+  [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md) instead (see step 4).
+- Timebox the triage so wrap doesn't turn into a second implementation pass.
+- Note the outcome in the PR body alongside the security-review result (step 6).
+
+## 4. Bring the docs current (blocking)
 
 - **`docs/careervault-plan.md`** — the linchpin. Flip the slice to ✅ on the status board (add
   the PR link once it exists), fill in its **Completion notes** (what shipped, what was
@@ -46,23 +61,27 @@ CareerVault stores users' career history, so **every slice that touches code get
   slice. It stays compact; detail belongs in the plan doc.
 - **`docs/careervault-adl.md`** — every decision the slice forced is captured as an ADR (they should already exist from /start-slice step 6; verify). Update the index table and the "Last updated" line.
 - **`docs/careervault-architecture.md`** — if implementation contradicted the doc, correct the doc (don't silently code around it — the user wants these corrections explained), bump the version, add a change-log row.
+- **`docs/careervault-backlog.md`** — append anything deferred this slice: code-review findings
+  not fixed in-slice (step 3), UI gaps or tech debt noticed, doc drift spotted. One line per item,
+  with the type/priority/status columns filled and "Surfaced in" set to this slice. Prune any
+  `done` rows whose closure you're recording in the plan's completion notes.
 - **Memory** — save durable gotchas (account-level constraints, API behaviors that contradict docs) that future sessions need; update `MEMORY.md` index.
 
-## 4. Commit and push
+## 5. Commit and push
 
 - Commits follow the existing conventional style (`feat(infra):`, `fix(ddb):`, `docs:`, `test:`, `ci:`, `chore:`), each ending with the Co-Authored-By trailer.
 - Logical commits: infra / backend / tests / docs / ci separated where it's natural, matching the history's grain.
 - Push the slice branch to origin.
 
-## 5. Open the PR
+## 6. Open the PR
 
 ```bash
 gh pr create --base main
 ```
 
-PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), decisions/ADRs added, doc corrections made. End with the "Generated with Claude Code" footer.
+PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), the advisory code-review outcome (fixed in-slice vs. logged to backlog), decisions/ADRs added, doc corrections made. End with the "Generated with Claude Code" footer.
 
-## 6. Hand off
+## 7. Hand off
 
 Tell the user, explicitly:
 

@@ -24,6 +24,10 @@ git status -sb
   detail section (goal, scope in/out, ⚠ decisions, exit criteria). If the board disagrees with
   git history, the CLAUDE.md phase marker, or the deployed state, flag that before anything else.
 - Read the ADRs and architecture-doc sections the slice's "Key refs" line names.
+- **Groom the backlog** — skim [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md).
+  If an `open` item is a natural fit for (or a prerequisite of) this slice, fold it into scope;
+  otherwise consciously leave it. The point is the list gets *looked at* every slice, not just
+  written to. Surface anything you pull in when you present scope in step 6.
 - Check memory for gotchas that apply (e.g. the Bedrock Anthropic use-case form).
 
 ## 3. Verify AWS access — and that it's the *right* account
