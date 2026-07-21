@@ -109,6 +109,27 @@ _ASK_CLARIFICATION_DESCRIPTION = """\
 Ask the user one focused follow-up question. Call this when the message is too vague to record, \
 or when a field required for the entry type is missing and cannot be inferred."""
 
+_EXTRACT_ENTRIES_DESCRIPTION = """\
+Extract every distinct career entry from the resume text — one array element per role, project, \
+certification, award, degree, volunteer position, or notable milestone.
+Per-type required fields (in addition to entry_type, title, content):
+- JOB: employer, start_date
+- PROJECT: start_date
+- MILESTONE: (none)
+- CERT: issuer, issued_date
+- AWARD: awarded_date
+- EDUCATION: institution, degree, start_date
+- VOLUNTEER: organization, start_date
+- HOBBY: (none)
+
+Rules:
+- Emit each distinct item as its own entry, in the order it appears in the resume.
+- Prefer the most specific entry_type that fits (a certification is CERT, not MILESTONE).
+- Use only what the resume states. Never invent dates, employers, issuers, or metrics; omit any \
+optional field the resume does not provide.
+- Only skip an item if it cannot be given the fields its type requires. If nothing recordable is \
+present, return an empty entries array."""
+
 #: Why the model is asking — lets the UI/analytics see *what* was ambiguous (Section 3.1.2).
 CLARIFICATION_REASONS = (
     "missing_date",
@@ -213,4 +234,47 @@ def build_tool_config() -> dict:
             },
         ],
         "toolChoice": {"any": {}},
+    }
+
+
+def _extract_entries_input_schema() -> dict:
+    """Wrap the per-entry ``propose_entry`` schema in an array under an ``entries`` key.
+
+    Reusing :func:`_propose_entry_input_schema` keeps the bulk-parse contract identical to the
+    single-turn parse contract — both derive from the same eight subtype models, so a resume
+    candidate and a chat candidate validate against exactly the same rules (ADR-035).
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "entries": {
+                "type": "array",
+                "description": "Every distinct career entry found in the resume, in document order.",
+                "items": _propose_entry_input_schema(),
+            }
+        },
+        "required": ["entries"],
+    }
+
+
+def build_extract_tool_config() -> dict:
+    """Return the Converse ``toolConfig`` for the resume bulk-extract turn (ADR-035).
+
+    A single forced tool (``toolChoice: {"tool": ...}``): the model must return an ``entries``
+    array, one element per distinct career item in the resume. ``resume_upload_parser`` validates
+    each element against the same per-type discriminated union ``propose_entry`` uses, mints an
+    ``entry_id`` per valid candidate, and hands the list to the review-table UI — which confirms
+    each through the existing ``POST /entries`` (the single embedding site).
+    """
+    return {
+        "tools": [
+            {
+                "toolSpec": {
+                    "name": "extract_entries",
+                    "description": _EXTRACT_ENTRIES_DESCRIPTION,
+                    "inputSchema": {"json": _extract_entries_input_schema()},
+                }
+            }
+        ],
+        "toolChoice": {"tool": {"name": "extract_entries"}},
     }
