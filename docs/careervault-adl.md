@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-15 (slice 4 — ADR-034 added [wildcard CORS for the token-auth API]; ADR-019 amended [default CloudFront domain, custom domain deferred to v1.x])
+**Last updated:** 2026-07-21 (slice 5 — ADR-035 added [resume upload & parse flow: presigned upload, synchronous parse, parser is parse-only]; ADR-024 corrected [`resume_upload_parser` does not embed — one embedding site at confirm])
 
 ---
 
@@ -65,6 +65,7 @@ Each ADR has:
 | ADR-032 | Chat turn idempotency — client-supplied message ID                 | Accepted   |
 | ADR-033 | Semantic duplicate detection at confirm — warn, not block          | Accepted   |
 | ADR-034 | CORS — wildcard allow-origin for the token-auth API                 | Accepted   |
+| ADR-035 | Resume upload & parse flow — presigned upload, sync parse, parse-only | Accepted   |
 
 ---
 
@@ -734,6 +735,17 @@ The same decision frame applies to Azure (Cosmos DB Change Feed for async, inlin
 
 > **Edit-path note (slice 3, 2026-07-12).** This ADR commits `career_crud` to embedding on "every entry create *or update*." Slice 3 adds the update route (`PUT /entries/{id}`) and refines *when* the Titan call fires on update, rather than re-embedding unconditionally: the handler compares `embedding_input_text(updated_entry)` against the same projection of the stored entry, and **re-embeds only when that text differs** — otherwise it reuses the stored vector. Edits that touch only non-embedded fields (an event date, a boolean, a non-indexed note) skip Titan entirely: no cost, no latency, and the stored vector remains correct because none of its inputs changed. This is a refinement of the sync-write-path commitment, not a departure from it — when the embedded text *does* change, the re-embed is still synchronous and inline before the write, exactly as the create path embeds before its `PutItem`. (The update itself is a conditional full-item `PutItem` guarded by `attribute_exists(SK)`, not an `UpdateItem` — see the §2.5 / §4.2.3 slice-3 note in the architecture doc.) It also keeps the "embedding stays coupled to the writing Lambda's code" property intact.
 
+> **Parser correction (slice 5, 2026-07-21 — ADR-035).** This ADR's Decision lists a second inline
+> embedder: "`resume_upload_parser` calls Titan inline for each parsed entry, using Titan v2's
+> batch-input support." **Both halves are now wrong.** (a) Titan v2 has *no* batch-input form — the
+> v1.3 arch correction (§4.6.2) already established that `embed_many` is a client-side loop. (b) Per
+> ADR-035, `resume_upload_parser` does **not** embed at all: it is a parse-only transform that
+> returns candidates without vectors, and embedding happens once at confirm through `POST /entries`
+> (`career_crud`) like every other entry. So there remains exactly **one** embedding site in the
+> system — `career_crud`'s write path — and this ADR's sync-embed-at-write commitment is unchanged;
+> only the mistaken claim that the *parser* is a second embedder is retracted. `resume_upload_parser`
+> therefore carries a Bedrock grant for **Haiku** (parse), not Titan.
+
 ---
 
 ## ADR-025: Cognito user flow — hosted UI with OAuth2 Authorization Code + PKCE
@@ -1022,6 +1034,107 @@ The "wildcard CORS is fine for a non-credentialed token API, tighten it the mome
 reasoning is provider-neutral — the same call applies to Azure API Management / Front Door and GCP
 API Gateway / Cloud CDN. All three distinguish credentialed from non-credentialed CORS identically,
 because it is a browser (Fetch spec) behavior, not a cloud-specific one.
+
+---
+
+## ADR-035: Resume upload & parse flow — presigned upload, synchronous parse, parser is parse-only
+
+**Status:** Accepted
+**Date:** 2026-07-21
+
+### Context
+Slice 5 delivers ADR-013's resume-bootstrap path: a user uploads a PDF/DOCX and gets confirmable
+entry candidates instead of typing their whole career into chat. Three shape decisions were open
+in the plan doc's slice-5 section, and they turned out to be coupled:
+
+1. **How the file reaches the parser and how parse results come back** — a synchronous
+   request/response call, or a presigned upload that triggers the parser via an S3 event with the
+   browser polling for results.
+2. **Where the Titan embedding for each entry is computed** — inside `resume_upload_parser` at
+   parse time (as ADR-024's Decision and arch §4.6.2/§4.7.4 currently state), or at confirm time
+   through the existing `POST /entries` path (as the slice-5 plan scope states — "bulk-confirm UI
+   feeding the existing `POST /entries`"). These two statements contradict each other: if the
+   parser embeds *and* confirm re-embeds, every entry is embedded twice.
+3. **How the user confirms a batch of candidates** — one at a time via the slice-2b `ProposalCard`,
+   or a select-all review table built for bulk.
+
+The embedding-site question is the hinge: it decides how heavy the parser is, which decides whether
+a synchronous parse is viable.
+
+### Decision
+**A lightweight, parse-only Lambda behind a synchronous API, with all embedding kept at the single
+confirm site.**
+
+- **Upload:** the browser requests a short-lived **presigned S3 PUT URL** and uploads the file
+  directly to the `uploads/` prefix of the data bucket. The bytes never transit API Gateway or a
+  Lambda — no base64 bloat, no 6 MB Lambda payload / 10 MB API Gateway limits in the file path.
+- **Parse:** the browser then calls a **synchronous** parse endpoint with the object key.
+  `resume_upload_parser` reads the object, extracts text, and makes **one Claude Haiku** pass
+  (tool-use, same structured-output discipline as `chat_lambda`) to produce entry candidates,
+  returned in the response body. The parser does **no** embedding and **no** DynamoDB write — it is
+  a pure `file → candidates` transform. Its only Bedrock grant is Haiku (the ADR-031 inference-
+  profile + regional-foundation-model ARN pattern), **not** Titan.
+- **Embedding stays at confirm.** Candidates carry no vectors. Each candidate the user keeps is
+  saved through the **existing `POST /entries`** path, which embeds via Titan at write time exactly
+  as it has since slice 2a — so there is exactly **one** embedding site in the whole system, and the
+  ADR-033 semantic-dedup + §3.1.4 idempotency machinery applies to uploaded entries for free.
+- **Confirm UX:** a **select-all review table** — all candidates listed with checkboxes, per-row
+  edit, and a single "Save N entries" action. The client saves the checked rows through
+  `POST /entries` (sequentially or bounded-parallel), surfacing per-row saved / duplicate (409) /
+  error state. Built for the 5–20 candidates a real resume yields; the one-by-one card does not
+  scale to that.
+- **Start synchronous; escalate only on measured latency.** A parse is now a single Haiku call
+  (no N sequential Titan calls in the request path), so the request/response is expected to be a
+  few seconds — well within a synchronous API budget. Both routes (presigned-URL issuance and the
+  parse call) live on **`resume_upload_parser`** — one self-contained upload Lambda holding
+  `s3:PutObject` + `s3:GetObject` on `uploads/${user_id}/*` plus the Haiku grant, rather than
+  spreading the upload concern across two functions. The exit criterion measures real parse
+  latency on a multi-page resume. **Trigger to revisit:** if measured parse latency approaches the
+  API Gateway 29-second integration timeout, move parse to the async shape (S3-event-triggered
+  parser writing candidates + a job-status item, browser polling) — a contained change, since the
+  parser stays parse-only either way.
+
+### Alternatives considered
+- **Parser embeds candidates (matches ADR-024 as written).** The parser would run Haiku *and* N
+  sequential Titan embeds, stash candidates-with-vectors somewhere between parse and confirm, and
+  `POST /entries` would accept a precomputed vector to avoid re-embedding. Rejected: it spreads
+  embedding across two Lambdas, needs a new candidate-holding store and a "trust this vector" branch
+  in the write path, and makes the parser heavy enough to force the async job shape — all to
+  pre-compute vectors the user may never confirm. Embedding at confirm only pays Titan for entries
+  the user actually keeps.
+- **File through the API (base64 in the request body).** No presigned-URL dance, but pushes binary
+  through API Gateway (10 MB) and Lambda (6 MB request) limits and doubles bytes via base64.
+  Presigned PUT is the standard S3 upload primitive and keeps the file path off the compute plane.
+- **Async parse from the start** (S3 event + poll). More robust for slow parses but adds a
+  job-status store, an eventing path, and polling UI before we've measured that a synchronous parse
+  is actually too slow. Deferred behind the measured-latency trigger above.
+- **One-by-one confirm** (reuse the 2b card). Maximum code reuse, but tedious across a 15-entry
+  resume. The select-all table still reuses the per-entry field components under the hood.
+
+### Consequences
+- ✅ One embedding site for the whole system (`POST /entries`); ADR-033 dedup and §3.1.4 idempotency
+  cover uploaded entries with zero new code.
+- ✅ `resume_upload_parser` is a small, pure transform — easy to test (fixture file → expected
+  candidates), no write IAM, Bedrock scope limited to Haiku.
+- ✅ Titan is paid only for entries the user actually confirms, not for every parsed candidate.
+- ✅ File bytes stay off API Gateway/Lambda via presigned PUT.
+- ✅ Corrects a latent double-embed that ADR-024 + §4.6.2/§4.7.4 would have produced (see the
+  ADR-024 correction note and the arch §4.6.2/§4.7.4 updates).
+- ⚠️ The browser makes N `POST /entries` calls to save N candidates (one per kept row) rather than
+  one bulk write. Fine at single-user scale and reuses the audited write path; a bulk-write endpoint
+  is a post-MVP optimization if it ever matters.
+- ⚠️ Synchronous parse is bounded by the API Gateway 29 s integration timeout; the measured-latency
+  trigger above is the escape hatch to async if a large resume ever approaches it.
+- ⚠️ Presigned-URL issuance needs its own small endpoint/IAM (`s3:PutObject` scoped to
+  `uploads/${user_id}/*`); the parser needs `s3:GetObject` on the same prefix. Key isolation by
+  user follows the §4.2.4 defense-in-depth discipline.
+
+### Cross-cloud parallel
+The pattern — client uploads to object storage via a short-lived signed URL, then a stateless
+function transforms the object — is provider-neutral: Azure Blob **SAS URL** + Function, GCP Cloud
+Storage **signed URL** + Cloud Function. "Keep the expensive/committing step (embedding) at one
+write site and make the parser a pure transform" is an architecture-shape decision that carries
+across all three.
 
 ---
 
