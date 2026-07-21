@@ -2,41 +2,34 @@
 CareerVault v1 — System Architecture Diagram Renderer
 =====================================================
 
-Renders the CareerVault v1 system architecture as PNG and PDF, using the
-`diagrams` (mingrammer) library — the de-facto standard for code-driven
-cloud architecture diagrams. The library ships official AWS service icons
-and is widely used in production engineering teams to keep architecture
-documentation version-controlled alongside the code it describes.
+Renders the CareerVault v1 system architecture as PNG and PDF using the
+`diagrams` (mingrammer) library — code-driven diagrams so the picture is
+version-controlled next to the architecture doc and never drifts from it.
 
-To regenerate the diagram after architecture changes:
+Conventions follow the project's `render-diagram` skill
+(`.claude/skills/render-diagram/`): left-to-right flow, sibling layer clusters,
+orthogonal edges, external (`xlabel`) edge labels, output derived from this
+file's location. See that skill for the full rationale and the graphviz
+pitfalls it steers around.
 
-    pip install diagrams --break-system-packages
-    # graphviz binary must also be installed (provides the `dot` renderer):
-    #   Linux:  apt install graphviz
-    #   macOS:  brew install graphviz
-    #   Windows: see https://graphviz.org/download/
+To regenerate after an architecture change (same commit as the change):
 
-    python render_architecture.py
+    python3 -m venv .venv && .venv/bin/pip install diagrams   # once
+    brew install graphviz    # provides `dot`; Linux: apt install graphviz
+    .venv/bin/python docs/render_architecture.py
 
-Output files: careervault_architecture.png, careervault_architecture.pdf
-
-Design conventions used (mirroring AWS official architecture diagrams):
-- Top-to-bottom (TB) tier flow — request travels from user at top down
-  through frontend, auth, API, compute, and data layers
-- Named tier/layer clusters as siblings (not deeply nested) so graphviz
-  can lay them out in a clean grid
-- AWS Cloud outer boundary with official AWS-blue tint and dashed border
-- Generous spacing to prevent line crossings
-- Labels beneath icons (default in `diagrams`); minimal edge labels
-- Solid arrows for data/request flow; dotted arrows for control-plane
+Output: docs/careervault_architecture.png + .pdf (basename kept stable so the
+architecture doc's links don't break).
 """
+
+from pathlib import Path
 
 from diagrams import Diagram, Cluster, Edge
 from diagrams.aws.compute import Lambda
 from diagrams.aws.database import Dynamodb
 from diagrams.aws.storage import S3
 from diagrams.aws.network import CloudFront, APIGateway
-from diagrams.aws.security import Cognito, ACM
+from diagrams.aws.security import Cognito
 from diagrams.aws.integration import Eventbridge, SimpleNotificationServiceSns
 from diagrams.aws.engagement import SimpleEmailServiceSes
 from diagrams.aws.ml import Bedrock
@@ -46,16 +39,15 @@ from diagrams.onprem.client import Users
 # === Global graph styling =====================================================
 
 graph_attr = {
-    "fontsize": "16",
+    "fontsize": "18",
     "labelloc": "t",
     "pad": "0.6",
-    "nodesep": "0.6",
-    "ranksep": "1.0",
-    "splines": "spline",
+    "nodesep": "0.7",
+    "ranksep": "1.4",
+    "splines": "ortho",   # straight right-angle edges (AWS style)
+    "newrank": "true",    # global ranking across clusters — cleaner grid
     "bgcolor": "white",
-    "compound": "true",
 }
-
 node_attr = {"fontsize": "11"}
 edge_attr = {"fontsize": "10"}
 
@@ -63,26 +55,20 @@ edge_attr = {"fontsize": "10"}
 # === Cluster styling ==========================================================
 
 AWS_CLOUD_ATTR = {
-    "bgcolor": "#F2F8FE",
-    "pencolor": "#147EBA",
-    "fontcolor": "#147EBA",
-    "style": "dashed,rounded",
-    "penwidth": "2",
-    "fontsize": "13",
-    "labeljust": "l",
-    "margin": "24",
+    "bgcolor": "#F2F8FE", "pencolor": "#147EBA", "fontcolor": "#147EBA",
+    "style": "dashed,rounded", "penwidth": "2", "fontsize": "14",
+    "labeljust": "l", "margin": "22",
+}
+LAYER_ATTR = {
+    "bgcolor": "#FFFFFF", "pencolor": "#888888", "fontcolor": "#444444",
+    "style": "rounded", "penwidth": "1", "fontsize": "11",
+    "labeljust": "l", "margin": "16",
 }
 
-LAYER_ATTR = {
-    "bgcolor": "#F5F5F7",
-    "pencolor": "#888888",
-    "fontcolor": "#444444",
-    "style": "rounded",
-    "penwidth": "1",
-    "fontsize": "11",
-    "labeljust": "l",
-    "margin": "14",
-}
+# Control-plane / auth / failure paths render dotted; data & request flow solid.
+CTRL = {"style": "dotted", "color": "#888888"}
+
+OUT = str(Path(__file__).resolve().parent / "careervault_architecture")
 
 
 # === Diagram ==================================================================
@@ -90,98 +76,91 @@ LAYER_ATTR = {
 with Diagram(
     "CareerVault v1 — System Architecture",
     show=False,
-    direction="TB",
-    filename="/home/claude/careervault_architecture",
+    direction="LR",
+    filename=OUT,
     outformat=["png", "pdf"],
     graph_attr=graph_attr,
     node_attr=node_attr,
     edge_attr=edge_attr,
 ):
-    users = Users("Users")
+    users = Users("User")
 
     with Cluster("AWS Cloud (us-east-1)", graph_attr=AWS_CLOUD_ATTR):
 
-        # --- Top tier: Frontend + Auth ---
-        with Cluster("Frontend / Presentation Layer", graph_attr=LAYER_ATTR):
-            cf = CloudFront("CloudFront")
-            acm = ACM("ACM Certificate")
-            s3_web = S3("S3: React App\n(private, OAC)")
+        # --- Interactive request path (left → right) -------------------------
+        with Cluster("Frontend", graph_attr=LAYER_ATTR):
+            cf = CloudFront("CloudFront\n(OAC → private S3)")
+            s3_web = S3("S3: React app\n(private)")
 
-        with Cluster("Authentication Layer", graph_attr=LAYER_ATTR):
-            cognito = Cognito("Cognito\nUser Pool")
+        with Cluster("Auth", graph_attr=LAYER_ATTR):
+            cognito = Cognito("Cognito\nHosted UI + JWT")
 
-        # --- API edge ---
-        with Cluster("API Layer", graph_attr=LAYER_ATTR):
-            apigw = APIGateway("API Gateway REST")
+        with Cluster("API", graph_attr=LAYER_ATTR):
+            apigw = APIGateway("API Gateway REST\n(JWT authorizer)")
 
-        # --- Compute ---
-        with Cluster("Lambda Functions", graph_attr=LAYER_ATTR):
+        with Cluster("Compute — request handlers", graph_attr=LAYER_ATTR):
             chat_l = Lambda("chat_lambda")
             crud_l = Lambda("career_crud")
             resume_l = Lambda("resume_agent")
             upload_l = Lambda("resume_upload_parser")
             settings_l = Lambda("settings_lambda")
-            ses_handler_l = Lambda("ses_event_handler")
 
-        # --- Data ---
-        with Cluster("Data Layer", graph_attr=LAYER_ATTR):
-            ddb = Dynamodb("DynamoDB\nCareerVaultTable")
-            s3_files = S3("S3: Uploads\n+ Generated PDFs")
+        # --- Shared backends: every handler reads/writes here ----------------
+        with Cluster("Shared data & AI backends", graph_attr=LAYER_ATTR):
+            ddb = Dynamodb("DynamoDB — CareerVaultTable\n(single table; all handlers read/write)")
+            s3_files = S3("S3: uploads\n+ generated PDFs")
+            claude = Bedrock("Bedrock — Claude\nHaiku + Sonnet")
+            titan = Bedrock("Bedrock — Titan\nembeddings")
 
-        # --- AI ---
-        with Cluster("AI Layer — Amazon Bedrock", graph_attr=LAYER_ATTR):
-            claude = Bedrock("Claude\nHaiku + Sonnet")
-            titan = Bedrock("Titan\nEmbeddings")
-
-        # --- Scheduled / Background + Event Routing ---
-        with Cluster("Scheduled Processing & Event Routing", graph_attr=LAYER_ATTR):
+        # --- Async band: scheduled check-ins + SES event routing -------------
+        with Cluster("Scheduled & event-driven", graph_attr=LAYER_ATTR):
             eb = Eventbridge("EventBridge\nScheduler")
             checkin_l = Lambda("checkin_lambda")
             ses = SimpleEmailServiceSes("Amazon SES")
-            sns_ses_events = SimpleNotificationServiceSns("SNS\ncareervault-ses-events")
+            sns = SimpleNotificationServiceSns("SNS\nses-events")
+            ses_handler_l = Lambda("ses_event_handler")
 
-    # === Connections ==========================================================
+    # === Edges ================================================================
 
-    # User-facing request paths
-    users >> cf
-    users >> cognito
-    users >> apigw
+    # Interactive request/auth flow
+    users >> cf >> s3_web
+    users >> Edge(**CTRL, **{"xlabel": "login"}) >> cognito
+    users >> Edge(**{"xlabel": "JWT"}) >> apigw
+    apigw >> Edge(**CTRL) >> cognito          # JWT authorizer verifies the token
 
-    cf >> s3_web
+    # API Gateway fans out to the request handlers
+    for fn in (chat_l, crud_l, resume_l, upload_l, settings_l):
+        apigw >> fn
 
-    # Control-plane links (dotted)
-    cf - Edge(style="dotted", color="gray") - acm
-    apigw - Edge(style="dotted", color="gray") - cognito
+    # --- Layout pins (invisible edges; no line drawn) ------------------------
+    # Stack the three entry points into one vertical column beside the user so
+    # the interactive path reads left→right instead of drifting downward.
+    cf - Edge(style="invis") - cognito - Edge(style="invis") - apigw
+    # Seat the async band as its own row beneath the interactive one.
+    apigw - Edge(style="invis") - eb
 
-    # API Gateway dispatches to handler Lambdas
-    apigw >> chat_l
-    apigw >> crud_l
-    apigw >> resume_l
-    apigw >> upload_l
-    apigw >> settings_l
-
-    # Lambda outbound dependencies
-    chat_l >> ddb
-    chat_l >> claude
+    # Handler → backend dependencies. DynamoDB is the shared datastore for all
+    # handlers; to keep the star legible we draw the DDB edge only from the
+    # data-owning handlers (career_crud, settings) and let the caption carry the
+    # "all handlers persist here" fact. AI / S3 edges are drawn where they are
+    # the defining behavior of the handler.
     crud_l >> ddb
-    crud_l >> titan
-    resume_l >> ddb
+    crud_l >> titan          # embed at write time (Titan node caption carries this)
+    settings_l >> ddb
+    chat_l >> claude
     resume_l >> claude
     resume_l >> s3_files
-    upload_l >> s3_files
     upload_l >> claude
-    upload_l >> ddb
-    settings_l >> ddb
+    upload_l >> s3_files
 
-    # Scheduled (cron) flow
-    eb >> checkin_l
-    checkin_l >> ddb
+    # Async: scheduled check-in email
+    eb >> Edge(**{"xlabel": "cron"}) >> checkin_l
     checkin_l >> claude
-    checkin_l >> ses
+    checkin_l >> Edge(**{"xlabel": "send"}) >> ses
 
-    # SES event routing (bounces, complaints)
-    ses >> sns_ses_events
-    sns_ses_events >> ses_handler_l
+    # Async: SES bounce/complaint routing (control/failure path → dotted)
+    ses >> Edge(**CTRL, **{"xlabel": "bounce"}) >> sns
+    sns >> Edge(**CTRL) >> ses_handler_l
     ses_handler_l >> ddb
 
-print("Rendered: careervault_architecture.png + careervault_architecture.pdf")
+print("Rendered: docs/careervault_architecture.png + .pdf")
