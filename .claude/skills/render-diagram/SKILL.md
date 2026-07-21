@@ -34,6 +34,13 @@ Follow AWS official architecture-diagram style:
 1. **Left-to-right flow** — `direction="LR"`. The user/actor enters on the left; the
    request descends through frontend → auth → API → compute → data toward the right.
    A second flow (async pipeline, batch) reads left-to-right as its own horizontal band.
+   ⚠ `direction="LR"` is **necessary but not sufficient**: when an actor node fans out to
+   several entry points (CDN *and* auth *and* API), graphviz will happily drift the whole
+   graph portrait and strand the actor at the bottom. Force the shape with invisible pins
+   (point 7): stack the entry-point nodes into one column
+   (`cdn - Edge(style="invis") - auth - Edge(style="invis") - api`) and seat each extra band
+   with one pin from the interactive spine (`api - Edge(style="invis") - scheduler`). Two
+   pins turned a portrait sprawl into a clean landscape here — reach for them early, not last.
 2. **Sibling layer clusters, not deep nesting** — one outer cloud-boundary cluster, then
    flat named clusters per layer ("Frontend", "API Layer", "Data", …) so graphviz lays
    out a clean grid.
@@ -58,6 +65,16 @@ Follow AWS official architecture-diagram style:
    `outformat=["png", "pdf"]`.
 10. **Node captions carry the detail** — put specifics (service config, key constraints,
     "IAM auth — no API key") in `\n`-separated node labels, not in edge labels.
+11. **Star / hub topologies: don't draw every edge.** When many nodes each depend on one
+    shared backend (N handlers all reading/writing one datastore), N converging edges make a
+    hairball no amount of `ortho` fixes. Draw a *representative* subset (the data-owning
+    handlers) and carry the universal fact in the **hub's node caption** — e.g. DynamoDB
+    labeled `(single table; all handlers read/write)`. That's honest to the reader *because*
+    the caption states the rule the omitted edges would have drawn; never drop edges silently
+    and never strand a node (every node keeps at least one edge that places it and shows its
+    role). Corollary: a backend shared by **two bands** (interactive + async both hit it) gets
+    tugged vertically between them — expect it; a pin or accepting a slightly longer edge is
+    fine.
 
 ### Starter template
 
@@ -122,8 +139,15 @@ Then **open/Read the PNG and actually look at it**. Never ship the first render 
 Check for, and fix by iterating:
 
 - labels colliding with cluster titles or the diagram title (→ shorten, or confirm
-  they're `xlabel`s)
+  they're `xlabel`s). Even a **2-word** `xlabel` collides on a *short* ortho edge — if so,
+  cut it to one word (`bounce/complaint` → `bounce`).
 - labels floating far from their edge (→ the `label` vs `xlabel` pitfall)
+- an `xlabel` **orphaned in whitespace**, far from any node that gives it context (happens
+  when the labeled edge is long) → drop the label and let the destination node's caption
+  carry the meaning (a `career_crud → Titan` edge needs no "embed" label if the Titan node
+  already says "embeddings")
+- the actor stranded at the bottom / the whole graph gone portrait (→ the entry-column and
+  band-seating pins from point 1)
 - bands in the wrong vertical order (→ reorder cluster declarations, add invisible pins)
 - long edges cutting through unrelated clusters (→ add invisible pins, raise
   `ranksep`/`nodesep`)
@@ -143,5 +167,6 @@ Two or three render→inspect iterations are normal.
 
 - mingrammer docs: https://diagrams.mingrammer.com/ (node catalog per provider)
 - AWS diagram best practices: https://aws.amazon.com/blogs/machine-learning/build-aws-architecture-diagrams-using-amazon-q-cli-and-mcp/
-- Worked example: Ledgerly's `docs/render_architecture.py` (the script this skill was
-  distilled from)
+- Worked examples: Ledgerly's `docs/render_architecture.py` (the script this skill was
+  distilled from), and CareerVault's `docs/render_architecture.py` — a star/hub topology
+  (7 handlers over shared backends + an async band) that exercises points 1, 7, and 11.
