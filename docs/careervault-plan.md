@@ -630,10 +630,15 @@ consideration folded into slice 9.
   CloudFront URL passed every exit criterion** — 2 runs against 2 different JDs, iframe preview,
   a real PDF download, mid-run reload retaining the run, Regenerate producing a fresh run, New target
   accepting a fresh JD.
-- **Evaluation vs exit criteria — all met.** Measured run: **82,867 tokens / $0.35 / critique
-  `REVISE` / 13 entries used**. That is above 6a's tuned 70K/$0.31 baseline because this run actually
-  spent its one allowed revision (`REVISE`, not `PASS`) — so ~$0.35 is the realistic *upper* end of a
-  normal run, still comfortably under the 150K-token / ~$1 ADR-036 ceiling. **One thing to improve:**
+- **Evaluation vs exit criteria — all met.** Measured run: **82,867 tokens / 13 entries used /
+  critique `REVISE`**. That is above 6a's tuned 70K baseline because this run actually spent its one
+  allowed revision (`REVISE`, not `PASS`) — so it is the realistic *upper* end of a normal run, still
+  comfortably under the 150K-token / ~$1 ADR-036 ceiling. **Cost figure corrected post-hoc:** the UI
+  displayed **$0.35**, but that estimate used the headline on-demand Sonnet rate; every model here is
+  invoked through a `us.` cross-region inference profile, which bills ~10% higher (Regional CRIS
+  $3.30/$16.50, not $3/$15). True cost is **~$0.39**, and 6a's tuned baseline is **~$0.34, not
+  $0.31**. Rates fixed in `agent.py`; see the ADR-036 pricing correction. MTD spend at wrap: **$1.73**
+  reported, though Cost Explorer had not yet ingested the day's runs (≈$2.4 real) — well under $5. **One thing to improve:**
   the run-metadata row (entries/critique/tokens/cost) is developer-facing and the elapsed timer
   vanishes exactly when you'd want to compare runs — both routed to **B-006/B-007** rather than fixed
   in-slice, since Oche explicitly wants the metadata visible while the agent is still being evaluated.

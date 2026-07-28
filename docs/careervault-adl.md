@@ -1270,6 +1270,43 @@ ceiling is portable regardless of who serves the model.
 > `SonnetFoundationModelId` back to `…-sonnet-5` if that access is ever granted. This is the same
 > class of Bedrock model-access gotcha as the Haiku use-case form (see the project memory).
 
+> **Live-access re-diagnosis (slice 6b, 2026-07-28) — the correction above was wrong about *why*.**
+> The 6a note concluded Sonnet 5 was "not self-serve grantable … account-tier/allowlist gating."
+> Re-probing with the AWS agent toolkit's MCP server showed that reading was mistaken.
+> `get-foundation-model-availability` returns **four** independent fields, and for
+> `anthropic.claude-sonnet-5` three of them were already green — `authorizationStatus: AUTHORIZED`,
+> `entitlementAvailability: AVAILABLE`, `regionAvailability: AVAILABLE`. Only
+> `agreementAvailability: NOT_AVAILABLE` was set. That field means *no AWS Marketplace agreement has
+> been accepted for this model*, which is **self-serve after all**:
+> `list-foundation-model-agreement-offers` returned a live offer (`offer-2ykemehpsyf7g`) and
+> `create-foundation-model-agreement --offer-token …` accepted it. Availability then moved
+> `NOT_AVAILABLE` → `PENDING` → **`AVAILABLE`**. The 6a diagnosis stopped at the aggregate "not
+> available" wording of the *runtime* error and never queried for an offer — the lesson is to read all
+> four availability fields and check for a pending agreement before concluding a model is ungated.
+>
+> **Status as of 2026-07-28: agreement accepted and `AVAILABLE`, but `Converse` still returns the same
+> `AccessDeniedException` ~30 minutes later** (both `us.` and `global.` profiles; `us.…sonnet-4-6`
+> succeeds from the same identity in the same breath, so it is not IAM, not the use-case form — which
+> `get-use-case-for-model-access` confirms is on file — and not the inference profile, which lists as
+> `ACTIVE`). Read as entitlement propagation that cannot be forced from the client side. **The agent
+> therefore still runs on Sonnet 4-6**; the switch is the same one-line `samconfig.toml` parameter flip
+> this ADR always described, pending a successful probe. Tracked as backlog **B-010**.
+>
+> **When it lands, Sonnet 5 is also cheaper**, which inverts this ADR's original cost framing: its
+> Regional CRIS rate is **$2.20/$11.00 per M tokens** vs Sonnet 4-6's **$3.30/$16.50** — roughly **33%
+> less per token**, so a ~$0.39 run becomes ~$0.26 and the $5 month buys ~19 runs instead of ~13.
+
+> **Pricing correction (slice 6b, 2026-07-28) — every run cost recorded in 6a/6b was ~10% low.**
+> `agent.py`'s `_PRICE_PER_TOKEN` used the headline on-demand rates ($3/$15 Sonnet, $1/$5 Haiku), but
+> **every model here is invoked through a `us.` cross-region inference profile (ADR-031), and Bedrock
+> bills cross-region inference at a ~10% premium**: the rate cards give `USE1_InputTokenCount`
+> (Regional CRIS) as **$3.30/$16.50** for Sonnet 4-6 and **$1.10/$5.50** for Haiku 4.5, against
+> `_Global` dimensions of $3/$15 and $1/$5. So the trace/metric cost estimates — and the figures
+> quoted in the tuning note above and in the 6a/6b completion notes — understate actual spend by that
+> margin: the tuned run is **~$0.34, not $0.31**, and slice 6b's measured run **~$0.39, not $0.35**.
+> Rates corrected in code. The 150K token ceiling is unaffected (it counts tokens, not dollars), and
+> AWS Cost Explorer remains the billing truth; this only makes the in-run estimate honest.
+
 > **Cost tuning (slice 6a, 2026-07-21 — from the first full runs).** The first successful run on
 > Sonnet 4-6 measured **85K tokens / ~$0.39 / ~230 s** for a 13-entry corpus — functional and under
 > the 150K ceiling, but ~2× the arch's ~$0.10–0.30 estimate and near the 240 s wall-clock budget, so
