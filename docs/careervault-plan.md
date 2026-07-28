@@ -65,7 +65,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
-| 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
+| 7 | Chat over your data | FR-6.1 | 🔨 | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
 
@@ -654,7 +654,7 @@ consideration folded into slice 9.
 
 ---
 
-## Slice 7 — Chat over your data ⬜ ⚠
+## Slice 7 — Chat over your data 🔨
 
 **Goal:** Chat stops being ingestion-only — the user can *ask* things ("what did I do in 2025?",
 "which entries mention Python?", "help me phrase this milestone") and get grounded answers.
@@ -668,19 +668,50 @@ tools) or Q&A over the user's history — retrieval reusing slice 6's vector-sim
 **Scope — out:** anything that writes on the user's behalf beyond the existing propose→confirm
 flow.
 
-**Key refs:** arch §3.1 (current parse turn), ADR-016 (retrieval), requirements FR-6.1.
+**Key refs:** arch §3.1 (current parse turn), §3.1.2 (two-tool pattern), §4.2.3 (chat isolation),
+ADR-016 (retrieval), **ADR-038** (routing), requirements FR-6.1.
 
-**New infra:** none expected beyond `chat_lambda` IAM widening to read `ENTRY#` items — note
-this weakens the current "chat can only touch CONVO#" isolation (§4.2.3); read-only, but say so
-in the ADR.
+**New infra:** none beyond `chat_lambda` IAM widening to read `ENTRY#` items — this weakens the
+current "chat can only touch CONVO#" isolation (§4.2.3); read-only, and stated plainly in ADR-038.
+§4.2.3 needs amending at wrap, not quietly outgrowing.
 
-**⚠ Decisions:**
-- **Routing design — likely an ADR:** third tool (`answer_question`) with `toolChoice=any`
-  retained, vs a router prompt / `toolChoice=auto` with free-text allowed. Interacts with how
-  history replays.
+**⚠ Decisions — resolved 2026-07-28 → ADR-038:**
+- **Routing design:** ✅ **third tool** (`answer_question`) with `toolChoice=any` **retained**.
+  It's a *control-flow* tool (the §3.2 `retrieval_done`/`submit_resume` pattern): it signals "this
+  turn is a question" and returns a retrieval query. A Q&A turn is then route (Haiku) →
+  deterministic Titan embed + `rank_by_similarity` top-k (no model) → grounded synthesis (Haiku).
+  Rejected `toolChoice=auto` (ungrounded answers, and it surrenders the forced-structured-output
+  guarantee 2b ingestion relies on) and a `search_entries` agentic loop (unbounded cost; breaks
+  `_to_converse_messages`, which flattens tool turns to text precisely because Converse requires
+  `toolUse`↔`toolResult` pairing).
+- **Framing correction:** "a question can't accidentally create an entry" is a **defect in the
+  existing path**, not a hazard introduced by this slice — today a question has no tool that fits
+  it, so `toolChoice=any` forces Haiku to bend it into `ask_clarification` or `propose_entry`.
+  Routing fixes it.
+
+- **Injection controls (added to scope 2026-07-28):** the `ENTRY#` widening ships *with* four
+  API-layer controls, not just an ADR note — model-free retrieval, **no `toolConfig` on the
+  synthesis call**, privilege separation across the two calls, and answers rendered as text (never
+  HTML/markdown, tested). Prompt-level delimiting is defense in depth only. Threat framing: the risk
+  is **indirect** injection via slice 5's résumé upload (poisoned entry content retrieved into a
+  prompt), not an outsider reading the user's data.
+- **Aggregates (added to scope 2026-07-28):** slice 7 carries the **corpus census** (counts by
+  `entry_type` from the already-loaded corpus, ~50 tokens — makes "how many certs do I have?"
+  correct now) and a **reserved `intent` field** (`lookup` | `aggregate`) on `answer_question`, of
+  which only `lookup` is implemented. Full hybrid retrieval (structured filter branch) is v1.1 →
+  backlog. Rationale: `query_entries` already reads the whole corpus, so top-k is a compression we
+  choose, not a ceiling — and top-k biases a count toward k, i.e. confidently wrong.
+
+**Backlog groomed:** B-008 (P1, résumé has no identity header — take name/email from JWT claims)
+consciously **left out** — it's `resume_agent` work with its own smoke test, better as a small
+standalone PR. B-010 (Sonnet 5) re-probed 2026-07-28: still denied, but the error changed from
+agreement-pending to `anthropic.claude-sonnet-5 is not available for this account` — reads as a hard
+account entitlement, not propagation lag; stop treating it as "wait longer." B-003/B-004/B-006/
+B-007/B-009 left (not slice-7 shaped).
 
 **Exit criteria:** ingestion still passes its 2b smoke tests unchanged; questions about seeded
-history get correct grounded answers from the UI; a question can't accidentally create an entry.
+history get correct grounded answers from the UI; a question can't accidentally create an entry;
+`chat_lambda`'s new DDB grant is read-only and `ENTRY#`-scoped.
 
 **Completion notes:** _(filled at wrap)_
 
