@@ -66,6 +66,7 @@ def stubs(monkeypatch):
             state.setdefault("put", []).append(kwargs)
 
         def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803
+            state.setdefault("presigned", []).append(Params)
             return f"https://s3.example/{Params['Key']}"
 
     monkeypatch.setattr(h, "_lambda", lambda: _Lambda())
@@ -206,6 +207,31 @@ def test_poll_completed_presigns_fresh_urls(stubs, monkeypatch):
     assert body["pdf_url"].endswith("/resume.pdf")
     assert body["retrieved_count"] == 2
     assert body["critique_verdict"] == "PASS"
+
+
+def test_poll_completed_presigns_pdf_as_an_attachment(stubs, monkeypatch):
+    """The PDF must save to disk, not open in a tab.
+
+    The frontend link is cross-origin, and HTML's ``download`` attribute is ignored across origins —
+    so the disposition has to be baked into the signature. The HTML stays inline: the preview
+    renders it in an iframe.
+    """
+    monkeypatch.setattr(
+        h,
+        "get_resume_run",
+        lambda uid, rid: {
+            "status": "completed",
+            "created_at": "t",
+            "html_key": "resumes/u/01JRUN/resume.html",
+            "pdf_key": "resumes/u/01JRUN/resume.pdf",
+        },
+    )
+    h.handler(_get(), FakeLambdaContext())
+
+    by_key = {p["Key"]: p for p in stubs["presigned"]}
+    pdf = by_key["resumes/u/01JRUN/resume.pdf"]
+    assert pdf["ResponseContentDisposition"] == 'attachment; filename="resume-01JRUN.pdf"'
+    assert "ResponseContentDisposition" not in by_key["resumes/u/01JRUN/resume.html"]
 
 
 def test_poll_failed_returns_friendly_message(stubs, monkeypatch):
