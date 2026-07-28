@@ -130,9 +130,23 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 6b — resume agent output UI (JD input → async poll → HTML preview + PDF download + regenerate, wired to the 6a backend per ADR-037).**
+**Phase 2 — Implementation (in progress). Next slice: 7 — chat over your data (FR-6.1: `chat_lambda` routes a message to either entry-parsing or grounded Q&A over the user's history, reusing the ADR-016 retrieval helpers). ⚠ open decision: routing design — a third `answer_question` tool with `toolChoice=any` vs a router prompt with `toolChoice=auto`; likely an ADR before code.**
 
-- Last completed: slice 6a — resume agent backend loop (ADR-036/-037; arch §3.2 corrected). The
+- Last completed: slice 6b — resume agent output UI (FR-5.3/5.4). The `Résumé` tab runs the ADR-037
+  async flow end to end: JD input → `POST` `202 {run_id}` → 3s poll with an elapsed counter → iframe
+  HTML preview + PDF download + Regenerate. Two of its four slice-start decisions turned out to be
+  *backend* work, which is the lesson: **the PDF presign needed a `Content-Disposition: attachment`
+  override** (HTML's `download` attribute is ignored cross-origin, so the button opened a tab
+  instead of saving), and the preview uses an **iframe `src`** because the data bucket's CORS is
+  PUT-only — an iframe navigation isn't subject to CORS, and it keeps agent-generated HTML out of
+  the app's origin. `run_id` lives in `sessionStorage` so a mid-run reload re-attaches to a paid run
+  instead of orphaning it. **ADR-015 amended:** `resumes/` now expires on a flat 30-day lifecycle
+  matching the RESUMERUN TTL — the original "keep the newest indefinitely, 7 days for the rest" is
+  not expressible as an S3 lifecycle rule. **Arch v1.9 correction:** §3.2.2's "under 90 seconds per
+  run" is wrong; measured ~176s, which is exactly why generation is async. Measured run: 82.9K
+  tokens / **$0.35** (a `REVISE` run — the realistic upper end vs 6a's 70K/$0.31 `PASS` baseline).
+  Deferred: the run-metadata row is developer-facing and the elapsed timer disappears on completion
+  → backlog B-006/B-007. Before that: slice 6a — resume agent backend loop (ADR-036/-037; arch §3.2 corrected). The
   `resume_agent` Lambda runs the six-phase bounded loop (Haiku analyze → Sonnet 4-6 retrieve/draft/
   critique/revise → deterministic HTML+PDF finalize) as an **async job** (ADR-037: `POST
   /resumes/generate` → `202 {run_id}` + self-invoked worker; `GET /resumes/{run_id}` polls,

@@ -64,12 +64,22 @@ _MAX_TOP_K = 25
 _SEARCH_SNIPPET_CHARS = 300
 _MAX_OUTPUT_TOKENS = 4096
 
-#: Approximate Bedrock pricing (USD per token) for the run-cost estimate in the trace/metrics. These
-#: are order-of-magnitude figures for the budget guard, not billing truth — the authoritative cost
-#: is AWS Cost Explorer. Titan embed cost is negligible and omitted.
+#: Bedrock pricing (USD per token) for the run-cost estimate in the trace/metrics. Figures for the
+#: budget guard, not billing truth — the authoritative cost is AWS Cost Explorer. Titan embed cost is
+#: negligible and omitted.
+#:
+#: **These are the Regional CRIS rates, not the base on-demand rates.** Every model here is invoked
+#: through a `us.` cross-region inference profile (ADR-031), and Bedrock bills cross-region inference
+#: at a ~10% premium over the headline per-model price — Sonnet 4-6 is $3/$15 on-demand but
+#: **$3.30/$16.50** through `us.`. Using the headline numbers understated every run cost we recorded
+#: in slices 6a/6b by that 10%; verified against `list-foundation-model-agreement-offers` rate cards
+#: (dimensions `USE1_InputTokenCount` / `USE1_OutputTokenCount` = Regional CRIS; the `_Global`
+#: variants are the cheaper global-profile rates we don't use).
 _PRICE_PER_TOKEN = {
-    "sonnet": (3.0 / 1_000_000, 15.0 / 1_000_000),
-    "haiku": (1.0 / 1_000_000, 5.0 / 1_000_000),
+    # Sonnet 4-6 via us.* — swap to (2.20, 11.00) if BEDROCK_SONNET_MODEL_ID moves to Sonnet 5:
+    # its Regional CRIS rate is $2.20/$11.00, ~33% cheaper per token (ADR-036 model-swap note).
+    "sonnet": (3.30 / 1_000_000, 16.50 / 1_000_000),
+    "haiku": (1.10 / 1_000_000, 5.50 / 1_000_000),
 }
 
 

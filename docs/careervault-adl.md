@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-21 (slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-07-28 (slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -417,13 +417,45 @@ v1 supports in-app download (HTML preview + PDF download) and plain-text copy/pa
 
 For PDF storage in S3: keep the most recent generation indefinitely; older generations have a 7-day TTL via S3 lifecycle policy. No DynamoDB record per generation in MVP — the "list past resumes" feature is post-MVP and would add `GENERATED_RESUME` entries later.
 
+### Amendment (2026-07-27, slice 6b) — retention becomes a flat 30 days, matching the RESUMERUN TTL
+
+The retention half of this decision was written before the implementation existed and does not survive
+contact with it. Two corrections:
+
+1. **"Keep the most recent generation indefinitely, expire older ones at 7 days" is not expressible as
+   an S3 lifecycle rule.** Lifecycle rules filter on prefix, tag, size and age — there is no
+   "except the newest object" predicate. Honouring the original wording would require the app to
+   re-tag the previous run's objects on every generation (or an S3 Inventory + batch job), which is
+   real moving machinery for a single-user MVP whose newest résumé is one regenerate away.
+2. **7 days would contradict the record that points at the objects.** ADR-037 gave each run a
+   RESUMERUN item with a **30-day** DynamoDB TTL. At 7 days the trace item would outlive its own
+   HTML/PDF for three weeks, and `GET /resumes/{run_id}` would happily presign URLs to objects that
+   no longer exist — a 200 response leading to a broken download.
+
+**Amended decision:** objects under `resumes/` expire on a flat **30-day** S3 lifecycle rule, matching
+the RESUMERUN TTL so a run's record and its artifacts die together. No "keep newest" carve-out and no
+object tagging. The delivery half of the ADR — in-app HTML preview + PDF download, no email, no Drive —
+stands unchanged.
+
+**Consequence accepted:** a résumé older than 30 days is gone, and its poll URL 404s at the S3 fetch
+rather than at the API. For a single-user MVP where regeneration costs ~$0.31 and ~3 minutes, that is
+cheaper than the tagging machinery. If "list past résumés" ships post-MVP, retention gets revisited
+alongside the `GENERATED_RESUME` entity — at which point "keep the newest N" becomes a query over
+records, not a lifecycle predicate, and is trivial.
+
 ### Alternatives considered
 - **Email delivery in MVP** — easy via SES, but adds attachment handling complexity.
 - **Google Drive integration** — requires OAuth flow with Google, significant scope creep.
+- _(2026-07-27)_ **Tag-the-previous-run + tag-scoped lifecycle rule** — the only faithful way to
+  implement "keep newest indefinitely." Rejected: an extra S3 write per generation and a failure mode
+  (a missed re-tag silently keeps objects forever) for no single-user benefit.
 
 ### Consequences
 - ✅ Tight MVP scope; simplest possible delivery path.
+- ✅ Artifact retention and trace retention are the same number (30 days), so there is one rule to
+  reason about rather than two that drift.
 - ⚠️ Power users may want emailed output; revisit post-MVP.
+- ⚠️ Résumés are not archival. A user who wants to keep one must download the PDF.
 
 ---
 
@@ -1237,6 +1269,43 @@ ceiling is portable regardless of who serves the model.
 > and every other decision here stand. **Revisit:** flip `SonnetInferenceProfileId` /
 > `SonnetFoundationModelId` back to `…-sonnet-5` if that access is ever granted. This is the same
 > class of Bedrock model-access gotcha as the Haiku use-case form (see the project memory).
+
+> **Live-access re-diagnosis (slice 6b, 2026-07-28) — the correction above was wrong about *why*.**
+> The 6a note concluded Sonnet 5 was "not self-serve grantable … account-tier/allowlist gating."
+> Re-probing with the AWS agent toolkit's MCP server showed that reading was mistaken.
+> `get-foundation-model-availability` returns **four** independent fields, and for
+> `anthropic.claude-sonnet-5` three of them were already green — `authorizationStatus: AUTHORIZED`,
+> `entitlementAvailability: AVAILABLE`, `regionAvailability: AVAILABLE`. Only
+> `agreementAvailability: NOT_AVAILABLE` was set. That field means *no AWS Marketplace agreement has
+> been accepted for this model*, which is **self-serve after all**:
+> `list-foundation-model-agreement-offers` returned a live offer (`offer-2ykemehpsyf7g`) and
+> `create-foundation-model-agreement --offer-token …` accepted it. Availability then moved
+> `NOT_AVAILABLE` → `PENDING` → **`AVAILABLE`**. The 6a diagnosis stopped at the aggregate "not
+> available" wording of the *runtime* error and never queried for an offer — the lesson is to read all
+> four availability fields and check for a pending agreement before concluding a model is ungated.
+>
+> **Status as of 2026-07-28: agreement accepted and `AVAILABLE`, but `Converse` still returns the same
+> `AccessDeniedException` ~30 minutes later** (both `us.` and `global.` profiles; `us.…sonnet-4-6`
+> succeeds from the same identity in the same breath, so it is not IAM, not the use-case form — which
+> `get-use-case-for-model-access` confirms is on file — and not the inference profile, which lists as
+> `ACTIVE`). Read as entitlement propagation that cannot be forced from the client side. **The agent
+> therefore still runs on Sonnet 4-6**; the switch is the same one-line `samconfig.toml` parameter flip
+> this ADR always described, pending a successful probe. Tracked as backlog **B-010**.
+>
+> **When it lands, Sonnet 5 is also cheaper**, which inverts this ADR's original cost framing: its
+> Regional CRIS rate is **$2.20/$11.00 per M tokens** vs Sonnet 4-6's **$3.30/$16.50** — roughly **33%
+> less per token**, so a ~$0.39 run becomes ~$0.26 and the $5 month buys ~19 runs instead of ~13.
+
+> **Pricing correction (slice 6b, 2026-07-28) — every run cost recorded in 6a/6b was ~10% low.**
+> `agent.py`'s `_PRICE_PER_TOKEN` used the headline on-demand rates ($3/$15 Sonnet, $1/$5 Haiku), but
+> **every model here is invoked through a `us.` cross-region inference profile (ADR-031), and Bedrock
+> bills cross-region inference at a ~10% premium**: the rate cards give `USE1_InputTokenCount`
+> (Regional CRIS) as **$3.30/$16.50** for Sonnet 4-6 and **$1.10/$5.50** for Haiku 4.5, against
+> `_Global` dimensions of $3/$15 and $1/$5. So the trace/metric cost estimates — and the figures
+> quoted in the tuning note above and in the 6a/6b completion notes — understate actual spend by that
+> margin: the tuned run is **~$0.34, not $0.31**, and slice 6b's measured run **~$0.39, not $0.35**.
+> Rates corrected in code. The 150K token ceiling is unaffected (it counts tokens, not dollars), and
+> AWS Cost Explorer remains the billing truth; this only makes the in-run estimate honest.
 
 > **Cost tuning (slice 6a, 2026-07-21 — from the first full runs).** The first successful run on
 > Sonnet 4-6 measured **85K tokens / ~$0.39 / ~230 s** for a 13-entry corpus — functional and under

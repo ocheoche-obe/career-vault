@@ -64,7 +64,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
-| 6b | Resume agent — output UI | FR-5.3, 5.4 | ⬜ | — |
+| 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
@@ -461,7 +461,7 @@ IAM precedent**, **ADR-036** pins the concrete Sonnet model + cost controls for 
 
 ---
 
-### Slice 6a — Resume agent backend loop 🔨
+### Slice 6a — Resume agent backend loop ✅ (PR #27)
 
 **Goal:** `POST /resumes/generate` runs the full six-phase agent server-side and returns
 `{html_url, pdf_url, run_id}` — verifiable end-to-end against the real API before any UI exists.
@@ -541,7 +541,7 @@ short-circuit (§3.2.6 checkpoint) returns the "add entries first" message. Budg
 
 ---
 
-### Slice 6b — Resume agent output UI ⬜
+### Slice 6b — Resume agent output UI ✅
 
 **Goal:** JD-input + HTML preview + format-select + download, wired to `POST /resumes/generate`.
 
@@ -551,16 +551,106 @@ short-circuit (§3.2.6 checkpoint) returns the "add entries first" message. Budg
 → `202 {run_id}`, then poll `GET /resumes/{run_id}` until `completed`/`failed`, with a
 "generating…" progress state across the ~3-minute run; render the returned HTML preview; Download
 PDF (presigned URL) + Regenerate (fresh run); friendly error states for the `failed` `detail`
-messages the backend already returns; nav tab.
+messages the backend already returns; nav tab. Plus the three small backend/infra items the UI
+forces (decisions 2 and 4 below): a `Content-Disposition` on the PDF presign, and the `resumes/`
+lifecycle rule.
+
+**Scope — out:** email/Drive delivery (v1.1); named-entity verification (v1.1); **general UI polish
+(backlog B-001)** — 6b matches the existing visual language rather than being the design pass.
 
 **Key refs:** **ADR-037** (the 202 + poll contract), the `resume_agent` handler's response shapes
-(202 pending / status poll), arch §3.2.1 (with the ADR-037 transport correction).
+(202 pending / status poll), arch §3.2.1 (with the ADR-037 transport correction), **ADR-015 as
+amended 2026-07-27** (30-day `resumes/` retention), ADR-034 (wildcard CORS).
+
+**⚠ Decisions:** _(resolved with Oche 2026-07-27 at slice start, from reading the deployed 6a code)_
+- **1. HTML preview transport → `<iframe src={html_url}>`, sandboxed.** The data bucket's CORS
+  allows **PUT only** (slice 5 only ever needed the presigned upload), so `fetch(html_url)` +
+  `srcdoc` would require a new GET rule. An iframe `src` is a *navigation*, not a fetch — CORS
+  doesn't apply — so the preview works against the bucket exactly as it is deployed. No infra
+  change. The WeasyPrint-oriented HTML is a complete document, which suits an iframe better than
+  inlining anyway.
+- **2. PDF presign gains `ResponseContentDisposition` → the download actually downloads.** The 6a
+  presign sets no disposition, and HTML's `download` attribute is **ignored for cross-origin URLs**,
+  so a "Download PDF" link would open the PDF in a tab instead of saving it. Fixed in the backend
+  (one presign parameter: `attachment; filename="resume-<run_id>.pdf"`), not worked around in the UI.
+- **3. `run_id` persists in `sessionStorage` for the duration of a run.** A run costs ~$0.31 and
+  ~176s server-side; if the id lived only in component state, a reload or tab switch would orphan a
+  run that is still burning money and could never be collected. Stashing it means a reload resumes
+  polling the same run. Cleared on terminal status.
+- **4. `resumes/` lifecycle → flat 30 days, and ADR-015 amended.** The slice-5 template comment
+  promised "resumes/ (slice 6) will carry its own ADR-015 lifecycle later" and 6a never added it, so
+  generated PDFs currently live forever. Writing the rule surfaced that **ADR-015's original wording
+  is not implementable** ("keep the most recent generation indefinitely, 7-day TTL for older" — S3
+  lifecycle has no "except the newest" predicate) and that 7 days would leave 30-day RESUMERUN items
+  presigning URLs to deleted objects. Amended to a flat 30 days matching the RESUMERUN TTL — see the
+  ADR-015 amendment for the full reasoning.
 
 **Exit criteria:** paste a JD from the deployed frontend → "generating…" → preview renders → PDF
 downloads and looks like a resume → regenerate produces a fresh run; a failed run surfaces the
-friendly message. Frontend-render smoke consideration folded into slice 9.
+friendly message; a mid-run browser reload resumes polling the same `run_id` rather than orphaning
+it; the `resumes/` lifecycle rule is live on the deployed bucket. Frontend-render smoke
+consideration folded into slice 9.
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:** _(wrapped 2026-07-28, [PR #28](https://github.com/ocheoche-obe/career-vault/pull/28))_
+- **Shipped:** the `Resume` view (`frontend/src/resume/`) — JD/target input, the ADR-037 async poll
+  flow (`POST` → `202 {run_id}` → `GET` every 3s to a terminal status), an elapsed-time progress
+  state across the ~3-minute run, the HTML preview, Download PDF, Regenerate, and New target; plus a
+  `Résumé` nav tab and the typed client (`startResumeRun`/`getResumeRun`) in `lib/api.ts`. Failure
+  states render the backend's own message — the seven `detail` codes are mapped to sentences server-side
+  already, so there is no second copy of that vocabulary in the UI.
+
+- **The four ⚠ decisions all came from reading the deployed 6a code rather than the roadmap**, which
+  is the reusable lesson: the plan's 6b section was written before 6a existed, so it assumed a UI
+  slice was pure frontend. Two of the four turned out to be backend/infra work.
+  1. **iframe `src`, not `fetch` + `srcdoc`** — the data bucket's CORS is PUT-only (slice 5 only
+     needed the presigned upload). An iframe navigation isn't subject to CORS, so the preview works
+     against the bucket exactly as deployed, no infra change. It is also the safer of the two:
+     `srcdoc` would render agent-generated HTML in the app's own origin.
+  2. **PDF presign gained `ResponseContentDisposition`** — HTML's `download` attribute is *ignored
+     cross-origin*, so without a disposition baked into the signature "Download PDF" opens a tab
+     instead of saving. Fixed in the backend (`_presign_get(download_as=…)`), not papered over in the
+     UI. Verified on the wire: `Content-Disposition: attachment; filename="resume-<run_id>.pdf"`.
+  3. **`run_id` in `sessionStorage`** — a run costs ~$0.31 and keeps going server-side regardless of
+     who is watching, so component-only state would orphan a paid run on any reload. Confirmed in the
+     smoke: reloading mid-run re-attaches and keeps counting.
+  4. **`resumes/` lifecycle → flat 30 days + ADR-015 amended** — writing the rule the slice-5
+     template had promised surfaced that **ADR-015's original retention rule is not implementable**:
+     S3 lifecycle filters on prefix/tag/age with no "except the newest object" predicate, and 7 days
+     would have left 30-day RESUMERUN items presigning URLs to deleted objects. Amended to match the
+     trace TTL so a run's record and its artifacts die together.
+- **Doc correction (arch v1.9):** §3.2.2 still claimed "under 90 seconds for a typical run." Measured
+  reality is **~176s**. The estimate predates having six sequential Bedrock round-trips to measure,
+  and it is load-bearing, not cosmetic — 176s is ~6× API Gateway's 29s ceiling (the reason ADR-037
+  made generation async) and it is what this slice's UI is dimensioned around (3s poll, 330s
+  give-up just past the 300s Lambda timeout).
+- **Verified:** 222 unit tests green (one new: the PDF presigns with a disposition, the HTML without);
+  frontend lint + build clean; deployed to dev; lifecycle rule confirmed live on the bucket via
+  `get-bucket-lifecycle-configuration`; presign disposition confirmed by fetching a real completed
+  run's URLs (PDF-1.7, 24KB, `attachment` header; HTML inline `text/html`). **Oche's UI smoke on the
+  CloudFront URL passed every exit criterion** — 2 runs against 2 different JDs, iframe preview,
+  a real PDF download, mid-run reload retaining the run, Regenerate producing a fresh run, New target
+  accepting a fresh JD.
+- **Evaluation vs exit criteria — all met.** Measured run: **82,867 tokens / 13 entries used /
+  critique `REVISE`**. That is above 6a's tuned 70K baseline because this run actually spent its one
+  allowed revision (`REVISE`, not `PASS`) — so it is the realistic *upper* end of a normal run, still
+  comfortably under the 150K-token / ~$1 ADR-036 ceiling. **Cost figure corrected post-hoc:** the UI
+  displayed **$0.35**, but that estimate used the headline on-demand Sonnet rate; every model here is
+  invoked through a `us.` cross-region inference profile, which bills ~10% higher (Regional CRIS
+  $3.30/$16.50, not $3/$15). True cost is **~$0.39**, and 6a's tuned baseline is **~$0.34, not
+  $0.31**. Rates fixed in `agent.py`; see the ADR-036 pricing correction. MTD spend at wrap: **$1.73**
+  reported, though Cost Explorer had not yet ingested the day's runs (≈$2.4 real) — well under $5. **One thing to improve:**
+  the run-metadata row (entries/critique/tokens/cost) is developer-facing and the elapsed timer
+  vanishes exactly when you'd want to compare runs — both routed to **B-006/B-007** rather than fixed
+  in-slice, since Oche explicitly wants the metadata visible while the agent is still being evaluated.
+- **Also fixed in-slice (not in the plan):** Generate/Regenerate weren't disabled during the POST, so
+  a double-click would have started two runs at ~$0.31 each *and* overwritten the first `run_id` in
+  storage — orphaning a paid run. Both buttons now guard on a `starting` flag.
+- **Security review clean.** The one item worth scrutiny — user-controlled `run_id` interpolated into
+  the `Content-Disposition` filename — is not exploitable: the presign is only reached after the
+  `run_id` matches a stored item, and RESUMERUN items only exist under server-minted ULIDs. Noted for
+  the future: the guardrail is existence-checking, not format-validation. The new preview is the
+  first time agent-generated HTML renders in a browser, and it is defended three ways — Jinja2
+  `autoescape=True`, `sandbox=""` (no `allow-scripts`), and a cross-origin frame.
 
 ---
 
