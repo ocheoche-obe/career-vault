@@ -311,6 +311,41 @@ def put_entry_update(item: Mapping[str, Any]) -> bool:
         raise
 
 
+# ---------------------------------------------------------------------------
+# Resume run traces — RESUMERUN# prefix (resume_agent only, Section 3.2.5 / 4.2.3)
+# ---------------------------------------------------------------------------
+
+def create_resume_run(item: Mapping[str, Any]) -> None:
+    """Create a RESUMERUN# item exactly once (the ``pending`` job record, ADR-037).
+
+    Written through :func:`put_item_scoped`, so the ``RESUMERUN#`` prefix invariant (Section 4.2.4)
+    is enforced in code and ``attribute_not_exists(SK)`` guarantees create-once — the ULID
+    ``run_id`` makes a collision impossible in practice, so this is belt-and-suspenders.
+    """
+    put_item_scoped(item, "RESUMERUN#")
+
+
+def finalize_resume_run(item: Mapping[str, Any]) -> None:
+    """Overwrite the RESUMERUN# item when the async worker completes/fails (ADR-037 / §3.2.5).
+
+    Unlike :func:`create_resume_run`, this is an unconditional full-item ``PutItem`` — the worker
+    replaces the ``pending`` record with the terminal one (``completed``/``failed`` + trace, keys,
+    tokens, cost). The prefix invariant is still asserted in code; there is no create-once condition
+    because by definition the item already exists. TTL'd (30 days) via the caller's ``expires_at``
+    epoch attribute, matching the table's TimeToLive configuration.
+    """
+    assert_sk_prefix(item, "RESUMERUN#")
+    get_table().put_item(Item=to_ddb_numbers(dict(item)))
+
+
+def get_resume_run(user_id: str, run_id: str) -> dict[str, Any] | None:
+    """Fetch one RESUMERUN# job record for status polling (ADR-037), or ``None`` if absent."""
+    response = get_table().get_item(
+        Key={"PK": pk_for_user(user_id), "SK": f"RESUMERUN#{run_id}"}
+    )
+    return response.get("Item")
+
+
 def delete_entry(user_id: str, entry_id: str) -> bool:
     """Hard-delete an ENTRY item (AP-6 / ADR-027). ``True`` if deleted, ``False`` if absent.
 
