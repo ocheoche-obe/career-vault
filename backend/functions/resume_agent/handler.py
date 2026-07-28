@@ -274,10 +274,17 @@ def _run_worker(payload: dict) -> dict:
 
 # --- GET /resumes/{run_id} (poll status) ----------------------------------------------------------
 
-def _presign_get(key: str) -> str:
-    return _s3().generate_presigned_url(
-        "get_object", Params={"Bucket": os.environ["DATA_BUCKET_NAME"], "Key": key}, ExpiresIn=_PRESIGN_EXPIRY_SECONDS
-    )
+def _presign_get(key: str, *, download_as: str | None = None) -> str:
+    """Presign a GET. ``download_as`` forces a save-to-disk instead of in-browser rendering.
+
+    The frontend previews the HTML in an iframe (a navigation, so no bucket CORS needed) but wants
+    the PDF *downloaded*. HTML's ``download`` attribute is ignored on cross-origin URLs, so the
+    disposition has to come from S3 itself — hence the response-header override on the signature.
+    """
+    params = {"Bucket": os.environ["DATA_BUCKET_NAME"], "Key": key}
+    if download_as:
+        params["ResponseContentDisposition"] = f'attachment; filename="{download_as}"'
+    return _s3().generate_presigned_url("get_object", Params=params, ExpiresIn=_PRESIGN_EXPIRY_SECONDS)
 
 
 def _status(user_id: str, run_id: str | None) -> dict:
@@ -298,7 +305,7 @@ def _status(user_id: str, run_id: str | None) -> dict:
                 "status": "completed",
                 "created_at": created_at,
                 "html_url": _presign_get(item["html_key"]),
-                "pdf_url": _presign_get(item["pdf_key"]),
+                "pdf_url": _presign_get(item["pdf_key"], download_as=f"resume-{run_id}.pdf"),
                 "critique_verdict": item.get("critique_verdict"),
                 "retrieved_count": len(item.get("retrieved_ids") or []),
                 "cost_usd": from_ddb_numbers(item.get("cumulative_cost_usd")),

@@ -541,11 +541,19 @@ Resources:
       LifecycleConfiguration:
         Rules:
           # A raw upload is only needed during the synchronous parse; expire it the next day so no
-          # resume bytes linger. resumes/ (slice 6) will carry its own ADR-015 lifecycle later.
+          # resume bytes linger.
           - Id: ExpireRawUploads
             Status: Enabled
             Prefix: uploads/
             ExpirationInDays: 1
+          # Generated resumes expire with their RESUMERUN trace item (ADR-037's 30-day DDB TTL) so a
+          # run's record and its artifacts die together — ADR-015 as amended 2026-07-27. The original
+          # "keep the newest indefinitely, 7 days for the rest" is not expressible here: lifecycle
+          # filters on prefix/tag/age, with no "except the newest object" predicate.
+          - Id: ExpireGeneratedResumes
+            Status: Enabled
+            Prefix: resumes/
+            ExpirationInDays: 30
       Tags:
         - { Key: Project, Value: CareerVault }
         - { Key: Environment, Value: !Ref Environment }
