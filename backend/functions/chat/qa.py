@@ -79,20 +79,31 @@ def render_census(census: dict[str, int]) -> str:
     return "\n".join(lines) + f"\n  TOTAL: {census['total']}"
 
 
-def _neutralise_delimiters(text: str) -> str:
-    """Defang delimiter sequences inside user-supplied content.
+#: Every tag that gives the grounding block its structure. Content is defanged against *all* of
+#: them, not just ``<entry>`` — closing ``</relevant_entries></career_history>`` escapes the data
+#: region just as effectively as closing a single entry, and an injected résumé that knows the
+#: prompt shape would reach for the outermost tag first.
+_STRUCTURAL_TAGS = ("career_history", "census", "relevant_entries", "entry")
 
-    An entry whose text contains ``</entry>`` could otherwise close the block early and have the
-    remainder read as prompt rather than data — the cheapest possible delimiter escape, and the
-    one an injected résumé would actually try (entry content can originate in an uploaded file,
-    slice 5). Neutralising the *sequence* rather than stripping all angle brackets keeps ordinary
-    technical writing ("List<String>", "a -> b") intact.
+
+def _neutralise_delimiters(text: str) -> str:
+    """Defang the grounding block's structural tags inside user-supplied content.
+
+    An entry whose text contains ``</entry>`` — or ``</relevant_entries>``, or
+    ``</career_history>`` — could otherwise close the data region early and have the remainder
+    read as prompt rather than data. That is the cheapest possible delimiter escape, and the one
+    an injected résumé would actually try (entry content can originate in an uploaded file, slice
+    5). Neutralising these *specific sequences* rather than stripping all angle brackets keeps
+    ordinary technical writing ("List<String>", "a -> b") intact.
 
     This is hygiene on top of the real controls (the synthesis call has no tools at all, and its
     output is rendered as text) — not a substitute for them. ADR-038 is explicit that prompt-level
-    containment is defense in depth and is not counted on.
+    containment is defense in depth and is not counted on. It is still worth being complete: a
+    control documented as "we delimit the data" should actually delimit it.
     """
-    return text.replace("</entry", "&lt;/entry").replace("<entry", "&lt;entry")
+    for tag in _STRUCTURAL_TAGS:
+        text = text.replace(f"</{tag}", f"&lt;/{tag}").replace(f"<{tag}", f"&lt;{tag}")
+    return text
 
 
 def project_entry(item: dict) -> dict[str, Any]:

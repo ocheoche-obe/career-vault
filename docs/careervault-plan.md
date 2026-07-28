@@ -65,7 +65,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
-| 7 | Chat over your data | FR-6.1 | 🔨 | — |
+| 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
 
@@ -654,7 +654,7 @@ consideration folded into slice 9.
 
 ---
 
-## Slice 7 — Chat over your data 🔨
+## Slice 7 — Chat over your data ✅
 
 **Goal:** Chat stops being ingestion-only — the user can *ask* things ("what did I do in 2025?",
 "which entries mention Python?", "help me phrase this milestone") and get grounded answers.
@@ -709,11 +709,80 @@ agreement-pending to `anthropic.claude-sonnet-5 is not available for this accoun
 account entitlement, not propagation lag; stop treating it as "wait longer." B-003/B-004/B-006/
 B-007/B-009 left (not slice-7 shaped).
 
-**Exit criteria:** ingestion still passes its 2b smoke tests unchanged; questions about seeded
-history get correct grounded answers from the UI; a question can't accidentally create an entry;
-`chat_lambda`'s new DDB grant is read-only and `ENTRY#`-scoped.
+**Exit criteria:** ✅ all met.
 
-**Completion notes:** _(filled at wrap)_
+| Criterion | Verified by |
+|---|---|
+| Ingestion still passes its 2b smoke tests unchanged | Live: "I passed the AWS Solutions Architect Professional exam on 2026-07-15…" → `parse_candidate` CERT with a minted ULID. All pre-existing chat unit tests untouched and green. |
+| Questions about seeded history get correct grounded answers | Live, against the real 13-entry dev corpus: counts, skill lookup, and education questions all answered correctly and traceably (below). |
+| A question can't accidentally create an entry | Live: entry count 13 before and 13 after four question turns. Unit: `test_a_question_never_writes_an_entry` asserts every write carries a `CONVO#` SK. |
+| `chat_lambda`'s new DDB grant is read-only and `ENTRY#`-scoped | **Criterion was based on a false premise — see the IAM correction below.** The real property (chat cannot *write* an entry) holds and is now test-pinned. |
+
+**Completion notes**
+
+**What shipped.** `answer_question` as a third *control-flow* tool with `toolChoice=any` retained
+(ADR-038). A Q&A turn is route (Haiku) → Titan embed → `rank_by_similarity` top-k in-Lambda →
+synthesis (Haiku, **no tools**). Ingestion turns are byte-for-byte the same shape as slice 2b. New
+`backend/functions/chat/qa.py` holds the census + grounding-block construction as pure functions;
+`Chat.tsx` renders answer turns plus a quiet provenance list of the entries that grounded them.
+
+**Measured (live dev, real corpus of 13 entries — 7 JOB, 4 CERT, 2 EDUCATION):**
+
+| Question | Routed to | Result |
+|---|---|---|
+| "how many certifications do I have?" | `answer_question` (intent `aggregate`) | **"You have 4 certifications"** — correct |
+| "which of my entries involve Python or data engineering?" | `answer_question` (`lookup`) | Correct; cited the Columbia internship, the GCP cert, both EY roles |
+| "what did I study at university?" | `answer_question` (`lookup`) | Correct; both degrees with GPA and honors |
+| "I passed the AWS SAP exam on 2026-07-15…" | `propose_entry` | CERT candidate — ingestion unregressed |
+| "I worked at Acme" | `ask_clarification` | "What was your job title at Acme, and when…" — unregressed |
+
+**Cost: ~$0.006 per Q&A turn** (~$0.03 for the whole smoke run; 22.2K input / 960 output tokens
+across ~10 Haiku calls at the Regional CRIS rate). Roughly 800 Q&A turns/month inside the $5
+ceiling — unlike slice 6, this slice is not a cost story. MTD spend at slice start was $1.73.
+
+**The census earned its keep on the first live run.** Top-k handed the model 8 entries, only 4 of
+which were certs. Had it counted what was in front of it, it would have answered 8. It answered 4.
+That is the exact predicted failure mode — top-k biases a count toward k — caught by design rather
+than by luck. Unprompted bonus: it also flagged the two AZ-900 entries as likely duplicates,
+which is **B-003 confirming itself from real data**.
+
+**Correction — the IAM widening this slice was supposed to make does not exist.** The plan, the
+first draft of ADR-038, and one exit criterion all said `chat_lambda` would *gain* `dynamodb:Query`
+on `ENTRY#`. It already had it: the policy grants `Query` on the table ARN **unconditionally**, and
+always has, so those reads were permitted throughout slices 2–6. Nothing in the role changed except
+one new `bedrock:InvokeModel` on Titan.
+
+That is not a sloppy original policy — **IAM cannot express the restriction.** All of a user's
+items share one partition key, the isolation wanted is by *sort-key prefix*, and
+`dynamodb:LeadingKeys` scopes the partition key only (§4.2.1). So §4.2.3's "chat can only touch
+`CONVO#`" was never an IAM property; it was always application code, enforced by which
+`ddb_helpers` a handler calls. Recorded as the slice's most portable lesson: **a least-privilege
+boundary IAM cannot express is a code invariant wearing an IAM costume** — worth keeping, but it
+must be documented and tested as code, never assumed to be platform-enforced. Arch §4.2.3 and the
+change log (v2.0) carry the correction; ADR-038 carries the reasoning.
+
+**Security review: one LOW finding, fixed in-slice.** `_neutralise_delimiters` originally defanged
+only `<entry>`, while the grounding block also uses `<career_history>`, `<census>` and
+`<relevant_entries>` — so entry content closing the *outer* tags escaped the data region just as
+effectively. Impact was bounded (the real controls — no `toolConfig` on the synthesis call,
+model-free retrieval, text-only rendering, PK scoping — all held, so the worst case was a
+misleading answer, not escalation or exfiltration), but a control documented as "we delimit the
+data" should actually delimit it. Fixed via `_STRUCTURAL_TAGS` + 3 regression tests. No HIGH or
+MEDIUM findings.
+
+**Advisory review:** logged **B-013** (every Q&A turn reads the whole corpus *including* ~20 KB of
+embeddings per item — fine at 13 entries, felt on the interactive path as the corpus grows). No
+in-slice fixes needed beyond the security one.
+
+**Worth knowing for later.** The synthesis prompt ends with two consecutive `user` turns (the
+question, then the grounding block). That is deliberate — instructions stay in the system prompt,
+data goes in its own turn, so the trust boundary is legible — and Bedrock Converse accepts it with
+Anthropic models. Verified live rather than assumed.
+
+**Deferred:** B-011 hybrid retrieval for aggregate questions (the `intent` field ships reserved and
+was correctly populated `aggregate`/`lookup` on every live run, so the v1.1 branch has a working
+signal to hang off); B-012 keep answers plain-text; B-013 corpus-read weight. **Not pulled in:**
+B-008 (P1 résumé identity header — still the highest-value standalone fix).
 
 ---
 

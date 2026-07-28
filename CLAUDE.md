@@ -130,9 +130,29 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 7 — chat over your data (FR-6.1: `chat_lambda` routes a message to either entry-parsing or grounded Q&A over the user's history, reusing the ADR-016 retrieval helpers). ⚠ open decision: routing design — a third `answer_question` tool with `toolChoice=any` vs a router prompt with `toolChoice=auto`; likely an ADR before code.**
+**Phase 2 — Implementation (in progress). Next slice: 8 — check-in emails (FR-4: SES identity + Configuration Set, EventBridge Scheduler → `checkin_lambda` with Haiku/RAG personalization per ADR-011, `ses_event_handler` + bounce/complaint SNS topic + SQS DLQs, settings PUT for cadence/pause, CHECKINLOG audit items). ⚠ open decisions: whether SES sandbox suffices for MVP (one verified recipient — likely yes, document rather than request production access), and the default send day/time for the weekly cadence.**
 
-- Last completed: slice 6b — resume agent output UI (FR-5.3/5.4). The `Résumé` tab runs the ADR-037
+- Last completed: slice 7 — chat over your data (FR-6.1). `chat_lambda` now routes a message to
+  entry-parsing **or** grounded Q&A via a third *control-flow* tool, `answer_question`, with
+  `toolChoice=any` **retained** (**ADR-038**). A Q&A turn is route (Haiku) → Titan embed →
+  `rank_by_similarity` top-k **in-Lambda** → synthesis (Haiku, **no tools**); ingestion is
+  unchanged from 2b. Two things worth carrying: **(1) the corpus census.** Semantic top-k is the
+  wrong index for counting — hand a model k entries and it answers "k" — so every synthesis prompt
+  carries counts by `entry_type` over the *whole* corpus, computed in Python. Live proof: top-k
+  returned 8 entries of which 4 were certs, and "how many certifications do I have?" answered **4**.
+  *Let Python count, let the model narrate.* **(2) The IAM widening this slice was supposed to make
+  did not exist.** Chat's `dynamodb:Query` grant was always unconditional on the table ARN, so
+  `ENTRY#` reads were permitted since slice 2; the only real policy delta is Titan `InvokeModel`.
+  §4.2.3's "chat can only touch `CONVO#`" was never enforceable in IAM (one PK per user;
+  `LeadingKeys` scopes the partition key only) and was always an application-code invariant —
+  **a least-privilege boundary IAM cannot express is a code invariant wearing an IAM costume**
+  (arch v2.0 corrects §4.2.3). Injection controls that *are* real and test-pinned: no `toolConfig`
+  on the synthesis call, model-free retrieval, privilege separation across the two calls,
+  answers rendered as text never markdown. Security review found one LOW issue (delimiter
+  defanging covered only `<entry>`, not the outer block tags) — **fixed in-slice**. Measured
+  **~$0.006/Q&A turn**. Deferred: B-011 hybrid retrieval for aggregates (the `intent` field ships
+  reserved), B-012 keep answers plain-text, B-013 full-corpus read weight. Before that: slice 6b —
+  resume agent output UI (FR-5.3/5.4). The `Résumé` tab runs the ADR-037
   async flow end to end: JD input → `POST` `202 {run_id}` → 3s poll with an elapsed counter → iframe
   HTML preview + PDF download + Regenerate. Two of its four slice-start decisions turned out to be
   *backend* work, which is the lesson: **the PDF presign needed a `Content-Disposition: attachment`
