@@ -1,0 +1,5 @@
+# careervault-weasyprint layer (ADR-023 / ADR-018). WeasyPrint + its Python deps (cffi, pydyf,
+# tinycss2, cssselect2, Pillow, fonttools) install as pure-Python/manylinux wheels; the *native*
+# libraries WeasyPrint binds via cffi (Pango and its closure, fontconfig) are added by the Makefile
+# from the AL2023 build container, not pip.
+weasyprint>=66,<67

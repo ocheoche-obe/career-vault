@@ -1,15 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  CareerVault — slices 1–4. Provisions the DynamoDB single table, Cognito User Pool + Hosted UI
-  (ADR-025), a REST API Gateway with a Cognito authorizer, the careervault-shared Lambda layer
-  (ADR-023), settings_lambda (GET /settings), chat_lambda (POST /chat) and career_crud
-  (POST /entries) for conversational entry ingestion (Section 3.1, ADR-031), plus frontend hosting
-  (slice 4): a private S3 site bucket + CloudFront distribution with Origin Access Control on the
-  default *.cloudfront.net domain (ADR-019). Slice 5 adds resume upload bootstrap: a private S3
-  data bucket (uploads/ + resumes/) and resume_upload_parser (presign + parse routes) — a
-  parse-only Haiku transform, no embedding, no DDB writes (ADR-013 / ADR-035).
-  Resume agent / check-ins / SES are intentionally out of scope here.
+  CareerVault (slices 1–6a). DynamoDB single table (RESUMERUN TTL), Cognito Hosted UI (ADR-025),
+  REST API Gateway + Cognito authorizer, careervault-shared + careervault-weasyprint layers
+  (ADR-023). Lambdas: settings, chat, career_crud (entry ingestion + CRUD, Section 3.1), frontend
+  hosting via S3 + CloudFront OAC (ADR-019), resume_upload_parser (ADR-035), and resume_agent —
+  the six-phase Sonnet 5 résumé loop run as an async job (ADR-036 / ADR-037). Check-ins / SES
+  are out of scope here.
 
 Parameters:
   Environment:
@@ -76,6 +73,32 @@ Parameters:
     Description: >
       Titan Text Embeddings v2 model ID (ADR-016 / ADR-024). On-demand, so it is invoked by its
       bare model ID and its IAM grant is a single us-east-1 foundation-model ARN.
+  SonnetInferenceProfileId:
+    Type: String
+    Default: us.anthropic.claude-sonnet-4-6
+    Description: >
+      Cross-region inference profile ID for the resume agent's high-value-reasoning model (ADR-036).
+      Sonnet is INFERENCE_PROFILE-only (no on-demand), so this — not the bare foundation-model ID —
+      is what Converse is called with. Kept in lockstep with SonnetFoundationModelId (the IAM grant).
+      NOTE: ADR-036 chose Sonnet 5, but it is not grantable on this account ("not available for this
+      account", AccessDeniedException — account-tier gated, not a self-serve Model-access toggle). So
+      MVP runs on Sonnet 4-6, the newest *accessible* Sonnet. Flip back to us.anthropic.claude-sonnet-5
+      here + SonnetFoundationModelId if/when access lands (ADR-036 live-access correction).
+  SonnetFoundationModelId:
+    Type: String
+    Default: anthropic.claude-sonnet-4-6
+    Description: >
+      Foundation model behind SonnetInferenceProfileId. Needed separately because the `us.` profile
+      routes across us-east-1/us-east-2/us-west-2, and IAM must grant bedrock:InvokeModel on the
+      foundation-model ARN in each of those regions (ADR-031 pattern, applied to Sonnet per ADR-036).
+  ResumeAgentReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for resume_agent (ADR-036 target, revised to 2 by ADR-037). Same -1
+      sentinel (ADR-030). The agent self-invokes asynchronously (ADR-037), so it needs room for an
+      in-flight worker plus a fresh POST/GET; 2 still bounds parallel runaway Bedrock spend, and the
+      per-run token ceiling (ADR-036) is the primary cost guard.
   AlarmEmail:
     Type: String
     Default: oche.ocheobe@gmail.com
@@ -100,6 +123,7 @@ Conditions:
   HasChatReservedConcurrency: !Not [!Equals [!Ref ChatReservedConcurrency, -1]]
   HasCareerCrudReservedConcurrency: !Not [!Equals [!Ref CareerCrudReservedConcurrency, -1]]
   HasResumeParserReservedConcurrency: !Not [!Equals [!Ref ResumeParserReservedConcurrency, -1]]
+  HasResumeAgentReservedConcurrency: !Not [!Equals [!Ref ResumeAgentReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -147,6 +171,11 @@ Resources:
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       DeletionProtectionEnabled: !If [IsProd, true, false]
+      # RESUMERUN# job/trace items self-expire 30 days after creation (§3.2.5 / ADR-037). Only items
+      # that carry an `expires_at` epoch attribute are ever deleted; career entries have none.
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
       # AWS-managed KMS key (aws/dynamodb) — satisfies NFR-4.2 at no extra cost, no kms:* on roles.
       SSESpecification:
         SSEEnabled: true
@@ -271,6 +300,26 @@ Resources:
       RetentionPolicy: Delete
     Metadata:
       BuildMethod: python3.13
+      BuildArchitecture: arm64
+
+  # ---------------------------------------------------------------------------
+  # WeasyPrint Lambda layer (ADR-023 / ADR-018) — attached ONLY to resume_agent. WeasyPrint + its
+  # native Pango closure + fonts, built by the Makefile inside the AL2023 arm64 build container.
+  # Requires `sam build --use-container` so the shared objects match the Lambda runtime. Slice 6a.
+  # ---------------------------------------------------------------------------
+  WeasyPrintLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub 'careervault-weasyprint-${Environment}'
+      Description: WeasyPrint + Pango/fontconfig native libs + fonts for resume PDF rendering.
+      ContentUri: ./weasyprint-layer/
+      CompatibleRuntimes:
+        - python3.13
+      CompatibleArchitectures:
+        - arm64
+      RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: makefile
       BuildArchitecture: arm64
 
   # ---------------------------------------------------------------------------
@@ -571,6 +620,115 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
+  # Compute — resume_agent (the payoff feature, Section 3.2 / FR-5 / ADR-010 / ADR-036 / ADR-037).
+  #
+  # ONE function, THREE roles (ADR-037): POST /resumes/generate starts an async job (writes a
+  # `pending` RESUMERUN item, self-invokes asynchronously, returns 202); the async worker runs the
+  # six-phase Sonnet loop + renders HTML/PDF (WeasyPrint layer) + finalizes the item; GET
+  # /resumes/{run_id} polls status and presigns fresh download URLs. Résumé runs take 40–120s, far
+  # past API Gateway's 29s ceiling — hence async (ADR-037).
+  #
+  # IAM: Query+GetItem (entries+profile) + PutItem (RESUMERUN trace); S3 Put/Get on resumes/*;
+  # Bedrock Sonnet+Haiku profiles (+regional foundation-model ARNs, ADR-031/036) + Titan; and
+  # lambda:InvokeFunction on its OWN ARN (constructed by name, not GetAtt, to dodge a circular dep).
+  # ---------------------------------------------------------------------------
+  ResumeAgentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-resume-agent-${Environment}'
+      CodeUri: ../backend/functions/resume_agent/
+      Handler: handler.handler
+      # More memory buys proportional CPU for WeasyPrint PDF rendering and the agent's JSON churn.
+      MemorySize: 1536
+      # The async worker runs the bounded loop (240s wall-clock budget, ADR-036) — 300s is the
+      # backstop per §3.2.4. The API-facing POST/GET invocations return in well under a second.
+      Timeout: 300
+      ReservedConcurrentExecutions: !If
+        - HasResumeAgentReservedConcurrency
+        - !Ref ResumeAgentReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+        - !Ref WeasyPrintLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: resume_agent
+          BEDROCK_SONNET_MODEL_ID: !Ref SonnetInferenceProfileId
+          BEDROCK_HAIKU_MODEL_ID: !Ref HaikuInferenceProfileId
+          BEDROCK_TITAN_EMBED_MODEL_ID: !Ref TitanEmbedModelId
+          # Sonnet's structured draft/revise calls run long (a full résumé is a big output). The
+          # shared bedrock_client defaults to a 25s read timeout (fine for Haiku parse turns); give
+          # the agent 120s per call so a normal long generation doesn't trip a socket timeout. The
+          # per-run wall-clock budget (240s, ADR-036) and the 300s Lambda timeout still bound it.
+          BEDROCK_READ_TIMEOUT_SECONDS: "120"
+          DATA_BUCKET_NAME: !Ref DataBucket
+          # WeasyPrint (layer) finds its fonts via fontconfig; its cache must be on a writable path.
+          FONTCONFIG_PATH: /opt/fonts
+          XDG_CACHE_HOME: /tmp
+          HOME: /tmp
+      Policies:
+        - Statement:
+            # Read entries + profile for retrieval; write the RESUMERUN job/trace item. No
+            # ENTRY/PROFILE write — the agent is read-only over user data (§3.2.7).
+            - Effect: Allow
+              Action:
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+              Resource: !GetAtt CareerVaultTable.Arn
+            # Store + read back the generated HTML/PDF. Scoped to resumes/* (never uploads/*).
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource: !Sub '${DataBucket.Arn}/resumes/*'
+            # Async self-invocation (ADR-037). ARN built by name to avoid a self-referential
+            # GetAtt circular dependency.
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:careervault-resume-agent-${Environment}'
+            # Sonnet 5 (ADR-036) + Haiku (Phase 1, ADR-031): both INFERENCE_PROFILE-only — grant the
+            # profile ARN plus the foundation-model ARN in every region the `us.` profile routes to.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${SonnetInferenceProfileId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${SonnetFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${SonnetFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${SonnetFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${HaikuInferenceProfileId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${HaikuFoundationModelId}'
+            # Titan v2 query embedding for search_entries (ADR-016) — on-demand, single regional ARN.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${TitanEmbedModelId}'
+      Events:
+        PostGenerate:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /resumes/generate
+            Method: post
+        GetResumeRun:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /resumes/{run_id}
+            Method: get
+
+  ResumeAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-resume-agent-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
   # Cost & operational guardrails (arch §4.1.4)
   # ---------------------------------------------------------------------------
   # Single SNS topic for all CareerVault alarms; the user's email is subscribed (confirm the
@@ -652,6 +810,25 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref ResumeUploadParserFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  ResumeAgentErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-resume-agent-errors-${Environment}'
+      AlarmDescription: resume_agent errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ResumeAgentFunction
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
