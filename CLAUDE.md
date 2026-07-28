@@ -121,13 +121,27 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
   arch §4.1.4); 14-day CloudWatch log retention.
 - Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4), parameterized per ADR-030
   (template default `-1` = off). The account's Lambda quota was restored to 1000, so the caps are
-  **live** via `samconfig.toml`: chat/career_crud/settings = 5, `resume_upload_parser` = 2.
+  **live** via `samconfig.toml`: chat/career_crud/settings = 5, `resume_upload_parser` = 2,
+  `resume_agent` = 2 (ADR-037 — needs room for an async worker + a fresh POST/GET).
+- **Resume agent = dominant Bedrock cost driver.** A tailored-résumé run is ~70K tokens / **~$0.31**
+  on Sonnet 4-6 (~16 runs/month within $5); the per-run token ceiling is 150K (~$1) + reserved
+  concurrency 2 (ADR-036/037). Sonnet 5 is *not grantable* on this account (`agreement: NOT_AVAILABLE`)
+  — 6a runs on the newest accessible Sonnet, 4-6.
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 6 — resume agent (`resume_agent` Lambda, six-phase bounded loop, WeasyPrint layer, Sonnet via inference profile).**
+**Phase 2 — Implementation (in progress). Next slice: 6b — resume agent output UI (JD input → async poll → HTML preview + PDF download + regenerate, wired to the 6a backend per ADR-037).**
 
-- Last completed: slice 5 — resume upload bootstrap (ADR-035; arch v1.7). Private S3 data bucket
+- Last completed: slice 6a — resume agent backend loop (ADR-036/-037; arch §3.2 corrected). The
+  `resume_agent` Lambda runs the six-phase bounded loop (Haiku analyze → Sonnet 4-6 retrieve/draft/
+  critique/revise → deterministic HTML+PDF finalize) as an **async job** (ADR-037: `POST
+  /resumes/generate` → `202 {run_id}` + self-invoked worker; `GET /resumes/{run_id}` polls,
+  presigns 1h URLs). New: `careervault-weasyprint` layer (Docker/makefile, renders PDF on arm64),
+  RESUMERUN trace items (table TTL), Bedrock Sonnet IAM. **Sonnet 5 ungrantable on this account →
+  runs on Sonnet 4-6** (ADR-036 live-access correction). Measured ~70K tokens / **$0.31** / ~176s
+  per run after tuning (`max_iterations 15→8`, `max_revisions 2→1`). Deployed to dev; async
+  start→poll→**valid PDF** smoke-verified. Retrieval-loop context growth (dominant cost) → backlog
+  B-004. Before that: slice 5 — resume upload bootstrap (ADR-035; arch v1.7). Private S3 data bucket
   (`careervault-data-${Env}-${AccountId}`, `uploads/`+`resumes/`) + `resume_upload_parser` owning
   `POST /uploads/presign` and `POST /uploads/parse` — a **parse-only** Haiku transform (no Titan, no
   DDB grant): presigned PUT → parse to entry candidates → select-all review table → saved through

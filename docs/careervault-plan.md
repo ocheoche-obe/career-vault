@@ -63,7 +63,8 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 3 | Entries dashboard + CRUD completion | FR-3.2, FR-3.3 | ✅ | [#4](https://github.com/ocheoche-obe/career-vault/pull/4) |
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
-| 6 | Resume agent | FR-5 | ⬜ ⚠ | — |
+| 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
+| 6b | Resume agent — output UI | FR-5.3, 5.4 | ⬜ | — |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
@@ -418,36 +419,146 @@ trigger); budget check after (first Bedrock slice since slice 3 — Haiku parse 
 
 ---
 
-## Slice 6 — Resume agent ⬜ ⚠
+## Slice 6 — Resume agent ⚠→ resolved (split 6a / 6b)
 
 **Goal:** The payoff feature — paste a job description, get a tailored resume (text/HTML/PDF)
-built from your logged history. Largest slice; expect to split 6a (backend loop) / 6b (output UI).
+built from your logged history. Largest slice; **split into 6a (backend loop) + 6b (output UI)**
+at slice start (2026-07-21) per the appetite decision.
 
 **FRs:** FR-5.1–5.4.
 
-**Scope — in:** `resume_agent` Lambda with the six-phase bounded loop (arch §3.2: retrieve →
-draft → critique → revise, explicit termination, action/progress tracking, HITL at input/output
-gates only); Sonnet via inference profile; in-Lambda vector retrieval over entry embeddings
-(ADR-016); `careervault-weasyprint` layer (ADR-023, Docker/makefile build); RESUMERUN trace items
-(TTL 30 days); PDF to `resumes/` prefix; JD-input + format-select + download UI (FR-5.3/5.4).
+**Scope — in (whole slice):** `resume_agent` Lambda with the six-phase bounded loop (arch §3.2:
+analyze → retrieve → draft → critique → revise → finalize, explicit termination, action/progress
+tracking, HITL at input/output gates only); Sonnet via inference profile; in-Lambda vector
+retrieval over entry embeddings (ADR-016); `careervault-weasyprint` layer (ADR-023,
+Docker/makefile build); RESUMERUN trace items (TTL 30 days); PDF to `resumes/` prefix; JD-input +
+format-select + download UI (FR-5.3/5.4).
 
 **Scope — out:** email/Drive delivery (v1.1 — in-app download only per ADR-015); named-entity
 verification pass (v1.1).
 
-**Key refs:** arch §3.2 (the whole flow), ADR-009/-010/-015/-016/-017/-018/-023;
-**ADR-031 is the IAM precedent** for the Sonnet model below.
+**Key refs:** arch §3.2 (the whole flow), ADR-009/-010/-015/-016/-017/-018/-023; **ADR-031 is the
+IAM precedent**, **ADR-036** pins the concrete Sonnet model + cost controls for this slice.
 
 **New infra:** `resume_agent` Lambda + route, WeasyPrint layer, Bedrock Sonnet IAM.
 
-**⚠ Decisions:**
-- **New ADR before code:** concrete Sonnet model + inference profile ID. Expect
-  inference-profile-only like Haiku 4.5 (ADR-031); IAM = profile ARN + regional foundation-model
-  ARNs. Also pin the loop's max-iterations / token budget as cost controls.
-- Whether 6a/6b actually split into two PRs — decide at slice start based on appetite.
+**⚠ Decisions:** _(resolved with Oche 2026-07-21 → **ADR-036**, plus two forced live during 6a)_
+- **Sonnet model + inference profile → resolved:** inference-profile-only as ADR-031 predicted;
+  Phase 1 `extract_requirements` stays on Haiku. **Chosen Sonnet 5**, but the first deploy smoke
+  test hit `AccessDenied“sonnet-5 not available for this account”` — **Sonnet 5 is not grantable on
+  this account** (`agreement: NOT_AVAILABLE`, account-tier gated), so 6a runs on **Sonnet 4-6** (the
+  newest accessible Sonnet; same 3-region fan-out, IAM unchanged). ADR-036 live-access correction;
+  flip back if access lands.
+- **Cost controls pinned (ADR-036):** token ceiling **150K (~$1/run)** (amends §3.2.4's 500K);
+  `wall_clock=240s`. Iteration/revision caps **tuned from measured runs** to
+  `max_iterations=8`, `max_revisions=1` (85K→70K tokens, $0.39→$0.31, 230s→176s). **Reserved
+  concurrency = 2** (revised from 1 by **ADR-037** — the async self-invoke needs room for a worker
+  + a fresh POST/GET).
+- **Transport → new decision (ADR-037):** a run is 40–120s, past API Gateway's 29s ceiling, so
+  generation is an **async job** — `POST /resumes/generate` returns `202 {run_id}` + async worker;
+  `GET /resumes/{run_id}` polls. Corrects arch §3.2.1's synchronous depiction.
+- **6a/6b split → resolved: split into two PRs.** 6a = backend loop, API-testable; 6b = output UI.
 
-**Exit criteria:** real JD in → agent completes within its bounded loop against real entries →
-PDF downloads and *looks like a resume*; RESUMERUN trace inspectable; cost-per-run measured and
-noted here (dominant Bedrock cost driver — this number matters for the $5 ceiling).
+---
+
+### Slice 6a — Resume agent backend loop 🔨
+
+**Goal:** `POST /resumes/generate` runs the full six-phase agent server-side and returns
+`{html_url, pdf_url, run_id}` — verifiable end-to-end against the real API before any UI exists.
+
+**FRs:** FR-5.1 (JD/target intake), FR-5.2 (agentic generation).
+
+**Scope — in:** `resume_agent` Lambda + `POST /resumes/generate` route (Cognito authorizer);
+the six-phase loop (arch §3.2) — Phase 1 Haiku `extract_requirements`; Phase 2 Sonnet 5 bounded
+retrieval loop over the four tools (`search_entries`/`get_entry`/`list_skills`/`retrieval_done`)
+reusing the slice-3 `similarity` helper + Titan query embedding; Phases 3–5 draft/critique/revise
+with Pydantic-validated `submit_resume`/`submit_critique`; Phase 6 finalize — Jinja2 → HTML →
+WeasyPrint → PDF to `resumes/<user_id>/<run_id>/`, presigned URLs (1h TTL). Termination/progress
+mechanisms (§3.2.4–3.2.6) with ADR-036 constants; RESUMERUN trace item (TTL 30d, §3.2.5);
+`careervault-weasyprint` layer (ADR-023, Docker/makefile); Bedrock Sonnet IAM (ADR-036) + S3
+`PutObject` on the resume prefix; reserved concurrency 1.
+
+**Scope — out:** all UI (→ 6b); email/Drive delivery (v1.1); named-entity verification (v1.1).
+
+**New infra:** `resume_agent` Lambda + route, WeasyPrint layer, Bedrock Sonnet IAM, S3 resume-prefix
+write grant, reserved-concurrency cap.
+
+**Exit criteria:** real JD → `POST /resumes/generate` completes within the bounded loop against
+real entries → PDF renders and *looks like a resume* (fetched from the presigned URL); RESUMERUN
+trace inspectable in DynamoDB; **cost-per-run + token-per-run measured and noted** (validates the
+150K ceiling and the $5 posture); WeasyPrint layer builds and loads on Lambda arm64; empty-history
+short-circuit (§3.2.6 checkpoint) returns the "add entries first" message. Budget check after.
+
+**Completion notes:** _(wrapped 2026-07-21, [PR #27](https://github.com/ocheoche-obe/career-vault/pull/27))_
+- **Shipped:** `resume_agent` Lambda running the full six-phase loop — Phase 1 Haiku
+  `extract_requirements`; Phase 2 Sonnet bounded retrieval loop (`search_entries` reusing the
+  slice-3 `similarity` helper + a Titan query embed, `get_entry`, `list_skills`, `retrieval_done`);
+  Phase 3 draft + Phase 4 critique + Phase 5 revise (Pydantic-gated `submit_resume`/`submit_critique`
+  with a single validation retry); Phase 6 deterministic finalize (Jinja2 → HTML → WeasyPrint → PDF
+  to `resumes/<user_id>/<run_id>/`). Termination + progress mechanisms (§3.2.4–3.2.6): token/wall-clock
+  guards, dup-call nudge, critique stagnation, phase checkpoints. Shared-layer additions:
+  `pydantic_models/resume.py` (models + the four tool configs) and RESUMERUN ddb helpers; the agent
+  brain (`agent.py`) is invocation-agnostic (a pure function of its inputs).
+- **ADR-037 — async job (new decision, forced live):** a run is 40–120s, past API Gateway's 29s
+  ceiling, so the arch's synchronous §3.2.1 depiction doesn't hold. One Lambda, three roles:
+  `POST /resumes/generate` writes a `pending` RESUMERUN item + self-invokes asynchronously + returns
+  `202 {run_id}`; the async worker runs the agent, renders, uploads, and **overwrites** the item to
+  `completed`/`failed`; `GET /resumes/{run_id}` polls and presigns fresh 1h URLs on read. Reserved
+  concurrency bumped 1→2 (worker + a fresh POST/GET). RESUMERUN doubles as trace (§3.2.5) + job
+  record; table gained a TTL (`expires_at`, 30 days).
+- **ADR-036 live-access correction — Sonnet 5 ungrantable:** the first smoke run failed at the
+  Phase-2 Sonnet call with `AccessDeniedException: anthropic.claude-sonnet-5 is not available for
+  this account`. Not IAM (Phase 1 Haiku succeeded) and not the ordinary Model-access toggle —
+  `get-foundation-model-availability` shows `agreement: NOT_AVAILABLE` (account-tier gated). Probed
+  live: Sonnet **4-6** and 4-5 are accessible, 5 is denied. Switched to **Sonnet 4-6** (newest
+  accessible; identical 3-region fan-out, IAM unchanged) — a two-line param flip, per ADR-036's own
+  "model swap is one line." Saved to memory alongside the Haiku use-case-form gotcha.
+- **Two live bugs the smoke test caught:** (1) `ReadTimeoutError` (a `BotoCoreError`, *not*
+  `ClientError`) on long Sonnet draft calls slipped past `_invoke_with_retry` uncaught → the worker
+  crashed *without* finalizing → item stuck `pending` (and async-retried, doubling spend). Fixed:
+  the shared `bedrock_client` now treats socket timeouts as transient (retry → then a `BedrockError`
+  callers already handle), and the agent's Bedrock read timeout is raised to 120s for long
+  generations. (2) The WeasyPrint layer needed the Pango closure + fonts + `FONTCONFIG_PATH`/
+  `XDG_CACHE_HOME` wiring to render on Lambda arm64 — verified by a real PDF.
+- **Verified (deployed to dev):** 221 unit tests green (59 new). Smoke against real API-shaped
+  events → Haiku + Sonnet 4-6 + Titan + DynamoDB + S3 + WeasyPrint: `202 pending` → async worker →
+  `GET` polls to `completed` → **valid PDF** (PDF-1.7, 24KB) fetched from the presigned URL, a real,
+  tailored, truthful résumé tracing to the user's 13 entries; RESUMERUN trace inspected in DynamoDB
+  (status/agent_status/trace/keys/cost/tokens, `expires_at` set). WeasyPrint layer built via
+  `sam build --use-container` (30 native libs, aarch64 cffi). Security review clean (the async
+  worker's trusted `user_id` is sound — the worker path is unreachable externally and its only
+  invoker extracts identity from the JWT first).
+- **Evaluation vs exit criteria — all met.** Cost/latency measured and **tuned**: first run
+  85K tokens / **$0.39** / ~230s → after tuning `max_iterations 15→8`, `max_revisions 2→1`,
+  **70K tokens / $0.31 / ~176s** (under the 150K ceiling and 240s budget; ~16 runs/month within $5).
+  MTD spend **$0.22**, far under $5. **One thing to improve:** the retrieval loop re-sends its
+  growing message history each iteration — the dominant per-run cost; context compaction is a bigger
+  change → **backlog B-004**. Also routed: shared `_MAX_OUTPUT_TOKENS` per-phase cap → **B-005**.
+- **Process:** added a `PostToolUse`/`PostToolUseFailure` hook (`.claude/check-tests-green.sh`) that
+  blocks any test run that isn't clearly green, and hardened `wrap-slice` step 1 to make the
+  green-suite run an explicit blocking gate (Oche's request — enforce that tests are actually run and
+  pass at wrap).
+
+---
+
+### Slice 6b — Resume agent output UI ⬜
+
+**Goal:** JD-input + HTML preview + format-select + download, wired to `POST /resumes/generate`.
+
+**FRs:** FR-5.3 (HTML preview + PDF download), FR-5.4 (regenerate).
+
+**Scope — in:** JD/target input view; **the async poll flow (ADR-037)** — `POST /resumes/generate`
+→ `202 {run_id}`, then poll `GET /resumes/{run_id}` until `completed`/`failed`, with a
+"generating…" progress state across the ~3-minute run; render the returned HTML preview; Download
+PDF (presigned URL) + Regenerate (fresh run); friendly error states for the `failed` `detail`
+messages the backend already returns; nav tab.
+
+**Key refs:** **ADR-037** (the 202 + poll contract), the `resume_agent` handler's response shapes
+(202 pending / status poll), arch §3.2.1 (with the ADR-037 transport correction).
+
+**Exit criteria:** paste a JD from the deployed frontend → "generating…" → preview renders → PDF
+downloads and looks like a resume → regenerate produces a fresh run; a failed run surfaces the
+friendly message. Frontend-render smoke consideration folded into slice 9.
 
 **Completion notes:** _(filled at wrap)_
 

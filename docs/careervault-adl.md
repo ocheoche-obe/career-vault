@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-21 (slice 5 — ADR-035 added [resume upload & parse flow: presigned upload, synchronous parse, parser is parse-only]; ADR-024 corrected [`resume_upload_parser` does not embed — one embedding site at confirm])
+**Last updated:** 2026-07-21 (slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -66,6 +66,8 @@ Each ADR has:
 | ADR-033 | Semantic duplicate detection at confirm — warn, not block          | Accepted   |
 | ADR-034 | CORS — wildcard allow-origin for the token-auth API                 | Accepted   |
 | ADR-035 | Resume upload & parse flow — presigned upload, sync parse, parse-only | Accepted   |
+| ADR-036 | Resume agent — Sonnet via inference profile + bounded-loop cost controls | Accepted   |
+| ADR-037 | Resume generation is an asynchronous job (invoke + poll), not synchronous | Accepted   |
 
 ---
 
@@ -1135,6 +1137,198 @@ function transforms the object — is provider-neutral: Azure Blob **SAS URL** +
 Storage **signed URL** + Cloud Function. "Keep the expensive/committing step (embedding) at one
 write site and make the parser a pure transform" is an architecture-shape decision that carries
 across all three.
+
+---
+
+## ADR-036: Resume agent — Sonnet 5 via inference profile + bounded-loop cost controls
+
+**Status:** Accepted
+**Date:** 2026-07-21 (slice 6a)
+
+### Context
+Slice 6 (resume agent) is the first code to invoke Claude **Sonnet**, so ADR-009's abstract "use
+Sonnet for high-value reasoning" has to become a concrete, invokable model identifier — exactly as
+ADR-031 did for Haiku in slice 2. The architecture doc (§3.2) names "Claude Sonnet" generically and
+§3.2.4 pins the loop's termination constants. Two things must be nailed down before the agent code
+is written:
+
+1. **Which Sonnet, and how it's invoked.** Probing the live account (`768396678224`, us-east-1)
+   confirmed ADR-031's prediction that "the resume agent will almost certainly hit the same
+   inference-profile-only constraint": every current Sonnet
+   (`anthropic.claude-sonnet-5`, `…-sonnet-4-6`, `…-sonnet-4-5-…`) advertises
+   `inferenceTypesSupported: ["INFERENCE_PROFILE"]` only — **no `ON_DEMAND`**. The system-defined
+   `us.anthropic.claude-sonnet-5` profile is `ACTIVE` and fans out to **us-east-1 / us-east-2 /
+   us-west-2** — the identical three-region shape as Haiku 4.5. So ADR-031's IAM pattern transfers
+   verbatim.
+2. **The runaway-cost ceiling.** §3.2.4 pins `token_budget_ceiling` at **500K cumulative tokens
+   (~$3–4/run at Sonnet pricing)**. That number was written against the original **$10** NFR-1.1.
+   The project has since tightened to a **$5/month effective hard ceiling** (CLAUDE.md), against
+   which a *single* runaway run at $3–4 would nearly consume the month. Expected per-run cost is
+   ~$0.10–0.30, so the catastrophe ceiling has room to come down by ~3× without touching normal runs.
+
+### Decision
+- **Invoke Claude Sonnet 5 through the `us.` cross-region inference profile**
+  (`us.anthropic.claude-sonnet-5`) for every Sonnet call in the agent (Phase 2 retrieval loop,
+  Phase 3 draft, Phase 4 critique, Phase 5 revise). Phase 1 (`extract_requirements`) stays on
+  **Haiku 4.5** per ADR-009/§3.2.2 (cheap decomposition), reusing the existing Haiku profile.
+  The `global.` profile is rejected for the same data-residency + IAM-blast-radius reasons as
+  ADR-031.
+- **IAM grants `bedrock:InvokeModel` on both resource shapes** (following the ADR-031 refinement of
+  §4.2.3):
+  1. the inference-profile ARN
+     `arn:aws:bedrock:us-east-1:<account>:inference-profile/us.anthropic.claude-sonnet-5`, **and**
+  2. the underlying foundation-model ARN in **every** region the `us.` profile routes to —
+     `arn:aws:bedrock:{us-east-1,us-east-2,us-west-2}::foundation-model/anthropic.claude-sonnet-5`.
+  Plus the existing Haiku profile+regional ARNs (Phase 1) and the Titan on-demand ARN (Phase 2
+  `search_entries` embeds the query). Model IDs live in env vars
+  (`BEDROCK_SONNET_MODEL_ID`, alongside the existing `BEDROCK_HAIKU_MODEL_ID` /
+  `BEDROCK_TITAN_EMBED_MODEL_ID`), kept in lockstep with the IAM ARNs.
+- **Tighten the token-budget ceiling to 150K cumulative tokens (~$1/run worst case)**, down from
+  §3.2.4's 500K. This **amends architecture §3.2.4**. Rationale: it sits ~5–10× above the expected
+  ~$0.10–0.30 run yet caps a runaway at ~$1 — one bad run cannot eat the $5 month. `wall_clock_timeout`
+  stays 240 s (Lambda timeout 300 s backstop) and Pydantic double-fail → abort. The iteration/revision
+  caps are **tuned down** from §3.2.4's 15/2 (see the cost-tuning note below). All are env-tunable.
+- **Reserved concurrency = 1** on `resume_agent` (via `samconfig.toml`, per ADR-030's parameterized
+  §4.7.4 guard). It's the single-user, most-expensive-per-invoke Lambda; capping concurrency at 1
+  is a belt-and-suspenders spend guard on top of the token ceiling — parallel runaway invocations
+  can't stack.
+
+### Alternatives considered
+- **Sonnet 4.5 / 4.6 instead of 5.** Also `ACTIVE` and same price tier. Rejected: the resume is
+  *the* payoff feature and ADR-009 explicitly reserves Sonnet for "anything where reasoning quality
+  directly affects user value" — pick the most capable current model. A model swap is a one-line
+  env + IAM change if 5 ever underperforms on cost/latency.
+- **`global.` Sonnet profile.** Better capacity, but routes career-history text to any region and
+  widens the foundation-model grant to all-regions — same rejection as ADR-031.
+- **Keep the 500K ceiling, lean on reserved concurrency alone.** Rejected: concurrency caps *parallel*
+  spend, not *per-run* spend. A single legitimate-looking run that loops pathologically still bills
+  $3–4 under a 500K ceiling. The token ceiling is the per-run guard; concurrency is the parallel
+  guard. Both, tuned to $5, not one.
+
+### Consequences
+- ✅ Uses current-generation Sonnet 5 the way Bedrock intends newer models to be called; ADR-031's
+  inference-profile IAM discipline is reused, not reinvented.
+- ✅ Per-run cost is bounded to ~$1 worst case and ~$0.10–0.30 expected — the $5 ceiling survives
+  even a bad run, and reserved concurrency 1 prevents parallel stacking.
+- ✅ US-only routing keeps data residency predictable and bounds the grant to three named regions.
+- ⚠️ 150K is a *guess* calibrated to pricing, not to observed runs. Slice 6's exit criteria measure
+  real cost-per-run; if a legitimate multi-revision run ever brushes 150K, raise it deliberately
+  (env change) rather than silently — and note it here.
+- ⚠️ Cross-region routing means a call may execute in us-east-2/us-west-2; invocation logs can land
+  outside us-east-1 (same ADR-031 debugging caveat).
+
+### Cross-cloud parallel
+Same "logical model alias fanned across regions for capacity" indirection as ADR-031 — Azure OpenAI
+*deployments*, Vertex AI global/multi-region endpoints. The per-run token-budget guard is likewise
+provider-neutral: every major SDK returns `usage` token counts per call, so a cumulative-sum
+ceiling is portable regardless of who serves the model.
+
+> **Live-access correction (slice 6a, 2026-07-21 — the first deploy smoke test).** The first
+> end-to-end run failed at the Phase 2 Sonnet call with
+> `AccessDeniedException: anthropic.claude-sonnet-5 is not available for this account. … contact AWS
+> Sales`. This is **not** IAM (Phase 1 Haiku succeeded on the same role) and **not** the ordinary
+> "request access in Bedrock → Model access" toggle — the wording is account-tier/allowlist gating,
+> so **Sonnet 5 is not self-serve grantable on account `768396678224` right now.** Probing the live
+> account confirmed **`us.anthropic.claude-sonnet-4-6` and `…-4-5` are both accessible**;
+> `…-sonnet-5` is denied. Per this ADR's own "a model swap is a one-line env + IAM change,"
+> **MVP runs on Sonnet 4-6** — the *newest accessible* Sonnet (newer than the 4-5 alternative that
+> was on the table when the model was chosen), same INFERENCE_PROFILE-only shape and the identical
+> us-east-1/2 + us-west-2 fan-out, so IAM is unchanged. The 150K token ceiling, reserved concurrency,
+> and every other decision here stand. **Revisit:** flip `SonnetInferenceProfileId` /
+> `SonnetFoundationModelId` back to `…-sonnet-5` if that access is ever granted. This is the same
+> class of Bedrock model-access gotcha as the Haiku use-case form (see the project memory).
+
+> **Cost tuning (slice 6a, 2026-07-21 — from the first full runs).** The first successful run on
+> Sonnet 4-6 measured **85K tokens / ~$0.39 / ~230 s** for a 13-entry corpus — functional and under
+> the 150K ceiling, but ~2× the arch's ~$0.10–0.30 estimate and near the 240 s wall-clock budget, so
+> only ~12 runs fit the $5 month. Two observations drove a tune-down of the §3.2.4 iteration/revision
+> caps: (1) agentic retrieval **converged in ~5 iterations** (all 13 entries retrieved) — the 15 cap
+> was never the useful bound; (2) the critique never returned PASS, so **both** revision passes ran
+> and the second changed little. New defaults: **`MAX_RETRIEVAL_ITERATIONS` 15 → 8**,
+> **`MAX_REVISIONS` 2 → 1** (env `AGENT_MAX_RETRIEVAL_ITERATIONS` / `AGENT_MAX_REVISIONS`). These cut
+> the expensive Sonnet round-trips without touching correctness; both remain env-tunable, so raising
+> them back is a config change if quality ever needs the extra passes. The token ceiling (150K) and
+> wall-clock (240 s) are unchanged — they are guards, not the tuning knobs.
+
+---
+
+## ADR-037: Resume generation is an asynchronous job (invoke + poll), not a synchronous request
+
+**Status:** Accepted
+**Date:** 2026-07-21 (slice 6a)
+
+### Context
+Architecture §3.2.1's sequence diagram shows ``POST /resumes/generate`` returning
+``201 {html_url, pdf_url, run_id}`` **synchronously**, and §3.2.2 sets a wall-clock target of "under
+90 seconds." Those two statements are incompatible with the transport: the résumé API is **API
+Gateway REST with a Cognito authorizer**, and API Gateway's **integration timeout maxes at 29
+seconds** (hard by default). A real run — Phase 1 Haiku analysis + a Phase 2 Sonnet retrieval loop +
+Phase 3 draft + Phase 4 critique + up to two Phase 5 revises — is dominated by Sonnet latency and
+realistically takes **40–120 s**. A synchronous call therefore times out at 29 s while the Lambda
+keeps running to completion (paying the full Sonnet cost) and the browser sees a 504.
+
+This is the same sync-vs-async trigger ADR-035 measured its way past for the résumé *parser* (a
+~3.5 s Haiku call, so sync held). The agent blows straight through it. Per the project's
+"correct the doc when live reality contradicts it" principle, the synchronous depiction in §3.2.1 is
+wrong for this transport and is corrected here rather than coded around.
+
+### Decision
+Model résumé generation as an **asynchronous job with a status poll**, using the RESUMERUN item as
+the job record (it already exists as the trace artifact, §3.2.5 — no new entity):
+
+1. **``POST /resumes/generate``** (API-facing, returns in < 3 s): validate the target, run the
+   empty-corpus checkpoint (§3.2.6), mint ``run_id``, write a RESUMERUN item with
+   ``status="pending"``, then **invoke the same Lambda asynchronously** (``InvocationType="Event"``,
+   a worker payload carrying ``job="resume"`` + ids + target) and return **``202 {run_id, status:
+   "pending"}``**.
+2. **Worker invocation** (async, off the API Gateway request path, up to the 300 s Lambda timeout —
+   the §3.2.4 backstop above the 240 s wall-clock budget): run the six-phase loop, render + upload
+   the artifacts, and **overwrite** the RESUMERUN item to ``status="completed"`` (with the S3 keys,
+   trace, tokens, cost, verdict) or ``status="failed"`` (with the partial trace). The one Lambda has
+   two entrypoints, distinguished by whether the event is an API Gateway proxy event or a worker
+   payload.
+3. **``GET /resumes/{run_id}``** (API-facing): read the RESUMERUN item and return its status; when
+   ``completed``, **presign fresh 1-hour GET URLs from the stored S3 keys** on each read (rather than
+   persisting URLs that would expire in the item). The client polls this until terminal.
+
+**IAM:** the function gains ``lambda:InvokeFunction`` on **its own ARN** (constructed by name via
+``!Sub``, not ``!GetAtt``, to avoid a circular dependency). **Reserved concurrency becomes 2** (this
+supersedes ADR-036's "1"): with self-async-invoke there can legitimately be one in-flight worker
+plus a fresh ``POST``/``GET`` at once, and a cap of 1 would throttle the second. Two still bounds
+parallel runaway spend (≤ 2 concurrent runs) — the per-run token ceiling (ADR-036) remains the
+primary cost guard.
+
+### Alternatives considered
+- **AWS Step Functions** orchestrating the phases, API returns ``run_id``, client polls. More
+  "proper" for a long job, but heavier infra (a state machine, ASL definition, extra IAM) and it
+  pulls the agent loop *out* of the Lambda — directly against ADR-010's "own the in-Lambda loop for
+  the learning value." Over-engineered for a single-user MVP. Revisit if the flow grows fan-out or
+  needs durable step-level retries.
+- **Raise the API Gateway "Maximum integration timeout" quota above 29 s.** Increases aren't
+  guaranteed and rarely approach ~120 s; it also keeps a browser blocked on one HTTP call for two
+  minutes and bills the whole run even if the socket drops. Rejected.
+- **Keep it synchronous and force the run under 29 s** (fewer iterations, Haiku-only). Rejected —
+  it guts the very reasoning quality that makes the résumé the payoff feature (ADR-009).
+
+### Consequences
+- ✅ No timeout risk; the run is bounded by the Lambda timeout (300 s) not API Gateway (29 s).
+- ✅ The agent brain (``agent.py``) stays invocation-agnostic — it's a pure function of its inputs,
+  so async is purely a handler/wiring concern; no loop rework.
+- ✅ The RESUMERUN item unifies trace + job status; polling reads are cheap ``GetItem``s, and
+  presign-on-read keeps URLs fresh without storing anything that expires.
+- ✅ The 6b UI gets a natural progress affordance (poll → "generating…" → preview).
+- ⚠️ Two round-trips + polling instead of one call; the client must handle ``pending`` → terminal.
+  Straightforward, and the honest shape for a minute-long job.
+- ⚠️ An async worker that crashes hard (OOM, un-caught) won't update the item; Lambda retries async
+  invocations twice, and the client treats a long-stuck ``pending`` as failed. A visible-timestamp
+  staleness check is a fine 6b/slice-9 refinement.
+
+### Cross-cloud parallel
+The "long job behind a fast API + poll for status" shape is universal: Azure Durable Functions (or a
+Queue-triggered worker + status endpoint), GCP Cloud Tasks / Pub/Sub + a job doc in Firestore. The
+portable lesson is that a synchronous HTTP front door has a timeout ceiling (29 s here, similar
+elsewhere), and any workload that can exceed it belongs behind an async job with its own status
+resource.
 
 ---
 
