@@ -1,6 +1,6 @@
 ---
 name: wrap-slice
-description: End-of-slice checklist for CareerVault — verify tests and deployment, run a security review, bring all canonical docs current (CLAUDE.md phase marker is blocking), commit, push, open the PR, and hand off cleanly.
+description: End-of-slice checklist for CareerVault — verify tests and deployment, run a security review, bring all canonical docs current (CLAUDE.md phase marker is blocking), render the slice explainer, commit, push, open the PR, and hand off cleanly.
 ---
 
 # Wrap up a slice
@@ -50,7 +50,7 @@ Run a general code review on the slice diff — a different lens than the securi
   does **not** block the PR and is **not** chased in this slice — append it to
   [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md) instead (see step 4).
 - Timebox the triage so wrap doesn't turn into a second implementation pass.
-- Note the outcome in the PR body alongside the security-review result (step 6).
+- Note the outcome in the PR body alongside the security-review result (step 7).
 
 ## 4. Bring the docs current (blocking)
 
@@ -74,25 +74,45 @@ Run a general code review on the slice diff — a different lens than the securi
   `done` rows whose closure you're recording in the plan's completion notes.
 - **Memory** — save durable gotchas (account-level constraints, API behaviors that contradict docs) that future sessions need; update `MEMORY.md` index.
 
-## 5. Commit and push
+## 5. Render the slice explainer
+
+CareerVault is an AWS-learning vehicle, not just a shipping project — a slice isn't really
+delivered until Oche can follow how it works. Run the explainer skill on the slice diff:
+
+```
+/explain-diff
+```
+
+- It writes `docs/explanations/YYYY-MM-DD-<slug>.html` (background → intuition → code walkthrough
+  → five-question quiz). **Commit it with the slice** in step 6 — it's part of the project record,
+  and it explains the very diff it ships in.
+- Run it *after* step 4, not before: the explainer cites ADR numbers and the doc corrections the
+  slice forced, so those have to be final first.
+- **Not a blocking gate.** Skip it for a slice with nothing to teach (a docs-only or config-only
+  slice, a dependency bump) — but say so explicitly rather than silently dropping it.
+- The highest-value material is where **live AWS contradicted the architecture doc** and what
+  reality forced. Lead with those; they're why this step exists.
+
+## 6. Commit and push
 
 - Commits follow the existing conventional style (`feat(infra):`, `fix(ddb):`, `docs:`, `test:`, `ci:`, `chore:`), each ending with the Co-Authored-By trailer.
 - Logical commits: infra / backend / tests / docs / ci separated where it's natural, matching the history's grain.
 - Push the slice branch to origin.
 
-## 6. Open the PR
+## 7. Open the PR
 
 ```bash
 gh pr create --base main
 ```
 
-PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), the advisory code-review outcome (fixed in-slice vs. logged to backlog), decisions/ADRs added, doc corrections made. End with the "Generated with Claude Code" footer.
+PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), the advisory code-review outcome (fixed in-slice vs. logged to backlog), decisions/ADRs added, doc corrections made, and a link to the slice explainer from step 5. End with the "Generated with Claude Code" footer.
 
-## 7. Hand off
+## 8. Hand off
 
 Tell the user, explicitly:
 
 - PR URL and what's in it.
+- The path to the slice explainer, so they can read it before merging.
 - The security-review result and any CodeQL/Dependabot alerts the PR will surface.
 - That after they merge, the next `/start-slice` will fast-forward local `main` (or they can `git checkout main && git pull` themselves).
 - Any threads deliberately left open, so they land in the next session's plan rather than being forgotten.

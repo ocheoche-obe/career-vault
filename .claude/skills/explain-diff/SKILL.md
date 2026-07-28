@@ -10,6 +10,10 @@ this explains it, for a reader who wants to learn how the system actually works.
 is an AWS-learning vehicle, so this skill exists to close the loop between "Claude wrote a
 slice" and "I understand the slice."
 
+Runs as **step 5 of `/wrap-slice`** for every slice, after the docs are current and before the
+commit — so the explainer ships in the same PR as the code it explains. It can also be invoked
+on its own for any diff, branch, or PR.
+
 ## 1. Read before you write
 
 The explanation is only worth the accuracy of its details. Before drafting:
