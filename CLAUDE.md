@@ -156,6 +156,9 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
   Bedrock gotchas that used to live here). Read the status board + current slice section at
   session start; update it when a slice wraps.
 - Session rituals: `/start-slice` and `/wrap-slice` (project skills in `.claude/skills/`).
+- Learning artifacts: `/explain-diff` renders an interactive explainer for a slice/PR (background →
+  intuition → code walkthrough → quiz) into `docs/explanations/`. This project is an AWS-learning
+  vehicle; run it on any slice the user wants to understand rather than just merge.
 
 Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.
 
