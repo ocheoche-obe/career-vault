@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ contact.name or contact.email or "Résumé" }}</title>
+  <style>
+    @page {
+      size: Letter;
+      margin: 1.6cm 1.8cm;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.4;
+      color: #1a1a1a;
+      margin: 0;
+    }
+    header { border-bottom: 2px solid #2c3e50; padding-bottom: 8px; margin-bottom: 14px; }
+    header h1 { font-size: 20pt; margin: 0 0 2px; color: #2c3e50; letter-spacing: 0.3px; }
+    .contact { font-size: 9pt; color: #555; }
+    .contact span + span::before { content: " · "; color: #aaa; }
+    section { margin-bottom: 13px; }
+    h2 {
+      font-size: 11pt; text-transform: uppercase; letter-spacing: 1px;
+      color: #2c3e50; border-bottom: 1px solid #d5d5d5;
+      padding-bottom: 2px; margin: 0 0 7px;
+    }
+    .summary { margin: 0; }
+    .item { margin-bottom: 9px; }
+    .item:last-child { margin-bottom: 0; }
+    .item-head { display: flex; justify-content: space-between; align-items: baseline; }
+    .item-title { font-weight: 700; }
+    .item-org { font-weight: 400; color: #333; }
+    .item-dates { font-size: 9pt; color: #666; white-space: nowrap; padding-left: 10px; }
+    .item-sub { font-size: 9pt; color: #666; font-style: italic; margin-bottom: 2px; }
+    ul.bullets { margin: 3px 0 0; padding-left: 16px; }
+    ul.bullets li { margin-bottom: 2px; }
+    .skills { margin: 0; }
+    .cert-line { margin-bottom: 3px; }
+    a { color: #2c3e50; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>{{ contact.name or contact.email or "Résumé" }}</h1>
+    <div class="contact">
+      {% if contact.name and contact.email %}<span>{{ contact.email }}</span>{% endif %}
+      {% if contact.phone %}<span>{{ contact.phone }}</span>{% endif %}
+      {% if contact.location %}<span>{{ contact.location }}</span>{% endif %}
+      {% for label, url in (contact.links or {}).items() %}<span><a href="{{ url }}">{{ label }}</a></span>{% endfor %}
+    </div>
+  </header>
+
+  {% if doc.summary %}
+  <section>
+    <h2>Summary</h2>
+    <p class="summary">{{ doc.summary }}</p>
+  </section>
+  {% endif %}
+
+  {% if doc.skills %}
+  <section>
+    <h2>Skills</h2>
+    <p class="skills">{{ doc.skills | join(" · ") }}</p>
+  </section>
+  {% endif %}
+
+  {% if doc.experience %}
+  <section>
+    <h2>Experience</h2>
+    {% for job in doc.experience %}
+    <div class="item">
+      <div class="item-head">
+        <div><span class="item-title">{{ job.title }}</span>{% if job.employer %}<span class="item-org"> — {{ job.employer }}</span>{% endif %}</div>
+        {% if job.dates %}<div class="item-dates">{{ job.dates }}</div>{% endif %}
+      </div>
+      {% if job.location %}<div class="item-sub">{{ job.location }}</div>{% endif %}
+      {% if job.bullets %}
+      <ul class="bullets">
+        {% for bullet in job.bullets %}<li>{{ bullet }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if doc.projects %}
+  <section>
+    <h2>Projects</h2>
+    {% for project in doc.projects %}
+    <div class="item">
+      <div class="item-head">
+        <div><span class="item-title">{{ project.name }}</span></div>
+      </div>
+      {% if project.description %}<div class="item-sub">{{ project.description }}</div>{% endif %}
+      {% if project.bullets %}
+      <ul class="bullets">
+        {% for bullet in project.bullets %}<li>{{ bullet }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if project.url %}<div class="item-sub"><a href="{{ project.url }}">{{ project.url }}</a></div>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if doc.education %}
+  <section>
+    <h2>Education</h2>
+    {% for ed in doc.education %}
+    <div class="item">
+      <div class="item-head">
+        <div><span class="item-title">{{ ed.degree }}</span>{% if ed.institution %}<span class="item-org"> — {{ ed.institution }}</span>{% endif %}</div>
+        {% if ed.dates %}<div class="item-dates">{{ ed.dates }}</div>{% endif %}
+      </div>
+      {% if ed.details %}
+      <ul class="bullets">
+        {% for detail in ed.details %}<li>{{ detail }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% if doc.certs %}
+  <section>
+    <h2>Certifications</h2>
+    {% for cert in doc.certs %}
+    <div class="cert-line">
+      <span class="item-title">{{ cert.name }}</span>{% if cert.issuer %} — {{ cert.issuer }}{% endif %}{% if cert.date %} <span class="item-dates">({{ cert.date }})</span>{% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+</body>
+</html>

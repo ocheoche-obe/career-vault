@@ -20,6 +20,7 @@ if str(_LAYER_SRC) not in sys.path:
 _ENV_DEFAULTS = {
     "CAREERVAULT_TABLE_NAME": "CareerVaultTable-test",
     "BEDROCK_HAIKU_MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "BEDROCK_SONNET_MODEL_ID": "us.anthropic.claude-sonnet-4-6",
     "BEDROCK_TITAN_EMBED_MODEL_ID": "amazon.titan-embed-text-v2:0",
     "ENVIRONMENT": "test",
     "POWERTOOLS_SERVICE_NAME": "test",

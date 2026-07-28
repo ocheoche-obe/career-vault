@@ -27,7 +27,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 
 from .observability import logger, metrics
 
@@ -94,22 +94,34 @@ def _invoke_with_retry(operation: str, call):
             if code not in _TRANSIENT_ERROR_CODES:
                 logger.exception("Bedrock %s failed permanently", operation, extra={"error_code": code})
                 raise BedrockError(f"Bedrock {operation} failed: {code}") from exc
-
             if attempt == MAX_ATTEMPTS:
                 break
-
-            # Exponential backoff with full jitter — spreads retries so concurrent Lambdas
-            # don't synchronise into a thundering herd against a throttling endpoint.
-            backoff = min(2 ** (attempt - 1), 4) * 0.5
-            time.sleep(random.uniform(0, backoff))
+            _backoff_sleep(attempt)
             logger.warning(
                 "Bedrock %s transient failure; retrying",
                 operation,
                 extra={"error_code": code, "attempt": attempt},
             )
+        except (ReadTimeoutError, ConnectTimeoutError) as exc:
+            # A socket timeout is not a ClientError, so it would otherwise crash the caller
+            # uncaught. It is transient by nature — retry, then surface as a BedrockError so callers
+            # get the one failure type they already handle (this matters for the resume agent, whose
+            # long Sonnet calls are the ones most likely to brush the read timeout).
+            last_error = exc
+            if attempt == MAX_ATTEMPTS:
+                break
+            _backoff_sleep(attempt)
+            logger.warning("Bedrock %s timed out; retrying", operation, extra={"attempt": attempt})
 
     logger.error("Bedrock %s exhausted %d attempts", operation, MAX_ATTEMPTS)
     raise BedrockError(f"Bedrock {operation} failed after {MAX_ATTEMPTS} attempts") from last_error
+
+
+def _backoff_sleep(attempt: int) -> None:
+    """Exponential backoff with full jitter — spreads retries so concurrent Lambdas don't
+    synchronise into a thundering herd against a throttling/slow endpoint."""
+    backoff = min(2 ** (attempt - 1), 4) * 0.5
+    time.sleep(random.uniform(0, backoff))
 
 
 def _record_token_metrics(usage: dict) -> None:

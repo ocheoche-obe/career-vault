@@ -1,0 +1,9 @@
+# resume_agent function dependencies (ADR-023 / Section 5.3).
+#
+# Jinja2 renders the résumé HTML (pure-Python, ARM64-safe — bundled with the function). WeasyPrint
+# is deliberately NOT here: its native system libraries (Pango/Cairo/GDK-PixBuf) can't come from a
+# pip wheel, so it ships in the separate Docker-built careervault-weasyprint layer (ADR-023) and is
+# imported lazily in rendering.py. Everything else — Powertools, Pydantic, the Bedrock client, the
+# DDB helpers, the resume tool schemas — comes from the careervault-shared layer; boto3 is provided
+# by the Lambda runtime.
+jinja2>=3.1.4,<4.0

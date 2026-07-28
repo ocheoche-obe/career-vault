@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slice 6a: teaching CareerVault to write your résumé</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Slice 6a: teaching CareerVault to write your résumé</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">PR #27 · feat/phase2-slice6a-resume-agent-backend · 28 files, +3,150 lines</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#corrections">Where live AWS corrected the docs</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+
+<p>Slice 6a is where CareerVault stops being a filing cabinet and starts being the thing it was
+built for: you paste in a job description, and a few minutes later a tailored r&eacute;sum&eacute;
+PDF is waiting for you. Everything before this slice &mdash; the chat capture, the entries
+dashboard, the r&eacute;sum&eacute; upload bootstrap &mdash; existed to fill the vault. This slice
+spends it.</p>
+
+<p>It is also, by a wide margin, the most intricate thing in the codebase: 3,150 added lines across
+28 files, a new Lambda layer built inside Docker, a new IAM shape, and a control flow that loops
+under three simultaneous budgets. So it's worth building up to it slowly.</p>
+
+<h3>Deep background &mdash; skip if you already know AWS serverless and Bedrock tool use</h3>
+
+<p>Five ideas carry almost all the weight in this slice.</p>
+
+<p><strong>A Lambda function</strong> is a chunk of code AWS runs for you on demand. You don't
+manage a server; you hand AWS a zip file, an entrypoint, a memory size, and a timeout, and it
+invokes your entrypoint whenever something triggers it. Two properties matter here. First, the
+<em>timeout</em> is a hard wall &mdash; CareerVault's r&eacute;sum&eacute; function is configured
+for 300 seconds, and at 300 seconds the execution is killed mid-sentence. Second, a Lambda can be
+invoked <em>synchronously</em> (the caller waits for the return value) or <em>asynchronously</em>
+(AWS accepts the payload, returns immediately, and runs your code detached from the caller). That
+second mode is the hinge this whole slice turns on.</p>
+
+<p><strong>A Lambda layer</strong> is a zip of shared files that AWS mounts into the function's
+filesystem at <code>/opt/</code> before your code runs. CareerVault already had one
+(<code>careervault-shared</code>, mounted at <code>/opt/python/</code>, holding the Pydantic models
+and AWS helpers every function imports). This slice adds a second one, and it's a different animal:
+WeasyPrint, the HTML-to-PDF renderer, needs native C libraries (Pango, Cairo, GDK-PixBuf) compiled
+for the exact CPU architecture and Linux the Lambda runs on. You cannot <code>pip install</code>
+your way there from a Mac. The layer is built inside a Docker container that mimics the Lambda
+runtime, which is why <code>infrastructure/weasyprint-layer/</code> has a <code>Makefile</code>
+rather than just a <code>requirements.txt</code>.</p>
+
+<div class="callout">
+<strong>API Gateway's 29-second ceiling.</strong> CareerVault's HTTP front door is API Gateway
+(REST), which forwards each request to a Lambda and waits for the answer. It will not wait longer
+than <strong>29 seconds</strong>. That number is not a suggestion and, in practice, not
+negotiable. Remember it &mdash; it is the single constraint that reshaped this slice's design.
+</div>
+
+<p><strong>Amazon Bedrock</strong> is AWS's managed API for foundation models. CareerVault talks to
+it through the <em>Converse</em> API, which takes a list of messages and returns the model's reply
+along with a <code>usage</code> block counting input and output tokens. Those token counts are the
+project's cost telemetry, and they matter more here than anywhere else: this is a
+<strong>$5/month</strong> project, and this one feature is the dominant spender.</p>
+
+<p><strong>Tool use</strong> is the idea that makes an "agent" possible. You hand the model a list
+of tools &mdash; each a name, a description, and a JSON Schema for its inputs &mdash; and instead of
+replying with prose, the model can reply with a structured request: <em>call
+<code>search_entries</code> with <code>{"query": "infrastructure as code"}</code></em>. The model
+cannot run anything; it can only ask. Your code executes the tool, appends the result to the
+conversation, and calls the model again. That request/execute/reply cycle, repeated, is the agent
+loop. Converse also lets you <em>force</em> a specific tool via <code>toolChoice</code>, which turns
+tool use into a reliable structured-output mechanism &mdash; the model must answer in the shape of
+your schema.</p>
+
+<p><strong>Embeddings and cosine similarity.</strong> An embedding model (here, Amazon Titan Text
+Embeddings v2) turns a piece of text into a list of ~1,024 numbers positioned so that texts with
+similar meaning land near each other. "Migrated the billing service to Terraform" and
+"infrastructure as code" are not string matches, but their vectors point in nearly the same
+direction. Cosine similarity measures that angle, returning roughly 1.0 for "about the same thing"
+and 0.0 for unrelated. CareerVault embeds every entry when you save it and stores the vector
+<em>on the entry item itself</em>.</p>
+
+<h3>Narrow background &mdash; what slice 6a was handed</h3>
+
+<p>By the end of slice 5, the pieces below already existed. The agent invents almost no new
+infrastructure; it composes what was lying around.</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Browser<br><span style="font-weight:normal">React + Vite</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">API Gateway<br><span style="font-weight:normal">Cognito JWT</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">Lambda</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">DynamoDB<br><span style="font-weight:normal">one table</span></div>
+</div>
+<div class="flow" style="margin-top:.4rem">
+  <div class="box">S3<br><span style="font-weight:normal">uploads/ &middot; resumes/</span></div>
+  <div class="box">Bedrock<br><span style="font-weight:normal">Haiku &middot; Titan</span></div>
+</div>
+</div>
+
+<ul>
+<li><strong>Entries carry their own embeddings.</strong> Every career entry is a DynamoDB item under
+<code>PK = USER#&lt;id&gt;</code>, <code>SK = ENTRY#&lt;ulid&gt;</code>, with an
+<code>embedding</code> attribute written at save time (ADR-024). There is no vector database
+(ADR-028) &mdash; for a single user's career history, reading every entry and scoring it in memory
+costs milliseconds and a handful of read units.</li>
+<li><strong>The similarity math is already shared.</strong>
+<code>backend/shared/python/careervault/similarity.py</code> was written in slice 3 for duplicate
+detection, with a docstring that explicitly reserved a line for "Slice 6 &mdash; resume-agent
+retrieval." The agent imports <code>rank_by_similarity</code> and adds nothing.</li>
+<li><strong>Tool use is not new here either.</strong> <code>chat_lambda</code> has been using a
+forced <code>propose_entry</code> tool since slice 2a to turn chat messages into structured entry
+candidates. Slice 6a's contribution is not "tool use" &mdash; it's tool use as a
+<em>control plane</em>.</li>
+<li><strong>The S3 data bucket already had a <code>resumes/</code> prefix</strong>, created empty by
+slice 5 alongside <code>uploads/</code>. This slice finally puts something in it.</li>
+<li><strong>Only Haiku had ever been called.</strong> ADR-009 reserved Claude Sonnet for "high-value
+reasoning," but until this slice nothing had actually invoked it, so there was no Sonnet model ID
+and no Sonnet IAM grant. ADR-036 exists to nail both down.</li>
+</ul>
+
+
+<h2 id="intuition">Intuition</h2>
+
+<p>Start with the naive version, because it clarifies what the real design is buying. You could
+write this feature in about forty lines: read all of the user's entries, paste them and the job
+description into one enormous prompt, and ask a model for a r&eacute;sum&eacute;. That works, in the
+sense that output appears.</p>
+
+<p>What it doesn't do is any of the things a person actually does when tailoring a
+r&eacute;sum&eacute;. A person reads the job description and works out what it's really asking for.
+They go looking through their history for evidence of each of those things, and they notice when
+they've found nothing for one of them and go hunting differently. They write a draft. Then they
+reread it as if they were the hiring manager, wince, and fix it. The six-phase loop is that
+sequence, made explicit:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">1. Analyze<br><span style="font-weight:normal">Haiku</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">2. Retrieve<br><span style="font-weight:normal">Sonnet, loops</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">3. Draft<br><span style="font-weight:normal">Sonnet</span></div>
+</div>
+<div class="flow" style="margin-top:.5rem">
+  <div class="box">4. Critique<br><span style="font-weight:normal">Sonnet</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">5. Revise<br><span style="font-weight:normal">Sonnet, &le;1&times;</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">6. Finalize<br><span style="font-weight:normal">no LLM</span></div>
+</div>
+</div>
+
+<p>Phases 4 and 5 form a small cycle: critique the draft, revise it, critique again. Phase 6 is
+deliberately outside the intelligence entirely.</p>
+
+<h3>Two kinds of tools, and why that distinction is the whole design</h3>
+
+<p>The agent hands Bedrock two families of tools that look identical on the wire and do completely
+different jobs.</p>
+
+<table>
+<tr><th></th><th>Action tools</th><th>Structured-output tools</th></tr>
+<tr><td><strong>Which</strong></td><td><code>search_entries</code>, <code>get_entry</code>,
+<code>list_skills</code>, <code>retrieval_done</code></td><td><code>extract_requirements</code>,
+<code>submit_resume</code>, <code>submit_critique</code></td></tr>
+<tr><td><strong>toolChoice</strong></td><td><code>auto</code> &mdash; the model decides what to call
+and when to stop</td><td>forced to one named tool &mdash; the model has no choice</td></tr>
+<tr><td><strong>What a call means</strong></td><td>"please run this for me"</td><td>"here is my
+answer, in your schema"</td></tr>
+<tr><td><strong>Who acts</strong></td><td>the Lambda executes it and feeds the result back</td>
+<td>nothing is executed; the payload <em>is</em> the output</td></tr>
+<tr><td><strong>Validation</strong></td><td>loose &mdash; the Lambda reads the few fields it needs
+</td><td>a Pydantic model is the gate</td></tr>
+</table>
+
+<p>That split is what people mean by "tool use as a control plane." The forced tools give you
+structured output you can validate. The auto tools give the model the steering wheel &mdash; it
+decides how many searches to run, whether a snippet is worth expanding, and when it has enough. Your
+code's job stops being "orchestrate the steps" and becomes "offer capabilities and enforce
+limits."</p>
+
+<h3>Retrieval, with toy data</h3>
+
+<p>Suppose the target is <em>"Senior Cloud Engineer &mdash; AWS, infrastructure as code, serverless,
+mentoring."</em> Phase 1 sends it to Haiku (cheap, and this is decomposition, not judgment) with
+<code>extract_requirements</code> forced. Out comes:</p>
+
+<pre><code>{
+  "target_type": "JD",
+  "requirements": ["AWS production experience", "Infrastructure as code",
+                   "Serverless architecture", "Mentoring engineers"],
+  "sub_queries": ["AWS production ownership", "Terraform / CloudFormation work",
+                  "Lambda and event-driven systems", "mentoring and onboarding"]
+}</code></pre>
+
+<div class="callout">
+<strong>Why sub-queries, not one query?</strong> Embedding the whole job description gives you one
+vector that is the <em>average</em> of four different topics &mdash; and an average points somewhere
+none of them are. Four focused vectors each find their own matches. This is query expansion, and
+it's the reason Phase 1 exists as a separate phase at all.
+</div>
+
+<p>Phase 2 hands those to Sonnet with the four action tools and <code>toolChoice: auto</code>. The
+model calls <code>search_entries</code> with the first sub-query. The Lambda embeds that phrase with
+Titan, cosine-scores it against every entry it loaded up front, and returns the top matches as
+compact snippets:</p>
+
+<table>
+<tr><th>entry_id</th><th>type</th><th>title</th><th>similarity</th></tr>
+<tr><td>01HQ…7F</td><td>JOB</td><td>Platform Engineer, Northwind</td><td>0.71</td></tr>
+<tr><td>01HR…2K</td><td>PROJECT</td><td>Terraform migration of billing stack</td><td>0.68</td></tr>
+<tr><td>01HS…9C</td><td>MILESTONE</td><td>Cut deploy time 40 min &rarr; 6 min</td><td>0.55</td></tr>
+</table>
+
+<p>Now the interesting part: the model reads those, notices that the "mentoring" requirement has no
+evidence yet, and issues a search the Lambda never planned &mdash; maybe <em>"onboarding junior
+engineers"</em> or <em>"led a study group"</em>. If a snippet looks central it calls
+<code>get_entry</code> for the full text. When further searching would be redundant it calls
+<code>retrieval_done</code>, and the loop exits. That adaptivity is the entire argument for an agent
+over a pipeline.</p>
+
+<p>Phase 3 then gets the retrieved entries and a blunt instruction: every employer, institution,
+credential, and date must come from these entries; if the material is thin for a requirement, omit
+it rather than invent. That prompt is the primary defense against a r&eacute;sum&eacute; that lies
+about you &mdash; the Pydantic model checks shape, not truth.</p>
+
+<h3>Three budgets, always running</h3>
+
+<p>An unbounded agent is a billing incident. This one runs under three simultaneous limits, plus two
+behavioral guards:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Per-phase caps<br><span style="font-weight:normal">8 retrievals<br>1 revision</span></div>
+  <div class="box">Token ceiling<br><span style="font-weight:normal">150K cumulative<br>&asymp; $1</span></div>
+  <div class="box">Wall clock<br><span style="font-weight:normal">240s<br>(Lambda kills at 300s)</span></div>
+</div>
+<div class="flow" style="margin-top:.5rem">
+  <div class="box fail">Stagnation<br><span style="font-weight:normal">critique repeats itself &rarr; stop</span></div>
+  <div class="box fail">Duplicate nudge<br><span style="font-weight:normal">3rd identical call &rarr; hint</span></div>
+</div>
+</div>
+
+<p>The two red boxes are worth a second look, because they're the ones that address how models
+actually misbehave. A model that has run out of ideas doesn't crash &mdash; it repeats itself. So
+the third time it makes a byte-identical tool call, the Lambda appends a line to the tool
+<em>result</em>: <em>"You have already made this exact call. Use the results you have or try a
+different tool."</em> It's a nudge inside the data, not a block. Similarly, if a second critique
+lists 80% the same missing requirements as the first, revising again is buying nothing, so the loop
+stops and finalizes. Both are cheaper than the alternative: paying Sonnet to fail the same way
+twice.</p>
+
+<h3>The 29-second wall</h3>
+
+<p>A real run takes 40&ndash;120 seconds &mdash; the measured one is about 176. API Gateway hangs up
+at 29. The Lambda behind it doesn't stop when the socket closes; it keeps running and keeps billing,
+and the browser gets a 504 for a r&eacute;sum&eacute; that was successfully generated and then thrown
+away. That is the worst possible failure: full cost, no product.</p>
+
+<p>So generation became an asynchronous job (ADR-037), and the shape is worth internalizing because
+it recurs everywhere in serverless:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">POST /resumes/generate<br><span style="font-weight:normal">&lt; 3s &rarr; 202 {run_id}</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">self-invoke<br><span style="font-weight:normal">InvocationType=Event</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">worker<br><span style="font-weight:normal">up to 300s</span></div>
+</div>
+<div class="flow" style="margin-top:.5rem">
+  <div class="box">GET /resumes/{run_id}<br><span style="font-weight:normal">poll &rarr; pending</span></div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">poll &rarr; pending</div>
+  <div class="arrow">&rarr;</div>
+  <div class="box">completed<br><span style="font-weight:normal">+ presigned URLs</span></div>
+</div>
+</div>
+
+<p>The POST does the fast, cheap work &mdash; validate, check the user actually has entries, write a
+<code>pending</code> record, hand the job off &mdash; and returns a <code>run_id</code>. The worker
+is the <em>same Lambda function</em> invoked asynchronously with a different payload shape; it runs
+detached, bounded only by the 300-second function timeout. When it finishes it overwrites the job
+record with <code>completed</code> or <code>failed</code>. The browser polls GET until one of those
+appears.</p>
+
+<div class="callout">
+<strong>No new entity was needed.</strong> The <code>RESUMERUN#</code> item already existed in the
+architecture as the run <em>trace</em> (what the agent did, what it cost, kept 30 days via a TTL).
+ADR-037 noticed that a trace with a <code>status</code> field <em>is</em> a job record, and reused it.
+Polling is a single <code>GetItem</code>.
+</div>
+
+<h3>Phase 6 is deliberately stupid</h3>
+
+<p>The last phase has no model in it at all. A validated <code>ResumeDocument</code> goes through one
+Jinja2 template to HTML; WeasyPrint turns that HTML into PDF; both go to S3. The preview you see in
+the browser and the PDF you download are the same HTML, so they cannot drift (ADR-018).</p>
+
+<p>One detail rewards attention. Your name, email, and phone are <em>not</em> taken from the model's
+output &mdash; they're read from your profile and passed to the template separately. There is no
+upside to a language model rephrasing your phone number, and considerable downside. Identity is
+deterministic; the writing is the agent's job.</p>
+
+
+<h2 id="corrections">Where live AWS corrected the docs</h2>
+
+<p>This project treats the architecture document as authoritative until live AWS says otherwise, and
+then corrects the document rather than quietly coding around it. Slice 6a produced three such
+corrections, and they're the most instructive part of the diff.</p>
+
+<h3>Sonnet 5 is not grantable on this account</h3>
+
+<p>ADR-036 chose Claude Sonnet 5, reasoning that the r&eacute;sum&eacute; is the payoff feature and
+deserves the most capable model. The first deployed run failed at the Phase 2 call:</p>
+
+<pre><code>AccessDeniedException: anthropic.claude-sonnet-5 is not available for this
+account. ... contact AWS Sales</code></pre>
+
+<p>The diagnosis matters. This was <em>not</em> an IAM problem &mdash; Phase 1 on Haiku had just
+succeeded using the same execution role, which rules out the policy. And it was not the ordinary
+"enable this model" toggle in the Bedrock console; the wording is account-tier gating. Probing the
+account showed <code>us.anthropic.claude-sonnet-4-6</code> and <code>4-5</code> both accessible,
+<code>sonnet-5</code> denied. The ADR had already written its own escape hatch &mdash; "a model swap
+is a one-line env + IAM change" &mdash; so the fix was flipping two CloudFormation parameters to
+Sonnet 4-6, the newest <em>accessible</em> Sonnet. The IAM shape is identical because both models are
+<code>INFERENCE_PROFILE</code>-only with the same three-region fan-out.</p>
+
+<div class="callout">
+<strong>Inference profiles, briefly.</strong> Current Claude models on Bedrock advertise
+<code>inferenceTypesSupported: ["INFERENCE_PROFILE"]</code> and no <code>ON_DEMAND</code>. You don't
+invoke the model ID directly &mdash; you invoke a profile like
+<code>us.anthropic.claude-sonnet-4-6</code> that load-balances across us-east-1, us-east-2, and
+us-west-2. The practical consequence is that IAM must grant <em>two</em> resource shapes: the
+profile ARN, and the underlying foundation-model ARN in <em>every</em> region the profile can route
+to. Grant only the profile and you get a confusing denial from a region you never named.
+</div>
+
+<h3>The architecture's synchronous sequence diagram was wrong</h3>
+
+<p>Architecture &sect;3.2.1 showed <code>POST /resumes/generate</code> returning
+<code>201 {html_url, pdf_url}</code> synchronously, with &sect;3.2.2 targeting "under 90 seconds."
+Those two statements can't both hold behind a 29-second API Gateway integration. ADR-037 corrects the
+document and rejects the tempting workarounds explicitly: Step Functions (heavier infra, and it pulls
+the loop out of the Lambda, defeating ADR-010's stated learning goal), a quota increase (rarely
+approaches 120s, and still blocks a browser for two minutes), and cutting the run under 29 seconds
+(guts the reasoning quality that is the point).</p>
+
+<h3>The loop caps were tuned by measurement, not taste</h3>
+
+<p>The architecture pinned 15 retrieval iterations and 2 revisions. The first successful live run
+measured <strong>85K tokens, ~$0.39, ~230 seconds</strong> on a 13-entry corpus &mdash; functional,
+but roughly twice the estimate, uncomfortably close to the 240-second budget, and only ~12 runs per
+$5 month. Two observations from the trace drove the tune-down: retrieval converged in about five
+iterations (so 15 was never the binding constraint), and the second revision pass never flipped the
+critique verdict. New defaults: <strong>8 iterations, 1 revision</strong>, which brought a run to
+~70K tokens / <strong>$0.31</strong> / ~176 seconds.</p>
+
+<table>
+<tr><th></th><th>Arch &sect;3.2.4 (written)</th><th>ADR-036 (shipped)</th><th>Why</th></tr>
+<tr><td>Token ceiling</td><td>500K (~$3&ndash;4)</td><td>150K (~$1)</td><td>the monthly ceiling
+dropped from $10 to $5; one bad run must not eat the month</td></tr>
+<tr><td>Retrieval iterations</td><td>15</td><td>8</td><td>measured convergence at ~5</td></tr>
+<tr><td>Revisions</td><td>2</td><td>1</td><td>the 2nd pass never changed the verdict</td></tr>
+<tr><td>Reserved concurrency</td><td>&mdash;</td><td>2</td><td>ADR-037: an in-flight worker plus a
+fresh POST/GET must coexist</td></tr>
+</table>
+
+<p>Every one of these lives in an environment variable, so raising them back is a config change, not
+a deploy of new code. Note the asymmetry in the first row: the ceiling is a <em>guard</em> against
+catastrophe, not a tuning knob. The caps are the tuning knobs.</p>
+
+
+<h2 id="code">Code walkthrough</h2>
+
+<p>Read the diff in this order and it tells a story: first the vocabulary the agent thinks in, then
+the brain, then the wiring, then the parts that never think at all.</p>
+
+<h3>1. The contract &mdash; <code>pydantic_models/resume.py</code> (+383)</h3>
+
+<p>Four Pydantic models (<code>RequirementsAnalysis</code>, <code>ResumeDocument</code>,
+<code>Critique</code>, and their nested items) and three functions that build Converse
+<code>toolConfig</code> blocks. The <code>_forced()</code> helper is three lines and does the
+heavy lifting: it emits a config with exactly one tool and <code>toolChoice: {"tool": {"name":
+…}}</code>, which is how "structured output" is spelled in Converse.</p>
+
+<p>Two decisions here are documented in the module docstring and worth understanding:</p>
+
+<ul>
+<li><strong>The JSON schemas are hand-written rather than derived from the Pydantic models</strong>
+&mdash; which is the opposite of what <code>tools.py</code> does for <code>propose_entry</code>. The
+reasoning is a genuine distinction, not inconsistency: <code>propose_entry</code> is a
+<em>shared</em> contract (chat and the upload parser must validate identically, so a single derived
+source is load-bearing), whereas these schemas are agent-only. And <code>ResumeDocument</code> nests
+&mdash; Pydantic renders nesting as <code>$defs</code>/<code>$ref</code>, which is more than you want
+to hand a model. The Pydantic model remains the validation authority, so if the hand-written schema
+drifts, the failure mode is a validation retry, never a bad write.</li>
+<li><strong><code>extra="ignore"</code>, not <code>"forbid"</code>.</strong> A generative payload
+that includes one stray field should drop it, not fail the whole draft.</li>
+</ul>
+
+<h3>2. The brain &mdash; <code>agent.py</code> (+642)</h3>
+
+<p>The module's defining property is stated in its first paragraph: it performs <strong>no</strong>
+DynamoDB writes and <strong>no</strong> S3 or PDF work. It's a pure function of its inputs, which is
+why the unit tests can exercise the whole loop by faking one module (<code>bedrock_client</code>) and
+why making generation asynchronous required no changes to it at all.</p>
+
+<p>Every Bedrock call goes through one wrapper,
+<a href="#"><code>_converse()</code></a>, which is where metering, tracing, and budget enforcement
+live together:</p>
+
+<pre><code>run.cumulative_tokens += in_tok + out_tok
+run.cumulative_cost_usd += _cost(model_id, in_tok, out_tok)
+run.trace.append({...})   # phase, model, stop_reason, tokens, running cost
+_enforce_budget(run)      # &larr; note: AFTER recording</code></pre>
+
+<p>The ordering is deliberate and the docstring calls it out: the call that crosses the ceiling has
+already been paid for and its result is still used. The guard stops the <em>next</em> call. You
+cannot un-spend a token, so the honest design is to let the overshoot happen once and then halt.</p>
+
+<p>The phases then read almost linearly:</p>
+
+<ul>
+<li><code>_analyze()</code> &mdash; one forced Haiku call. If it fails validation, that's the Phase
+1&rarr;2 checkpoint: with no requirements there is nothing to retrieve on, so it aborts rather than
+flailing.</li>
+<li><code>_retrieve()</code> &mdash; the loop. Call Sonnet, append the assistant turn, and if
+<code>stopReason == "tool_use"</code>, execute each requested tool and append the results as a user
+turn. Exits on <code>retrieval_done</code>, on any other stop reason, or on the iteration cap. Note
+the small touch of injecting <code>iterations_remaining</code> into every tool result &mdash; the
+model is told how much rope it has left.</li>
+<li><code>_search_entries()</code> &mdash; embeds the query, ranks the pre-loaded corpus, returns
+300-character snippets. When the Titan call fails it returns
+<code>{"error": "transient_failure", "retry_advised": true}</code> <em>as a tool result</em>. A tool
+failure is data the agent can route around, not an exception that kills the run.</li>
+<li><code>_structured_resume_call()</code> &mdash; shared by draft and revise. Forced
+<code>submit_resume</code>, and on a validation failure it appends the Pydantic error text to the
+conversation and asks for a corrected emission. Twice failing aborts the run.</li>
+<li><code>_critique_revise()</code> &mdash; the small cycle, with four distinct exits: verdict PASS,
+revisions exhausted, stagnation detected, or an uncritiquable response.</li>
+</ul>
+
+<div class="callout">
+<strong>Two asymmetric failure policies.</strong> A double validation failure on
+<code>submit_resume</code> aborts the run &mdash; there is no r&eacute;sum&eacute; without a
+r&eacute;sum&eacute;. A double failure on <code>submit_critique</code> returns <code>None</code>, and
+the loop finalizes the current draft. An un-critiqued r&eacute;sum&eacute; beats no
+r&eacute;sum&eacute;. The severity of a component's failure is a design decision, not a property of
+the component.
+</div>
+
+<p>The bottom of <code>run_agent()</code> is the other half of that philosophy. Four expected
+terminations &mdash; budget, timeout, validation abort, empty retrieval &mdash; are caught and turned
+into a <code>status</code> string on the returned result, with the partial trace attached. Only a
+genuinely unexpected <code>BedrockError</code> propagates. The caller therefore has one uniform thing
+to persist and map to an HTTP response.</p>
+
+<h3>3. The three-hatted handler &mdash; <code>handler.py</code> (+356)</h3>
+
+<p>One Lambda, three roles, and the very first line of <code>handler()</code> is the discriminator:</p>
+
+<pre><code>if isinstance(event, dict) and event.get("job") == _WORKER_JOB:
+    return _run_worker(event)</code></pre>
+
+<p>An API Gateway proxy event never contains <code>{"job": "resume"}</code>, so that single check
+cleanly separates the async worker path from the two HTTP paths. Everything below it is ordinary
+request handling: extract the user ID from the JWT claims (never from the body), branch on method.</p>
+
+<p><code>_start()</code> is worth reading closely for its ordering. It validates the target, then
+runs the empty-corpus check <em>before</em> minting a run or spending anything &mdash; a user with no
+entries gets a 400 and a suggestion, not a $0.31 lesson. Then it writes the <code>pending</code>
+item, self-invokes with <code>InvocationType="Event"</code>, and returns <code>202</code>. If the
+self-invoke itself fails, it flips the record to <code>failed</code> rather than leaving a job
+pending forever.</p>
+
+<p><code>_status()</code> presigns <em>fresh</em> one-hour S3 URLs on every poll from the stored
+keys, rather than persisting URLs in the item. Persisted URLs would expire while the record lives on
+for 30 days; keys don't expire. It also maps failure details to human sentences &mdash;
+<code>budget_exceeded</code> becomes "Generation budget exceeded &mdash; try a more focused
+target."</p>
+
+<h3>4. The parts with no intelligence &mdash; <code>rendering.py</code> (+51) and the template (+139)</h3>
+
+<p>Small, and two details carry all of it. <code>autoescape=True</code> is set unconditionally, with
+a comment explaining why the usual <code>select_autoescape</code> would silently fail here: it keys
+off the file extension, and <code>.j2</code> isn't in its list. Since every value in this template is
+LLM- or user-derived, unconditional escaping is both simpler and safer. And WeasyPrint is imported
+<em>inside</em> <code>render_pdf()</code> rather than at module top, so the module imports cleanly in
+the test environment where the layer's native Pango/Cairo libraries don't exist.</p>
+
+<h3>5. Shared-layer changes &mdash; small, but load-bearing</h3>
+
+<ul>
+<li><strong><code>ddb_helpers.py</code></strong> gains three functions.
+<code>create_resume_run()</code> goes through the SK-prefix-scoped writer with
+<code>attribute_not_exists(SK)</code>; <code>finalize_resume_run()</code> is an unconditional
+overwrite (by definition the item exists) but still asserts the <code>RESUMERUN#</code> prefix in
+code; <code>get_resume_run()</code> is the polling read. That prefix assertion is defense in depth
+&mdash; a bug that constructed the wrong SK cannot silently overwrite an entry.</li>
+<li><strong><code>bedrock_client.py</code></strong> now catches <code>ReadTimeoutError</code> and
+<code>ConnectTimeoutError</code> alongside <code>ClientError</code>. A socket timeout is not a
+<code>ClientError</code>, so previously it would have escaped uncaught &mdash; and the agent's long
+Sonnet generations are exactly the calls most likely to brush a read timeout. The refactor pulls the
+backoff into <code>_backoff_sleep()</code> so both paths share exponential backoff with full
+jitter.</li>
+</ul>
+
+<h3>6. Infrastructure &mdash; <code>template.yaml</code> (+195) and the WeasyPrint layer</h3>
+
+<p>The function gets 1536&nbsp;MB (memory buys proportional CPU, which PDF rendering wants), a
+300-second timeout as the backstop above the 240-second budget, both layers, and a
+<code>BEDROCK_READ_TIMEOUT_SECONDS</code> of 120 &mdash; the shared client's 25-second default is
+right for Haiku parse turns and far too short for a full r&eacute;sum&eacute; generation.</p>
+
+<p>Three environment variables exist purely to keep WeasyPrint happy in a read-only filesystem:
+<code>FONTCONFIG_PATH=/opt/fonts</code>, and <code>XDG_CACHE_HOME</code>/<code>HOME</code> pointed at
+<code>/tmp</code>, the only writable path in a Lambda. These are the sort of thing you discover by
+deploying, not by reading.</p>
+
+<p>The IAM policy is the clearest statement of what the agent is allowed to be. DynamoDB
+<code>Query</code>/<code>GetItem</code>/<code>PutItem</code> but no delete and no entry writes &mdash;
+the agent is read-only over your career data; the only thing it writes is its own run record. S3
+scoped to <code>resumes/*</code>, so it cannot touch <code>uploads/*</code>. And
+<code>lambda:InvokeFunction</code> on its own ARN, constructed with <code>!Sub</code> from the
+function name rather than <code>!GetAtt</code> &mdash; a self-referential <code>GetAtt</code> is a
+CloudFormation circular dependency and the stack won't deploy.</p>
+
+<h3>7. Tests &mdash; five new files, ~800 lines</h3>
+
+<p>Because <code>agent.py</code> is a pure function, <code>test_resume_agent_loop.py</code> can drive
+the entire six-phase loop against a faked <code>bedrock_client</code> &mdash; scripting a sequence of
+responses to assert that <code>retrieval_done</code> exits the loop, that the token ceiling raises,
+that stagnation stops revisions, that the duplicate nudge appears on the third identical call. That
+testability is the payoff for keeping I/O out of the brain, and it's the strongest structural
+argument in the slice.</p>
+
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>POST /resumes/generate calls query_entries(user_id) before it mints a run_id or invokes the worker. Why is that check placed there rather than inside the worker?</strong></p>
+<button class="quiz-opt" data-correct="false">Because the query warms the DynamoDB connection so the worker's later reads are faster.</button>
+<button class="quiz-opt" data-correct="true">So a user with no entries is rejected before any Bedrock spend or job record is created — the failure is free and immediate.</button>
+<button class="quiz-opt" data-correct="false">Because the async worker has no IAM permission to read from DynamoDB.</button>
+<button class="quiz-opt" data-correct="false">Because the worker payload has no JWT, so it cannot determine which user's entries to check.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The tool schemas in resume.py are hand-written JSON, while tools.py derives propose_entry&#x27;s schema from its Pydantic model. What justifies the inconsistency?</strong></p>
+<button class="quiz-opt" data-correct="true">propose_entry is a shared contract two Lambdas must validate identically, whereas these schemas are agent-only and their models nest into $defs/$ref — and Pydantic still gates validity, so schema drift degrades to a retry rather than a bad write.</button>
+<button class="quiz-opt" data-correct="false">Hand-writing keeps the résumé schemas byte-identical to propose_entry's, which the shared validation layer requires.</button>
+<button class="quiz-opt" data-correct="false">Pydantic cannot emit JSON Schema for models that use extra="ignore".</button>
+<button class="quiz-opt" data-correct="false">Bedrock's Converse API rejects any input schema containing $ref, so derivation is impossible for nested models.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The retrieval loop ends — the model called retrieval_done — but run.retrieved_ids is empty, while the user does have 13 entries. What does _retrieve() do?</strong></p>
+<button class="quiz-opt" data-correct="false">Re-runs Phase 2 from the start with the sub-queries issued directly by the Lambda.</button>
+<button class="quiz-opt" data-correct="false">Raises AgentEmptyRetrieval, so the run terminates with status "empty_retrieval".</button>
+<button class="quiz-opt" data-correct="true">Falls back to the entire corpus and continues to the draft phase, logging a warning.</button>
+<button class="quiz-opt" data-correct="false">Proceeds to draft with no entries, relying on the system prompt to produce an empty résumé.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>_converse() calls _enforce_budget() after adding the call&#x27;s tokens to the running total, not before making the call. What does that ordering mean in practice?</strong></p>
+<button class="quiz-opt" data-correct="false">The crossing call's result is discarded, so the tokens are billed but the output is wasted.</button>
+<button class="quiz-opt" data-correct="false">Cumulative tokens can never exceed 150K, because each call is pre-checked against its projected size.</button>
+<button class="quiz-opt" data-correct="true">The call that crosses the 150K ceiling is paid for and its result is still used; the guard prevents the next call from being made.</button>
+<button class="quiz-opt" data-correct="false">The budget is only evaluated at phase boundaries, so a single phase can overshoot without limit.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>ADR-036 set resume_agent&#x27;s reserved concurrency to 1; ADR-037 raised it to 2. What forced the change?</strong></p>
+<button class="quiz-opt" data-correct="true">The function now invokes itself asynchronously, so an in-flight worker plus a fresh POST or GET need two concurrent executions — a cap of 1 would throttle the second.</button>
+<button class="quiz-opt" data-correct="false">WeasyPrint's native libraries need a second execution environment to render HTML and PDF in parallel.</button>
+<button class="quiz-opt" data-correct="false">Lambda requires a minimum reserved concurrency of 2 for any function configured with an async invocation destination.</button>
+<button class="quiz-opt" data-correct="false">Two users must be able to generate résumés simultaneously, which a cap of 1 prevented.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

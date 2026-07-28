@@ -9,8 +9,9 @@ version = 0.1
 #
 # Reserved concurrency (arch §4.7.4, ADR-030) is switched on here rather than in the template so
 # the -1 "off" default still works on accounts whose Lambda concurrency limit has not been raised.
-# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 + 2 reserved leaves
-# 983 unreserved, well above Lambda's 100-unreserved floor.
+# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 + 2 + 2 reserved
+# leaves 981 unreserved, well above Lambda's 100-unreserved floor. (resume_agent = 2 per ADR-037:
+# it self-invokes asynchronously, so it needs room for an in-flight worker plus a fresh POST/GET.)
 
 [default.deploy.parameters]
 stack_name = "careervault-dev"
@@ -27,6 +28,12 @@ parameter_overrides = [
     "ChatReservedConcurrency=5",
     "CareerCrudReservedConcurrency=5",
     "ResumeParserReservedConcurrency=2",
+    "ResumeAgentReservedConcurrency=2",
+    # Sonnet 5 is not grantable on this account (ADR-036 live-access correction); run on the newest
+    # accessible Sonnet. Pinned explicitly — CloudFormation reuses a stack's previous param value for
+    # anything not listed here, so a template-default change alone wouldn't take effect.
+    "SonnetInferenceProfileId=us.anthropic.claude-sonnet-4-6",
+    "SonnetFoundationModelId=anthropic.claude-sonnet-4-6",
 ]
 
 [default.build.parameters]
@@ -51,6 +58,12 @@ parameter_overrides = [
     "ChatReservedConcurrency=5",
     "CareerCrudReservedConcurrency=5",
     "ResumeParserReservedConcurrency=2",
+    "ResumeAgentReservedConcurrency=2",
+    # Sonnet 5 is not grantable on this account (ADR-036 live-access correction); run on the newest
+    # accessible Sonnet. Pinned explicitly — CloudFormation reuses a stack's previous param value for
+    # anything not listed here, so a template-default change alone wouldn't take effect.
+    "SonnetInferenceProfileId=us.anthropic.claude-sonnet-4-6",
+    "SonnetFoundationModelId=anthropic.claude-sonnet-4-6",
 ]
 
 [prod.build.parameters]
