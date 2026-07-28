@@ -64,7 +64,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 4 | Frontend hosting (S3 + CloudFront) | NFR (ADR-019) | ✅ | [#20](https://github.com/ocheoche-obe/career-vault/pull/20) |
 | 5 | Resume upload bootstrap | ADR-013 ingestion path | ✅ | [#25](https://github.com/ocheoche-obe/career-vault/pull/25) |
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
-| 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | — |
+| 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ⬜ ⚠ | — |
 | 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
@@ -591,7 +591,7 @@ friendly message; a mid-run browser reload resumes polling the same `run_id` rat
 it; the `resumes/` lifecycle rule is live on the deployed bucket. Frontend-render smoke
 consideration folded into slice 9.
 
-**Completion notes:** _(wrapped 2026-07-28)_
+**Completion notes:** _(wrapped 2026-07-28, [PR #28](https://github.com/ocheoche-obe/career-vault/pull/28))_
 - **Shipped:** the `Resume` view (`frontend/src/resume/`) — JD/target input, the ADR-037 async poll
   flow (`POST` → `202 {run_id}` → `GET` every 3s to a terminal status), an elapsed-time progress
   state across the ~3-minute run, the HTML preview, Download PDF, Regenerate, and New target; plus a
