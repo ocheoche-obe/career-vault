@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slice 6b: the résumé you can actually see</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Slice 6b: the résumé you can actually see</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">Prepared 2026-07-28 · CareerVault Phase 2, slice 6b — resume agent output UI</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+<p>Slice 6a built an agent that writes résumés. It worked — six phases of Bedrock calls, a real PDF in S3, a trace row in DynamoDB. But nobody could <em>use</em> it, because the only way to start a run was to hand-craft a JSON event and invoke a Lambda from a terminal. Slice 6b is the slice that turns that machine into a button.</p>
+
+<p>That sounds like pure frontend work. It mostly wasn't, and the reason why is the most useful thing in this page.</p>
+
+<h3>Skippable background: the four AWS pieces in play</h3>
+
+<p>If you already know what a presigned URL is, jump to the next heading.</p>
+
+<p><strong>S3</strong> is object storage: you put bytes at a key like <code>resumes/&lt;user_id&gt;/&lt;run_id&gt;/resume.pdf</code> and read them back. CareerVault's data bucket is <em>fully private</em> — no public access, ever. So how does a browser display a PDF that lives in a private bucket?</p>
+
+<p>A <strong>presigned URL</strong> is the answer. The backend, which holds real IAM credentials, computes a signature over "a GET, for this exact key, in this exact bucket, expiring in one hour" and appends it to the URL as query parameters. Anyone holding that URL can perform <em>that one operation</em> until it expires. It is a capability token minted from IAM permissions the browser never sees. Azure calls the same idea a SAS token; GCP calls it a signed URL.</p>
+
+<p><strong>CORS</strong> (Cross-Origin Resource Sharing) is a browser rule, not a server rule. When JavaScript on <code>d2qzo95316tvzl.cloudfront.net</code> tries to <code>fetch()</code> something from <code>s3.amazonaws.com</code>, the browser refuses to hand the response back to the script unless the server explicitly opts in with CORS headers. Crucially, this restriction applies to <em>scripted reads</em>, not to navigation — which turns out to matter enormously below.</p>
+
+<p><strong>API Gateway</strong> fronts the Lambdas and enforces a hard 29-second integration timeout. A résumé run takes about three minutes. That mismatch is why slice 6a ended with ADR-037: generation is an <em>asynchronous job</em>. <code>POST /resumes/generate</code> writes a <code>pending</code> row, kicks off a background worker, and immediately returns <code>202 {run_id}</code>. <code>GET /resumes/{run_id}</code> is polled until the row says <code>completed</code> or <code>failed</code>.</p>
+
+<h3>The narrow background: what 6a left on the table</h3>
+
+<p>So 6b inherits a working contract and needs to build a UI around it. The plan doc, written months earlier, scoped it as "JD input, poll, preview, download, regenerate." Four decisions surfaced in the first hour of reading the <em>deployed</em> 6a code — and two of them turned out to live in the backend, not the frontend.</p>
+
+<div class="callout"><strong>The pattern worth internalizing:</strong> a UI slice that sits on top of a real cloud backend is rarely pure frontend. The browser has rules (CORS, cross-origin download semantics) that the backend must accommodate, and those rules only reveal themselves when you try to render something real.</div>
+
+<h2 id="intuition">Intuition</h2>
+<p>Let's walk the whole flow with toy data, then look at the two places where the browser forced the backend's hand.</p>
+
+<h3>The happy path</h3>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Browser<br><small>paste JD</small></div>
+  <div>→</div>
+  <div class="box">API GW<br><small>POST /resumes/generate</small></div>
+  <div>→</div>
+  <div class="box">Lambda<br><small>write pending row<br>self-invoke worker</small></div>
+</div>
+<p style="text-align:center;margin:.8rem 0"><small>returns <code>202 {"run_id": "01KY3J6H…"}</code> in ~300ms</small></p>
+<div class="flow">
+  <div class="box">Browser<br><small>poll every 3s</small></div>
+  <div>→</div>
+  <div class="box">GET /resumes/01KY3J6H…</div>
+  <div>→</div>
+  <div class="box">DynamoDB<br><small>status?</small></div>
+</div>
+<p style="text-align:center;margin:.8rem 0"><small><code>pending</code> … <code>pending</code> … (~59 times) … <code>completed</code> + two presigned URLs</small></p>
+<div class="flow">
+  <div class="box">iframe<br><small>renders html_url</small></div>
+  <div class="box">Download PDF<br><small>pdf_url</small></div>
+</div>
+</div>
+
+<p>Meanwhile, invisible to the browser, the worker Lambda is running the six-phase agent: Haiku extracts requirements from the JD, Sonnet retrieves relevant entries, drafts, critiques its own draft, revises once, and then a deterministic Jinja2 + WeasyPrint pass renders HTML and PDF into S3.</p>
+
+<h3>Wrinkle 1: the preview that CORS would have blocked</h3>
+
+<p>The obvious way to show the HTML is to fetch it and inject it:</p>
+
+<pre><code>const html = await fetch(run.html_url).then(r =&gt; r.text());  // ✗
+&lt;iframe srcdoc={html} /&gt;</code></pre>
+
+<p>This fails. The data bucket's CORS configuration allows exactly one method — <code>PUT</code> — because slice 5 only ever needed the browser to upload a résumé. A scripted <code>GET</code> from a different origin gets blocked by the browser before the script sees a single byte.</p>
+
+<p>You could add a <code>GET</code> rule to the bucket. Or you could notice that <strong>an iframe's <code>src</code> is a navigation, not a fetch</strong> — and navigations were never subject to CORS:</p>
+
+<pre><code>&lt;iframe src={run.html_url} sandbox="" /&gt;   {/* ✓ zero infra change */}</code></pre>
+
+<div class="callout">This is also the <em>safer</em> option, which is a pleasant coincidence rather than a lucky one. <code>srcdoc</code> content inherits the embedding page's origin, so agent-written HTML would run inside the app's security context. An <code>src</code> to S3 is a genuinely foreign origin, and <code>sandbox=""</code> (which withholds <code>allow-scripts</code>) means no script in that document runs at all. Combined with Jinja2's <code>autoescape=True</code> on the server, agent-generated markup is defended three independent ways.</div>
+
+<h3>Wrinkle 2: the download button that didn't download</h3>
+
+<p>HTML has an attribute that seems purpose-built for this:</p>
+
+<pre><code>&lt;a href={run.pdf_url} download&gt;Download PDF&lt;/a&gt;</code></pre>
+
+<p>The <code>download</code> attribute is <strong>silently ignored when the href points at a different origin</strong>. It's a deliberate anti-abuse rule: otherwise any page could quietly stamp arbitrary filenames onto files pulled from sites it doesn't control. The result is that the button <em>looks</em> right and behaves wrong — the PDF opens in a browser tab instead of landing in the Downloads folder.</p>
+
+<p>Since the browser won't decide, the <em>server</em> has to. S3 lets a presigned URL carry response-header overrides, and the signature covers them, so they can't be tampered with:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Lambda signs<br><small>ResponseContentDisposition =<br>attachment; filename="resume-01KY3J6H.pdf"</small></div>
+  <div>→</div>
+  <div class="box">S3 responds<br><small>Content-Disposition:<br>attachment; …</small></div>
+  <div>→</div>
+  <div class="box">Browser saves<br><small>not renders</small></div>
+</div>
+</div>
+
+<p>One parameter in a Python dict, and the button does what it says.</p>
+
+<h3>Wrinkle 3: a run costs money and doesn't care if you're watching</h3>
+
+<p>Here is the mental model that makes the third decision obvious. The run lives on the <em>server</em>. The browser is a spectator. So consider a user who hits Generate, waits 40 seconds, and reloads the page:</p>
+
+<table>
+  <tr><th></th><th><code>run_id</code> in component state</th><th><code>run_id</code> in sessionStorage</th></tr>
+  <tr><td>After reload</td><td>Gone. UI back to an empty form.</td><td>Restored. Polling resumes.</td></tr>
+  <tr><td>The run itself</td><td>Still running. Still costing $0.31. Completes into a row nobody will ever read.</td><td>Collected normally.</td></tr>
+  <tr><td>User's likely next act</td><td>Click Generate again → <strong>$0.62 spent, one résumé received</strong></td><td>Waits ~2 more minutes</td></tr>
+</table>
+
+<p>Against a $5/month ceiling, orphaning paid runs is a real defect, not a polish item. Three lines of <code>sessionStorage</code> fix it.</p>
+
+<div class="callout"><strong>The same reasoning caught a second bug.</strong> If a double-click fires two <code>POST</code>s before the first response lands, you get two independent runs — and the second <code>run_id</code> overwrites the first in storage, orphaning a paid run <em>and</em> charging twice. Both buttons now guard on a <code>starting</code> flag.</div>
+
+<h2 id="code">Code walkthrough</h2>
+<p>Roughly 400 lines, in four groups. The story runs backend → frontend, because the backend changes are what make the frontend possible.</p>
+
+<h3>1. The presign learns about attachments</h3>
+
+<p><a href="backend/functions/resume_agent/handler.py#L277">backend/functions/resume_agent/handler.py:277</a></p>
+
+<pre><code>def _presign_get(key: str, *, download_as: str | None = None) -&gt; str:
+    params = {"Bucket": os.environ["DATA_BUCKET_NAME"], "Key": key}
+    if download_as:
+        params["ResponseContentDisposition"] = f'attachment; filename="{download_as}"'
+    return _s3().generate_presigned_url("get_object", Params=params,
+                                        ExpiresIn=_PRESIGN_EXPIRY_SECONDS)</code></pre>
+
+<p>And at the one call site that wants it (<a href="backend/functions/resume_agent/handler.py#L308">handler.py:308</a>):</p>
+
+<pre><code>"html_url": _presign_get(item["html_key"]),                                  # inline → iframe
+"pdf_url":  _presign_get(item["pdf_key"], download_as=f"resume-{run_id}.pdf"),  # attachment</code></pre>
+
+<p>Note that the HTML deliberately does <em>not</em> get a disposition — it must stay inline so the iframe can render it. The two artifacts want opposite behaviours from the same bucket, and the presign is where that divergence lives.</p>
+
+<p>A security note worth understanding rather than memorizing: <code>run_id</code> arrives from the URL path, so a user controls what lands inside that <code>filename="…"</code> string. It isn't exploitable, because the code only reaches the presign after <code>get_resume_run(user_id, run_id)</code> returns a stored row, and rows only exist under server-minted ULIDs. But the guardrail is <em>existence-checking</em>, not format-validation — worth remembering if a future change ever lets a client name its own run.</p>
+
+<h3>2. A lifecycle rule, and an ADR that couldn't be implemented</h3>
+
+<p><a href="infrastructure/template.yaml#L549">infrastructure/template.yaml:549</a></p>
+
+<pre><code>- Id: ExpireGeneratedResumes
+  Status: Enabled
+  Prefix: resumes/
+  ExpirationInDays: 30</code></pre>
+
+<p>Four lines, but they required amending <strong>ADR-015</strong>, which had said: <em>keep the most recent generation indefinitely; older generations expire after 7 days</em>. Writing the rule revealed that sentence is <strong>not expressible</strong>. S3 lifecycle rules filter on prefix, tag, size, and age — there is no "except the newest object" predicate. Honouring it literally would mean re-tagging the previous run's objects on every generation, with a silent failure mode (a missed re-tag keeps objects forever).</p>
+
+<p>Worse, 7 days would have contradicted <strong>ADR-037</strong>, which gave each run a RESUMERUN row with a 30-day DynamoDB TTL. The row would have outlived its own artifacts by three weeks, and <code>GET /resumes/{run_id}</code> would cheerfully return <code>200</code> with presigned URLs pointing at deleted objects. A flat 30 days makes the record and its bytes expire together.</p>
+
+<div class="callout"><strong>This is the recurring lesson of the whole project:</strong> a decision written at design time can be internally reasonable and still be unimplementable on the actual platform. The fix isn't to quietly code something different — it's to amend the ADR with the reasoning, so the next reader learns why.</div>
+
+<h3>3. The typed async client</h3>
+
+<p><a href="frontend/src/lib/api.ts#L211">frontend/src/lib/api.ts:211</a> adds <code>startResumeRun</code> and <code>getResumeRun</code>. The interesting design choice is in the failure branch:</p>
+
+<pre><code>if (b.status === "failed") {
+  return { status: "failed", runId, message: b.message as string };
+}</code></pre>
+
+<p>The backend already maps seven internal <code>detail</code> codes (<code>budget_exceeded</code>, <code>timeout</code>, <code>render_failed</code>, …) to user-facing sentences. The client passes the sentence straight through rather than keeping a second copy of that vocabulary — so adding a failure mode server-side never requires a matching frontend change.</p>
+
+<h3>4. The view: a state machine with a cancellable poll</h3>
+
+<p><a href="frontend/src/resume/Resume.tsx#L57">frontend/src/resume/Resume.tsx:57</a> models five phases explicitly:</p>
+
+<pre><code>type Stage =
+  | { phase: "idle" }
+  | { phase: "generating"; runId: string; startedAt: number }
+  | { phase: "done"; run: … }
+  | { phase: "failed"; message: string }
+  | { phase: "abandoned"; runId: string };</code></pre>
+
+<p>The polling effect (<a href="frontend/src/resume/Resume.tsx#L78">Resume.tsx:78</a>) is a <code>setTimeout</code> chain rather than a <code>setInterval</code> — so a slow response can never cause two in-flight polls to overlap — with a <code>cancelled</code> flag closed over by the cleanup function, so unmounting mid-run stops the chain rather than calling <code>setState</code> on a dead component.</p>
+
+<p>Two constants encode real infrastructure limits:</p>
+
+<table>
+  <tr><th>Constant</th><th>Value</th><th>Why that number</th></tr>
+  <tr><td><code>POLL_INTERVAL_MS</code></td><td>3,000</td><td>Keeps the elapsed counter honest across a ~176s wait; ~59 polls per run, each a cheap GetItem (the <code>pending</code> branch doesn't presign).</td></tr>
+  <tr><td><code>POLL_CEILING_MS</code></td><td>330,000</td><td>Sits just past the Lambda's 300s timeout. If the worker is <em>killed</em> mid-run it never writes a terminal status, so the row stays <code>pending</code> forever — and a poll with no ceiling would spin forever with it.</td></tr>
+</table>
+
+<p>That second one is the subtle piece. The agent self-terminates at a 240s wall-clock budget, well inside the Lambda's 300s. The ceiling exists for the case where that budget <em>doesn't</em> save you — a native hang in WeasyPrint, say — and the runtime kills the process with no chance to write <code>failed</code>. The <code>abandoned</code> phase is the honest UI for "we stopped watching; it may still finish."</p>
+
+<h3>What the docs had to admit</h3>
+
+<p>Architecture §3.2.2 claimed a résumé run targets <em>under 90 seconds</em>. Measured reality is ~176s (82,867 tokens, $0.35 for a run that used its revision). The 90-second figure was written before six sequential Bedrock round-trips existed to measure — and it is load-bearing, not cosmetic: 176s is roughly 6× API Gateway's 29s ceiling, which is <em>why</em> generation is async at all, and it's what every constant in this slice's UI is dimensioned around. Corrected in arch v1.9.</p>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>The résumé preview uses &lt;code&gt;&amp;lt;iframe src={html_url}&amp;gt;&lt;/code&gt; instead of fetching the HTML and passing it to &lt;code&gt;srcdoc&lt;/code&gt;. What would have broken with the fetch approach?</strong></p>
+<button class="quiz-opt" data-correct="true">The browser would block the cross-origin fetch, because the data bucket's CORS configuration only allows PUT — an iframe's src is a navigation, which CORS doesn't govern.</button>
+<button class="quiz-opt" data-correct="false">WeasyPrint's print CSS cannot be rendered inside a srcdoc iframe, only via a real document load.</button>
+<button class="quiz-opt" data-correct="false">The fetch would have required the Cognito ID token, which S3 does not accept as an authorization header.</button>
+<button class="quiz-opt" data-correct="false">The presigned URL would have expired before the fetch completed, since presigned GETs are single-use.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why did the PDF download need a &lt;code&gt;ResponseContentDisposition&lt;/code&gt; on the presigned URL rather than a &lt;code&gt;download&lt;/code&gt; attribute on the link?</strong></p>
+<button class="quiz-opt" data-correct="false">The download attribute doesn't work on URLs containing query parameters, which every presigned URL has.</button>
+<button class="quiz-opt" data-correct="true">The download attribute is ignored for cross-origin URLs, so only the server can force save-to-disk behaviour.</button>
+<button class="quiz-opt" data-correct="false">S3 strips the Content-Type header from presigned responses, so the browser can't tell it's a PDF.</button>
+<button class="quiz-opt" data-correct="false">React's JSX does not support boolean HTML attributes like download without an explicit value.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>ADR-015 originally said &quot;keep the most recent generation indefinitely; older generations expire after 7 days.&quot; Why was it amended to a flat 30 days?</strong></p>
+<button class="quiz-opt" data-correct="false">The 7-day rule would have exceeded the $5/month ceiling because of the extra storage-class transition charges.</button>
+<button class="quiz-opt" data-correct="false">DynamoDB TTL cannot be configured for less than 30 days, so the S3 rule had to match it.</button>
+<button class="quiz-opt" data-correct="false">S3 enforces a 30-day minimum before objects in the Standard storage class are eligible for expiration.</button>
+<button class="quiz-opt" data-correct="true">S3 lifecycle rules have no "except the newest object" predicate, and 7 days would have left 30-day RESUMERUN rows presigning URLs to already-deleted objects.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why is the active &lt;code&gt;run_id&lt;/code&gt; stored in &lt;code&gt;sessionStorage&lt;/code&gt; rather than only in React component state?</strong></p>
+<button class="quiz-opt" data-correct="false">sessionStorage is needed so the Cognito ID token stays valid across the length of the run.</button>
+<button class="quiz-opt" data-correct="false">The poll requires the run_id to be readable synchronously before the first render, which useState cannot provide.</button>
+<button class="quiz-opt" data-correct="true">The run continues on the server regardless of the browser, so losing the id on reload orphans a run that still costs ~$0.31 and invites the user to pay for a second one.</button>
+<button class="quiz-opt" data-correct="false">React state cannot hold values across the ~3-minute poll because effects are unmounted during long waits.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The client gives up polling at 330 seconds. What specific failure is that ceiling defending against?</strong></p>
+<button class="quiz-opt" data-correct="false">The presigned URLs expire after 330 seconds, so polling past that point would return unusable links.</button>
+<button class="quiz-opt" data-correct="false">The agent's 240s wall-clock budget plus the 90s architectural target sums to 330s.</button>
+<button class="quiz-opt" data-correct="false">API Gateway's 29s integration timeout compounds across repeated polls until the connection is refused.</button>
+<button class="quiz-opt" data-correct="true">A worker killed by the 300s Lambda timeout never writes a terminal status, so the row stays pending forever and an uncapped poll would spin forever with it.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>
