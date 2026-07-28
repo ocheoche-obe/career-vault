@@ -9,6 +9,30 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/check-tests-green.sh\"",
+            "statusMessage": "Verifying tests came out green"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/check-tests-green.sh\"",
+            "statusMessage": "Verifying tests came out green"
+          }
+        ]
+      }
     ]
   }
 }

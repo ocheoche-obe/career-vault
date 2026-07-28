@@ -9,7 +9,14 @@ Run these steps in order. The docs step is blocking: a slice is not done until t
 
 ## 1. Verify the work
 
-- Unit tests green: `python -m pytest tests/unit -q` (and `cd frontend && npm run build && npm run lint` if the slice touched the frontend — CI runs both `build` *and* `lint`, so run both locally).
+- **Run the unit suite and confirm it is green — this is a blocking gate, do it first.** Run
+  `./scripts/run-tests.sh` (the canonical runner — it builds the throwaway venv with the right deps;
+  a bare `python -m pytest` can miss them). "Green" means the pytest summary line shows **only
+  `N passed`** — no `failed`, no `error`, no collection error, not "no tests ran". If it is not
+  cleanly green, stop and fix the code until it is; do not proceed to later steps on red or an
+  unclear result. (A `PostToolUse` hook — `.claude/check-tests-green.sh` — enforces this: any test
+  run that isn't clearly green blocks with feedback, so a red result can't be waved through.) If the
+  slice touched the frontend, also run `cd frontend && npm run build && npm run lint` (CI runs both).
 - If the slice changed deployed behavior, confirm it was actually deployed to dev and smoke-tested end-to-end (real API Gateway → Lambda → downstream, not just unit tests). If smoke testing didn't happen, say so plainly — do not mark the slice complete.
 - **Assert the AWS account before any deploy/verify command** — CareerVault shares an SSO login with a second project in a separate account:
 
