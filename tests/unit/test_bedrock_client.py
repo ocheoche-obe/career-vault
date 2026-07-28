@@ -102,6 +102,25 @@ def test_transient_error_is_bounded_at_max_attempts(fake_client):
     assert len(fake.converse_calls) == MAX_ATTEMPTS == 3
 
 
+def test_read_timeout_is_retried_then_succeeds(fake_client):
+    # A socket read timeout is a BotoCoreError, not a ClientError — it must still be caught and
+    # retried (the resume agent's long Sonnet calls are the ones that brush the read timeout).
+    from botocore.exceptions import ReadTimeoutError
+
+    fake = fake_client(converse_results=[ReadTimeoutError(endpoint_url="x"), OK_RESPONSE])
+    assert converse(MESSAGES)["stopReason"] == "end_turn"
+    assert len(fake.converse_calls) == 2
+
+
+def test_read_timeout_exhausted_raises_bedrock_error(fake_client):
+    from botocore.exceptions import ReadTimeoutError
+
+    fake = fake_client(converse_results=[ReadTimeoutError(endpoint_url="x")] * MAX_ATTEMPTS)
+    with pytest.raises(BedrockError):
+        converse(MESSAGES)
+    assert len(fake.converse_calls) == MAX_ATTEMPTS  # surfaced as the one failure type callers handle
+
+
 def test_permanent_error_is_not_retried(fake_client):
     fake = fake_client(converse_results=[_client_error("AccessDeniedException")])
     with pytest.raises(BedrockError):
