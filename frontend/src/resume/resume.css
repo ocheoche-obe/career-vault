@@ -1,0 +1,158 @@
+/* Résumé generation + preview — theme-aware via the CSS custom properties in index.css.
+   Mirrors the upload/review visual language: dashed panel, accent primary, neutral secondary. */
+
+.resume {
+  width: min(720px, 100%);
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The preview needs more room than the input flow does. */
+.resume-wide {
+  width: min(980px, 100%);
+}
+
+.resume-panel {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.resume-panel h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-h);
+}
+.resume-lead {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.5;
+  max-width: 56ch;
+}
+
+/* ---- Target input ---- */
+.resume-target {
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 180px;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+}
+.resume-target:focus {
+  outline: none;
+  border-color: var(--accent-border);
+}
+
+/* ---- Generating ---- */
+.resume-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--accent);
+  font-size: 14px;
+}
+.resume-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-border);
+  border-top-color: var(--accent);
+  animation: resume-spin 0.9s linear infinite;
+}
+@keyframes resume-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-spinner {
+    animation: none;
+  }
+}
+.resume-runid {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---- Result ---- */
+.resume-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.resume-result-head h2 {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-h);
+}
+.resume-meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--text);
+}
+.resume-preview {
+  width: 100%;
+  height: 78vh;
+  min-height: 520px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff; /* the résumé is print-styled — always render it on paper white */
+}
+
+.resume-note {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-h);
+}
+.resume-note.error p {
+  margin: 0;
+  color: crimson;
+}
+
+/* ---- Buttons (accent primary / neutral secondary, matching review + chat) ---- */
+.resume-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.resume button,
+.resume .button {
+  font: inherit;
+  font-size: 14px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+.resume button.secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--text-h);
+}
+.resume button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

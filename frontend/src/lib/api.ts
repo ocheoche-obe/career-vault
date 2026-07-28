@@ -207,3 +207,80 @@ export async function parseUpload(idToken: string, key: string): Promise<ParseRe
   }
   return { status: "failed", message: (b.message as string) ?? `POST /uploads/parse → ${res.status}` };
 }
+
+/**
+ * Résumé generation (slice 6b, FR-5.3/5.4) — the ADR-037 async job contract.
+ *
+ * A run takes ~3 minutes, well past API Gateway's 29s ceiling, so generation is never a single
+ * request: `POST /resumes/generate` returns `202 {run_id}` and kicks off a worker, then
+ * `GET /resumes/{run_id}` is polled until it reports `completed` or `failed`. Both URLs on a
+ * completed run are freshly presigned per poll (1h TTL), so they are read at use time, not cached.
+ */
+
+/** The backend's own character ceiling on `target` — mirrored to fail fast before a round trip. */
+export const MAX_TARGET_CHARS = 20_000;
+
+export type StartRunResult =
+  | { status: "started"; runId: string }
+  | { status: "failed"; message: string };
+
+/** A poll result. `failed` carries the backend's already-friendly message — render it as-is. */
+export type RunStatus =
+  | { status: "pending"; runId: string }
+  | {
+      status: "completed";
+      runId: string;
+      htmlUrl: string;
+      pdfUrl: string;
+      critiqueVerdict?: string;
+      retrievedCount?: number;
+      costUsd?: number;
+      tokens?: number;
+    }
+  | { status: "failed"; runId: string; message: string }
+  | { status: "notfound"; runId: string };
+
+export async function startResumeRun(idToken: string, target: string): Promise<StartRunResult> {
+  const res = await fetch(`${apiBaseUrl}/resumes/generate`, {
+    method: "POST",
+    headers: authHeaders(idToken),
+    body: JSON.stringify({ target }),
+  });
+  const b = await jsonOf(res);
+  if (res.status === 202) return { status: "started", runId: b.run_id as string };
+  return {
+    status: "failed",
+    message: (b.message as string) ?? `POST /resumes/generate → ${res.status}`,
+  };
+}
+
+export async function getResumeRun(idToken: string, runId: string): Promise<RunStatus> {
+  const res = await fetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
+    headers: authHeaders(idToken),
+  });
+  if (res.status === 404) return { status: "notfound", runId };
+  const b = await jsonOf(res);
+  if (!res.ok) {
+    return { status: "failed", runId, message: (b.message as string) ?? `GET /resumes → ${res.status}` };
+  }
+  if (b.status === "completed") {
+    return {
+      status: "completed",
+      runId,
+      htmlUrl: b.html_url as string,
+      pdfUrl: b.pdf_url as string,
+      critiqueVerdict: b.critique_verdict as string | undefined,
+      retrievedCount: b.retrieved_count as number | undefined,
+      costUsd: b.cost_usd as number | undefined,
+      tokens: b.tokens as number | undefined,
+    };
+  }
+  if (b.status === "failed") {
+    return {
+      status: "failed",
+      runId,
+      message: (b.message as string) ?? "Couldn't generate a résumé — please try again.",
+    };
+  }
+  return { status: "pending", runId };
+}
