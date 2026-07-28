@@ -1445,15 +1445,39 @@ by the Lambda:
 3. **Synthesize (Haiku).** Compose a grounded answer with the top-k entries in the prompt, under
    instructions to answer *only* from them and to say so when the history doesn't cover the question.
 
-**IAM.** `chat_lambda` gains `dynamodb:Query` on `ENTRY#` items — **read-only**, and it is a real
-narrowing of §4.2.3's isolation story, which justifies chat's tight role partly on the grounds that
-chat cannot reach entries at all. Stated plainly: after this slice, a successful prompt injection in
-chat can *read* the user's career history. It still cannot write one — entry creation remains
-`career_crud`'s exclusive privilege behind the user's confirm (§3.1.3), and that is the property
-§4.2.3 actually protects. Single-tenant MVP, PK scoped to the JWT `sub` (§4.2.4), so the blast
-radius of the widening is "the user's own data, to the user's own session." §4.2.3 is amended in
-the same slice, **before** the code — a security review reading a stale isolation claim is worse
-than no claim at all.
+**IAM — and a correction found while implementing this.** The plan for this slice, and the first
+draft of this ADR, both said `chat_lambda` would *gain* `dynamodb:Query` on `ENTRY#` items. **It
+does not, because it already had it.** The function's existing policy grants `dynamodb:Query` on
+the table ARN with no condition, so reading `ENTRY#` items was already permitted by IAM through all
+of slices 2–6; nothing in the role changed this slice.
+
+That is not sloppiness in the original policy — **IAM cannot express the restriction.** Every item
+for a user shares one partition key (`USER#<sub>`), the isolation wanted is by *sort-key prefix*,
+and `dynamodb:LeadingKeys` scopes the partition key only with no sort-key-prefix equivalent
+(§4.2.1, and the same limitation §4.2.4 already documents for write-time key constraints). So
+§4.2.3's pre-slice-7 claim that chat "can only touch `CONVO#`" was always **an application-code
+property, not an IAM one** — enforced by which `ddb_helpers` functions the handler calls.
+
+The honest restatement, therefore:
+
+- **What actually changes in IAM:** one grant, `bedrock:InvokeModel` on the Titan embed model, so
+  the retrieval query can be vectorised. That is the entire policy delta.
+- **What changes in code:** `chat_lambda` now calls `query_entries` where before it called only
+  `query_conversation`. The read widening is a *code* change that IAM was never blocking.
+- **What is unchanged:** chat still cannot write an entry. `PutItem` is granted, but the handler
+  only ever writes `CONVO#` items through `put_conversation_message`, and entry creation remains
+  `career_crud`'s exclusive privilege behind the user's confirm (§3.1.3). That is the property
+  §4.2.3 actually protects, and it survives intact.
+
+Stated plainly for the record: after this slice a successful prompt injection in chat can cause the
+user's career history to be *read* into a model prompt. Single-tenant MVP, PK scoped to the JWT
+`sub` (§4.2.4), so the blast radius is the user's own data in the user's own session.
+
+The lesson worth carrying is the one the correction exposes: **a "least privilege" boundary that
+IAM cannot express is a code invariant wearing an IAM costume.** It is still worth having — but it
+must be documented as a code invariant, tested as one, and never assumed to be enforced by the
+platform. §4.2.3 is amended in this slice **before** the code, since a security review reading a
+stale isolation claim is worse than no claim at all.
 
 #### Injection controls (why the widening is an acceptable trade)
 

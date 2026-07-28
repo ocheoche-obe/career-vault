@@ -149,6 +149,21 @@ Entry = Annotated[
 #: Reusable adapter — building a TypeAdapter is not free, so do it once at import.
 ENTRY_ADAPTER: TypeAdapter = TypeAdapter(Entry)
 
+#: The eight subtypes as a tuple, for consumers that need to iterate the models themselves rather
+#: than validate against the union — deriving the parse-turn tool schema (``tools.py``) and the
+#: allowlist of entry fields a model may see in a prompt (chat's ``qa.py``). Both are
+#: single-source-of-truth derivations: adding a subtype or a field updates them for free.
+SUBTYPE_MODELS: tuple[type[BaseModel], ...] = (
+    JobEntry,
+    ProjectEntry,
+    MilestoneEntry,
+    CertEntry,
+    AwardEntry,
+    EducationEntry,
+    VolunteerEntry,
+    HobbyEntry,
+)
+
 # Per-type fallback used to derive `event_date` when the model didn't supply one. Ordered by
 # what best represents "when this happened" for chronological sort (Section 2.7 footnote 1).
 _EVENT_DATE_SOURCE: dict[str, str] = {

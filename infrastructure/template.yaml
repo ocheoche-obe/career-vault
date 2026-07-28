@@ -382,7 +382,9 @@ Resources:
       FunctionName: !Sub 'careervault-chat-${Environment}'
       CodeUri: ../backend/functions/chat/
       Handler: handler.handler
-      # One Bedrock call plus two DDB writes; 30s leaves headroom for Haiku cold-path latency.
+      # An ingestion turn is one Haiku call + two DDB writes. A slice-7 Q&A turn is the worst case:
+      # routing Haiku call + Titan embed + full-corpus Query + synthesis Haiku call + one write.
+      # Still comfortably inside 30s (each Haiku call is ~1-3s), but this is why it is not lower.
       Timeout: 30
       ReservedConcurrentExecutions: !If
         - HasChatReservedConcurrency
@@ -394,8 +396,18 @@ Resources:
         Variables:
           POWERTOOLS_SERVICE_NAME: chat_lambda
           BEDROCK_HAIKU_MODEL_ID: !Ref HaikuInferenceProfileId
+          # Slice 7 (ADR-038): embeds the retrieval query for grounded Q&A. Read path only —
+          # chat never writes an embedding; career_crud remains the single embedding *write* site.
+          BEDROCK_TITAN_EMBED_MODEL_ID: !Ref TitanEmbedModelId
       Policies:
         - Statement:
+            # NOTE (slice 7, ADR-038): this Query grant is unchanged, and that is worth stating
+            # rather than glossing. §4.2.3's pre-slice-7 claim that chat "can only touch CONVO#"
+            # was never enforced *here* — IAM cannot express it. `dynamodb:LeadingKeys` scopes the
+            # partition key only and has no sort-key-prefix equivalent (§4.2.1), and every item in
+            # this design shares one PK per user. The CONVO#-only property was, and still is,
+            # enforced in application code by which ddb_helpers a function calls (§4.2.4).
+            # So slice 7's read widening is a *code* change; the only IAM delta is Titan below.
             - Effect: Allow
               Action:
                 - dynamodb:Query
@@ -412,6 +424,14 @@ Resources:
                 - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${HaikuFoundationModelId}'
                 - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${HaikuFoundationModelId}'
                 - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${HaikuFoundationModelId}'
+            # Slice 7 (ADR-038): Titan v2 embeds the retrieval query for grounded Q&A. ON_DEMAND
+            # per ADR-031, so a single version-pinned regional foundation-model ARN — no inference
+            # profile, unlike Haiku above.
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${TitanEmbedModelId}'
       Events:
         PostChat:
           Type: Api

@@ -238,3 +238,27 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* Answer provenance (ADR-038): which entries grounded the answer, so it can be checked
+   against the vault rather than taken on trust. Deliberately quiet — supporting evidence,
+   not the answer itself. */
+.answer-sources {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0 0;
+  border-top: 1px solid var(--border);
+  list-style: none;
+  font-size: 0.82em;
+  opacity: 0.75;
+}
+.answer-sources li {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.1rem 0;
+}
+.source-type {
+  flex: none;
+  font-size: 0.85em;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}

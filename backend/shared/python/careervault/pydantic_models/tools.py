@@ -1,9 +1,14 @@
-"""Bedrock Converse tool-input schemas for the chat parse turn (Section 3.1.2).
+"""Bedrock Converse tool-input schemas for the chat routing turn (Sections 3.1.2 / ADR-038).
 
-``chat_lambda`` hands Claude exactly two tools and forces a call (``toolChoice: {"any": {}}``):
+``chat_lambda`` hands Claude exactly three tools and forces a call (``toolChoice: {"any": {}}``):
 
 - ``propose_entry`` — emit a structured entry candidate
 - ``ask_clarification`` — ask the user a follow-up question
+- ``answer_question`` — route this turn to grounded Q&A over the user's own history (slice 7)
+
+The third tool is **control flow, not an action** — it carries no answer, only the retrieval query
+the Lambda should run. That keeps retrieval out of the model's hands entirely (ADR-038): the model
+says *what* is being asked, the Lambda decides *which* entries are read and how many.
 
 **Why structured-via-tools rather than structured-via-JSON-prompt:** Bedrock enforces the tool
 input schema at the API layer, so the response matches the schema or the model retries before we
@@ -24,28 +29,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .entry import (
-    ENTRY_TYPES,
-    AwardEntry,
-    CertEntry,
-    EducationEntry,
-    HobbyEntry,
-    JobEntry,
-    MilestoneEntry,
-    ProjectEntry,
-    VolunteerEntry,
-)
+from .entry import ENTRY_TYPES, SUBTYPE_MODELS
 
-_SUBTYPE_MODELS = (
-    JobEntry,
-    ProjectEntry,
-    MilestoneEntry,
-    CertEntry,
-    AwardEntry,
-    EducationEntry,
-    VolunteerEntry,
-    HobbyEntry,
-)
+_SUBTYPE_MODELS = SUBTYPE_MODELS
 
 # Universally required across all eight subtypes. Everything else is conditionally required and
 # is described in the tool description instead (see module docstring).
@@ -107,7 +93,26 @@ call ask_clarification instead."""
 
 _ASK_CLARIFICATION_DESCRIPTION = """\
 Ask the user one focused follow-up question. Call this when the message is too vague to record, \
-or when a field required for the entry type is missing and cannot be inferred."""
+or when a field required for the entry type is missing and cannot be inferred.
+
+Do not call this for a question the user is asking *you* about their own history — that is \
+answer_question."""
+
+_ANSWER_QUESTION_DESCRIPTION = """\
+Route this turn to a grounded answer over the user's own recorded career history. Call this when \
+the user is asking *you* something rather than telling you something to record — questions about \
+what they have done, when, how often, or how much, and requests to summarise or help phrase their \
+own history.
+
+You are not answering here. You are only restating what is being asked as a retrieval query; the \
+answer is composed in a separate step from the entries that query finds.
+
+Examples that belong here: "what did I do in 2025?", "which entries mention Python?", "how many \
+AWS certifications do I have?", "remind me what I said about the migration project", "help me \
+phrase my Terraform work for a resume".
+
+Do NOT call this when the user is describing something that happened — that is propose_entry, \
+even if they phrase it loosely."""
 
 _EXTRACT_ENTRIES_DESCRIPTION = """\
 Extract every distinct career entry from the resume text — one array element per role, project, \
@@ -138,6 +143,17 @@ CLARIFICATION_REASONS = (
     "insufficient_detail",
     "other",
 )
+
+#: Shape of the question, which decides how the Lambda retrieves (ADR-038).
+#:
+#: ``lookup`` — "which entries mention Python?" — semantic top-k is the right index.
+#: ``aggregate`` — "how many AWS certs do I have?" — a filter-and-count question, for which
+#: semantic top-k is the *wrong* index: it returns k items regardless of the true total, so the
+#: model confidently answers "k". Slice 7 implements only the ``lookup`` retrieval branch and
+#: leans on the corpus census for counting; the structured-filter branch is backlog B-011. The
+#: field ships now, deliberately under-used, so adding that branch is additive rather than a tool
+#: -schema change plus a migration of conversation turns already persisted under the old shape.
+QUESTION_INTENTS = ("lookup", "aggregate")
 
 
 def _simplify(node: Any) -> Any:
@@ -210,11 +226,43 @@ def _ask_clarification_input_schema() -> dict:
     }
 
 
-def build_tool_config() -> dict:
-    """Return the Converse API ``toolConfig`` for the parse turn.
+def _answer_question_input_schema() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "What the user is asking, restated as a self-contained search query over their "
+                    "career history. Resolve pronouns and references to earlier turns ('that "
+                    "project' -> the project's name) so the query stands alone. This is embedded "
+                    "and matched against their entries — it is not shown to the user."
+                ),
+            },
+            "intent": {
+                "type": "string",
+                "enum": list(QUESTION_INTENTS),
+                "description": (
+                    "'aggregate' if the question is about how many / how much / totals across the "
+                    "user's history. 'lookup' for everything else — finding, recalling, "
+                    "summarising, or rephrasing specific entries."
+                ),
+            },
+        },
+        "required": ["query", "intent"],
+    }
 
-    ``toolChoice: {"any": {}}`` forces the model to call exactly one of the two tools — it may
+
+def build_tool_config() -> dict:
+    """Return the Converse API ``toolConfig`` for the routing turn.
+
+    ``toolChoice: {"any": {}}`` forces the model to call exactly one of the three tools — it may
     choose *which*, but it may not answer with free text (Section 3.1.2).
+
+    Keeping ``any`` while *adding* ``answer_question`` is the whole of ADR-038: ingestion behaves
+    exactly as it did in slice 2b (same forced-structured-output guarantee), and questions finally
+    have a tool that fits them. Before this, a question had nowhere correct to go, so the forced
+    call bent it into ``ask_clarification`` or — the real defect — ``propose_entry``.
     """
     return {
         "tools": [
@@ -230,6 +278,13 @@ def build_tool_config() -> dict:
                     "name": "ask_clarification",
                     "description": _ASK_CLARIFICATION_DESCRIPTION,
                     "inputSchema": {"json": _ask_clarification_input_schema()},
+                }
+            },
+            {
+                "toolSpec": {
+                    "name": "answer_question",
+                    "description": _ANSWER_QUESTION_DESCRIPTION,
+                    "inputSchema": {"json": _answer_question_input_schema()},
                 }
             },
         ],
