@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import socket
+import uuid
 from urllib.parse import urlparse
 
 import pytest
@@ -115,3 +116,74 @@ def table(ddb_local_table):
 @pytest.fixture
 def user_id() -> str:
     return "int-test-user"
+
+
+# ---------------------------------------------------------------------------
+# Deployed-stack fixtures — shared by the `cloud` and `bedrock` tiers.
+#
+# Lambdas are invoked *directly*, with a synthetic API Gateway event carrying resolved Cognito
+# claims, rather than through API Gateway with a real JWT. The app client is deliberately PKCE-only
+# (ExplicitAuthFlows is ALLOW_REFRESH_TOKEN_AUTH alone, ADR-025), so there is no unattended way to
+# mint a token — and adding one would widen the auth surface permanently to buy a test convenience.
+# ---------------------------------------------------------------------------
+
+EXPECTED_ACCOUNT = "768396678224"
+
+
+@pytest.fixture(scope="session")
+def aws_session():
+    """A boto3 session pinned to the CareerVault account, or a skip explaining why not.
+
+    The account assertion is not ceremony: this SSO login also reaches a *second* project in a
+    different account under the same Organization, so an inherited default profile is exactly how
+    these tests would quietly run against the wrong data.
+    """
+    boto3 = pytest.importorskip("boto3")
+    from botocore.exceptions import BotoCoreError, ClientError
+
+    os.environ.setdefault("AWS_PROFILE", "careervault-dev")
+    # Cleared so a DynamoDB Local endpoint left by the `local` tier cannot redirect real clients.
+    os.environ.pop("DDB_ENDPOINT_URL", None)
+
+    session = boto3.Session()
+    try:
+        account = session.client("sts").get_caller_identity()["Account"]
+    except (BotoCoreError, ClientError) as exc:
+        pytest.skip(f"no usable AWS credentials ({type(exc).__name__}) — run `aws sso login`")
+
+    if account != EXPECTED_ACCOUNT:
+        pytest.skip(f"wrong AWS account {account}, expected {EXPECTED_ACCOUNT} — check AWS_PROFILE")
+
+    return session
+
+
+@pytest.fixture(scope="session")
+def lambda_client(aws_session):
+    return aws_session.client("lambda")
+
+
+@pytest.fixture(scope="session")
+def live_table(aws_session):
+    """The *deployed* dev table. Only ever touched under a throwaway test user's partition."""
+    return aws_session.resource("dynamodb").Table("CareerVaultTable-dev")
+
+
+@pytest.fixture
+def cloud_user_id() -> str:
+    """A throwaway user id, unique per test, so nothing can collide with the real profile."""
+    return f"int-test-{uuid.uuid4().hex[:12]}"
+
+
+@pytest.fixture
+def cleanup_user(live_table, cloud_user_id):
+    """Delete everything written under the test user, whatever the test did or how it failed."""
+    yield cloud_user_id
+
+    from boto3.dynamodb.conditions import Key
+
+    items = live_table.query(
+        KeyConditionExpression=Key("PK").eq(f"USER#{cloud_user_id}")
+    ).get("Items", [])
+    with live_table.batch_writer() as batch:
+        for item in items:
+            batch.delete_item(Key={"PK": item["PK"], "SK": item["SK"]})
