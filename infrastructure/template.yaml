@@ -1193,6 +1193,47 @@ Resources:
       AlarmActions:
         - !Ref AlarmTopic
 
+  # The one check-in failure that raises no error and delivers no clue (§3.3.5, ADR-021).
+  #
+  # `compose()` catches everything and returns the static tier, by design: a plain nudge in the
+  # inbox beats no nudge. But that means a total Bedrock outage produces NO Lambda error, so
+  # CheckinErrorsAlarm above stays OK — and the email still arrives, so the inbox looks normal
+  # too. Personalization can therefore be dead for weeks while every other signal reads green.
+  # `CheckinsStaticFallback` was added precisely to make that visible; until now nothing watched
+  # it, which left the metric recording a failure that still nobody was told about.
+  #
+  # Dimensions are BOTH `service` and `Environment` because Powertools emits both (the namespace
+  # and the Environment default dimension come from careervault.observability, `service` from
+  # POWERTOOLS_SERVICE_NAME). An alarm naming only one of them matches no metric stream and sits
+  # in INSUFFICIENT_DATA forever — a silent no-op, which is the exact failure being fixed here.
+  # Verified against the live metric with `aws cloudwatch list-metrics --namespace CareerVault`.
+  CheckinStaticFallbackAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-checkin-static-fallback-${Environment}'
+      AlarmDescription: >
+        checkin_lambda fell back to the static email — Bedrock composition failed. The check-in
+        still went out, so this is the only signal that personalization is broken (ADR-021).
+      Namespace: CareerVault
+      MetricName: CheckinsStaticFallback
+      Dimensions:
+        - Name: service
+          Value: checkin_lambda
+        - Name: Environment
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      # Threshold 0, for CheckinErrorsAlarm's reason: at one send a day, waiting for a count to
+      # accumulate means waiting days. One degraded check-in is already the whole signal.
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # The metric is published only when a fallback happens, so most periods have no datapoint.
+      # `notBreaching` is what stops that silence from reading as a failure.
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
   SesEventHandlerErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
