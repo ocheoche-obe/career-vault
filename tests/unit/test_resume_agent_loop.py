@@ -5,18 +5,12 @@ behaviors — phase transitions, termination conditions, progress tracking, and 
 budget — since ``agent.py`` owns the orchestration bugs ADR-010 warned about.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
+from helpers import load_sibling
 
 from careervault.bedrock_client import BedrockError
 
-_AGENT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "resume_agent"
-if str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
-
-import agent  # noqa: E402
+agent = load_sibling("resume_agent_agent", "resume_agent", "agent")
 
 
 # --- Converse response builders -------------------------------------------------------------------

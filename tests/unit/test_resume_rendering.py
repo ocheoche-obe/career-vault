@@ -5,16 +5,11 @@ Only the HTML step is exercised — WeasyPrint's PDF conversion needs the native
 this reason).
 """
 
-import sys
-from pathlib import Path
+from helpers import load_sibling
 
 from careervault.pydantic_models.resume import ResumeDocument
 
-_AGENT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "resume_agent"
-if str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
-
-import rendering  # noqa: E402
+rendering = load_sibling("resume_agent_rendering", "resume_agent", "rendering")
 
 _CONTACT = {"name": None, "email": "dev@example.com", "phone": "555-0100", "location": None, "links": {"GitHub": "https://gh/x"}}
 
