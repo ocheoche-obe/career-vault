@@ -67,7 +67,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
 | 8 | Check-in emails | FR-4 | ✅ | — |
-| 9 | Hardening & MVP close | NFRs, coverage audit | 🔨 ⚠ | — |
+| 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -950,7 +950,7 @@ retracted). New ADRs **-039**, **-040**, and **-021** promoted from placeholder 
 
 ---
 
-## Slice 9 — Hardening & MVP close ⬜ ⚠
+## Slice 9 — Hardening & MVP close ✅
 
 **Goal:** Declare the MVP honestly — verified, documented, and with the loose ends either tied
 or explicitly parked.
@@ -1019,7 +1019,145 @@ to a measured, defensible target; prod change set generated and its manual-step 
 parking lot; README refreshed beyond slice 1 and stating plainly that `careervault-dev` *is* the MVP
 stack; this doc's status board all ✅; MVP declared.
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:**
+
+**MVP declared.** 461 automated tests where slice 8 ended with 370, and the default run of every
+suite costs $0.
+
+**Verification, by cost tier (ADR-042).** 376 backend unit · 23 frontend (Vitest + RTL, new) · 56
+integration on DynamoDB Local + deployed dev, free · 5 real-Haiku (`--bedrock`, ~$0.01) · 1 full
+Sonnet résumé run (`--expensive`, ~$0.11). The tiering is the load-bearing idea: a uniform suite at
+~$0.35 a run is ~14 runs to the ceiling, which is a suite people avoid — and **an avoided test is
+worse than an absent one, because it still implies coverage**.
+
+**Five things worth carrying.**
+
+**(1) The frontend CI gate was hollow, and the tests that fill it had to be written a specific way.**
+Typecheck + build + lint never execute a component, so a green pipeline proved the code compiled and
+nothing else. Filling it surfaced a Vitest trap: **a `vi.fn()` that returns a rejected promise fails
+the test even when the component catches it correctly** — the spy's settlement tracking leaves an
+unhandled derived chain. Confirmed by bisection (it reproduces with *zero assertions in the test
+body* and vanishes without the module mock), so every error-path test is unwritable that way. The
+workaround turned out to be the better design: stub `fetch` and keep the real `lib/api`, which puts
+the 201/200/409/422/500 mapping under test too and lets assertions check the **actual request body**
+— so "Save anyway" now verifies `acknowledge_duplicate: true` goes on the wire.
+
+**(2) The prod dry run found a blocker, and not the one it was run to check.** ADR-041 justified
+`--no-execute-changeset` on the never-evaluated billing alarms. The first attempt failed before
+producing a change set at all — `AWS::EarlyValidation::ResourceExistenceCheck`, with **no detail in
+either `describe-stack-events` or `describe-change-set-hooks`** — and was diagnosed by re-running
+the identical template with one parameter changed. `CheckinEmailIdentity` builds an SES identity
+from `CheckinSenderAddress`, which is **not** environment-suffixed unlike the ConfigurationSet
+directly below it; an SES identity is unique per account+region and dev already owns it. **The prod
+stack could never have deployed** (B-021). Once unblocked: 70 resources, and the billing alarms do
+validate. *A conditional that has never been evaluated is not "probably fine" — it is untested code,
+and the cheapest possible test failed on its first run.*
+
+**(3) A falsified requirement scores itself green.** §7.4 and NFR-2.2 both promised a résumé "within
+30 seconds"; measured 72s (2-entry corpus) and ~176s (13-entry), and the target was *structurally
+impossible* — anything over API Gateway's 29s integration timeout cannot be served synchronously,
+which is what forced ADR-037. Slice 6b corrected the parallel claim in arch §3.2.2 **and stopped
+there**, leaving the requirement and the success criterion — the two documents the MVP is graded
+against — still asserting a falsehood. *Correcting the description while leaving the specification is
+the more dangerous half to skip.* The fix specifies async delivery with a ceiling, not a bigger
+number: **a latency requirement and a delivery model are not independent choices.**
+
+**(4) Cost and latency are the same problem.** The `--expensive` run measured **72s / 20,183 tokens
+/ $0.113 on a 2-entry corpus** against slice 6b's **176s / 82.9K / $0.35 on 13 entries** — *same
+`REVISE` verdict, same phases*, so it is not a cheaper code path. Both scale with corpus size via the
+retrieval loop's growing history. The corollary is the uncomfortable one: **the app gets more
+expensive and slower precisely as it becomes more useful.** B-004 and B-020 attack one mechanism.
+
+**(5) My own test bugs were caught by tooling, not by re-reading.** A delete test asserted `204`
+where `career_crud` returns `200` (a status the system never emits); `tsc` caught an
+`ErrorContext`/`Error` mismatch the tests were happy with; a "rejects invalid input" test passed for
+the *wrong reason* until it asserted the specific error field; and the integration runner silently
+collected the whole repo (401 tests instead of 25) because `"${ARR[@]:-}"` on an empty array under
+`set -u` expands to an empty-string path. Two of three `--expensive` failures were **contract**
+errors on the most expensive endpoint, now guarded for **$0** in the cloud tier — *on an endpoint
+that costs real money, the request contract deserves a free test of its own.*
+
+**Audit outcome** ([scorecard](careervault-mvp-scorecard.md)): 5/6 success criteria clean (the 6th
+passed only after correcting the criterion); 20/22 FRs met, 1 partial (B-022 — no copyable bullets,
+"technically met" via FR-5.3's AND/OR wording), 1 deliberately deferred (FR-5.4); 16 NFRs met, 4
+caveated, 3 unverified, 1 not measurable. **Cost: $3.88 / $5.00** in the project's heaviest month,
+with Bedrock at 87% and *all* deployed infrastructure under $0.01 combined — the reframing that
+decided both ADR-041 and ADR-042.
+
+**Closed:** B-014, B-017, B-018. **Opened:** B-020 (latency), B-021 (prod SES collision), B-022
+(copyable bullets), B-023 (latency unmeasured), B-024 (email clients). **New tooling:** Playwright
+MCP for browser-driven UI work (dev-loop only — deliberately not a CI gate). **v1.1 graduated:**
+résumé speed + usability, a UI/mobile pass, and voice capture per ADR-014.
+
+---
+
+## v1.1 — graduated scope
+
+Decided with Oche at slice-9 close, *after* the [MVP scorecard](careervault-mvp-scorecard.md)
+existed. Sequencing that decision after the audit was deliberate: graduating items beforehand would
+have meant choosing without the evidence the audit was run to produce.
+
+The theme is **"the flagship feature, finished"** — plus the one capture affordance the MVP always
+intended to add.
+
+### 1. Make the résumé fast and its output usable
+
+| Item | Why it graduated |
+|---|---|
+| **B-020** — reduce generation latency | 72s–176s. Raised by Oche directly, and requirements §7.4/NFR-2.2 had to be *corrected* rather than met, which is the strongest possible signal that the number matters. |
+| **B-004** — retrieval-loop context growth | Same root cause as B-020 seen from the cost side. The slice-9 measurement (2-entry corpus: 72s/$0.113; 13-entry: ~176s/$0.31–0.35, same `REVISE` verdict) makes the shared mechanism concrete. Fixing it pays twice. |
+| **B-023** — measure interactive latency | How we would know B-020 worked. NFR-2.1/2.3 currently have no numbers at all; cost has a forcing function (the bill) and latency has none. |
+| **B-022** — copyable plain-text bullets | The cheapest real win in the backlog. Most people tailoring a résumé already have one, and today there is no way to get the tailored bullets out except reading them off an iframe or a PDF. |
+
+**Sequencing note:** do **B-023 first**. Optimising latency without a baseline is how you ship a
+change that feels faster and isn't.
+
+### 2. UI and mobile pass
+
+| Item | Why it graduated |
+|---|---|
+| **B-001** — flesh out the UI | Functional but visually basic since slice 4; never had a design pass. |
+| **NFR-6.2** — mobile web | Scored ❓ *Unverified* on the scorecard, not ✅. A responsive pass closes a real requirement, not just polish. |
+
+**Start by enumerating, not styling.** Playwright MCP is now wired up (checked-in `.mcp.json`), so
+the first task is driving the real app at desktop and mobile viewports and turning B-001's single
+line into a specific list — including the accessibility tree, which nobody has ever looked at.
+
+### 3. Voice capture for entry logging (ADR-014)
+
+Requested by Oche at slice-9 close: *"a key feature to make it easier for users to log their entries
+without typing long entries."*
+
+This was already decided and parked, not new — **ADR-014** (2026-05-31) deferred voice-mode
+ingestion to v1.1 and, importantly, already chose the approach: **the browser's free Web Speech
+API**, explicitly *not* Amazon Transcribe, to avoid added cost and complexity.
+
+Two consequences worth carrying into the work:
+
+- **It costs nothing in AWS terms.** Web Speech API is browser-side, so voice capture adds **$0** to
+  the bill — the transcript enters the existing `POST /chat` path and costs exactly what a typed
+  message costs today. Against a $5 ceiling where Bedrock is 87% of spend, that matters.
+- **It compounds with the fallback ladder.** Speech-to-text output is messier than typed input —
+  more filler, no punctuation, garbled proper nouns. The existing `ask_clarification` route (FR-2.4)
+  is the right landing place for that, so the work is likely *frontend capture + prompt tolerance*
+  rather than a new backend path. Worth verifying rather than assuming.
+- ⚠️ **Browser support is uneven.** Web Speech API's continuous recognition is well supported in
+  Chrome and Safari and historically weak in Firefox. Needs a graceful fallback to typing, which the
+  UI already has by default.
+
+### Explicitly *not* graduated (staying in the backlog)
+
+Not dropped — reconsidered when their trigger arrives.
+
+- **Retrieval quality** — B-003 (dedup precision), B-011 (hybrid retrieval for aggregates). Both
+  matter as the corpus grows; at ~13 entries neither is felt.
+- **Operational loose ends** — B-021 (prod stack cannot deploy), B-019 (bounce state invisible),
+  B-024 (email verified in Gmail only). B-021's trigger is explicit: **the moment ADR-041 reverses
+  and a prod stack is wanted, this is a blocker**, and it is much cheaper to fix before that day.
+- **B-006 / B-007** (agent debug metadata) — still wanted while the agent is being evaluated.
+- **B-010** (Sonnet 5) — `blocked-external`, nothing self-serve remains.
+- **B-016** (a failed send consumes the cycle) — correct trade for a nudge; revisit only if the
+  pattern is copied somewhere transactional.
 
 ---
 
@@ -1029,9 +1167,10 @@ Not scheduled; revisit at slice 9 / v1.1 planning.
 
 - **CI/CD** — GitHub Actions, OIDC → AWS, `sam build/deploy` + S3 sync + CloudFront invalidation
   (arch §5.7 defers this explicitly).
-- **Requirements §3 deferred list** — voice-mode ingestion (ADR-014), multi-tenant, email/Drive
-  output delivery, DOCX export, portfolio-page generator, business-card export, cert-study
-  planner, mobile push, interview prep, named-entity verification of generated resumes.
+- **Requirements §3 deferred list** — ~~voice-mode ingestion (ADR-014)~~ **→ graduated to v1.1**,
+  multi-tenant, email/Drive output delivery, DOCX export, portfolio-page generator, business-card
+  export, cert-study planner, mobile push, interview prep, named-entity verification of generated
+  resumes.
 - **Stretch (requirements §7)** — timeline visualization; goal tracking with progress indicators
   (GOAL entity is data-model + ingestion-tag only at MVP).
 - **Custom domain** — slice 4 shipped the default `*.cloudfront.net` domain (ADR-019 amendment);

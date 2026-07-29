@@ -22,7 +22,7 @@ The six criteria the MVP was defined against.
 | 3 | Receive a personalized weekly check-in referencing recent entries | ✅ **Pass** | Slice 8, verified live across all three tiers. Measured ~$0.0026/check-in. |
 | 4 | Submit a JD and receive a tailored résumé ~~within 30 seconds~~ | ⚠️ **Pass, criterion corrected** | The résumé is delivered; the *30-second* bound was never met and was never achievable. See §4 below — this is the scorecard's most important entry. |
 | 5 | Download a generated résumé as a PDF | ✅ **Pass** | Slice 6b. Now asserted in CI-adjacent form: the `--expensive` tier fetches the presigned object and checks `%PDF-` magic bytes. |
-| 6 | Monthly AWS spend under $5 during normal usage | ✅ **Pass, with a caveat** | July 2026 — the heaviest development month, including agent tuning and paid test runs — landed under the ceiling. The caveat is structural, not accounting: see §5. |
+| 6 | Monthly AWS spend under $5 during normal usage | ✅ **Pass, with a caveat** | **$3.88 of $5.00** in July 2026 — the heaviest development month, including agent tuning and paid test runs. The caveat is structural, not accounting: see §5. |
 
 **5 of 6 clean; 1 passed only after correcting the criterion itself.**
 
@@ -107,15 +107,19 @@ Reducing the number honestly is **B-020**, raised by Oche at slice-9 scoping and
 
 ## 5. Cost review (NFR-1.1)
 
-July 2026 — the heaviest month the project has had, including résumé-agent tuning, slice 7/8 development, and slice 9's paid test runs — stayed under the $5 ceiling.
+**July 2026 final: $3.88 of the $5.00 ceiling (78%).** This was the heaviest month the project has
+had — résumé-agent tuning, slices 7 and 8, and slice 9's paid test runs — so it is close to a
+worst-case reading rather than a typical one.
 
-The structural finding matters more than the total:
+| Line | Amount | Share |
+|---|---|---|
+| Claude Sonnet 4-6 (résumé agent) | $3.1829 | **82%** |
+| Claude Haiku 4.5 (chat, parse, check-in) | $0.1817 | 5% |
+| Tax | $0.3700 | 10% |
+| **All deployed infrastructure combined** — S3 $0.0057, CloudWatch $0.0001, DynamoDB, API Gateway, SNS, SQS, Cognito, CloudFront | **~$0.008** | **0.2%** |
+| **Total** | **$3.8844** | |
 
-| | Share of spend |
-|---|---|
-| Bedrock (Sonnet 4-6 + Haiku) | **~87%** |
-| Tax | ~10% |
-| **All deployed infrastructure** — S3, DynamoDB, API Gateway, CloudWatch, SNS, SQS, Cognito, CloudFront | **under $0.01 combined** |
+**Verdict: NFR-1.1 met**, with ~$1.12 of headroom in the project's most expensive month.
 
 **The $5 ceiling governs Bedrock call volume, not architecture size.** That single reframing decided ADR-041 (a second stack is nearly free, so prod-vs-dev turns on operational cost, not money) and ADR-042 (the integration suite must be tiered, because one résumé run costs more than a month of every other service put together).
 

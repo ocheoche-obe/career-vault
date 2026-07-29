@@ -130,9 +130,44 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 9 — hardening & MVP close (integration test suite against deployed dev + DynamoDB Local for conditional-write semantics; frontend unit tests wired into CI — the current frontend job is typecheck+build+lint only, so green CI does not prove the app renders; README refresh; FR/NFR coverage audit; MVP evaluation scorecard against requirements §7; cost review with real Bedrock numbers). ⚠ open decisions: deploy a prod stack vs declare dev-as-MVP for a single-user app, and which parking-lot items graduate to v1.1. Highest-value backlog item to fold in: **B-018** — no integration test covers the check-in flow, which slice 8 verified entirely by hand; a scheduled job is the one thing that cannot be smoke-tested by clicking around the app.**
+**Phase 2 — Implementation COMPLETE. 🎉 MVP declared at slice 9 (2026-07-29). Next: v1.1 planning — scope and slice the three graduated themes in `docs/careervault-plan.md` § "v1.1 — graduated scope". (1) **Résumé speed + usability** — B-023 first (measure, since NFR-2.1/2.3 have no numbers and optimising without a baseline ships changes that only feel faster), then B-020/B-004 (one mechanism: the retrieval loop's growing history drives both cost and latency), then B-022 (copyable plain-text bullets — cheapest real win). (2) **UI + mobile pass** — B-001 plus NFR-6.2, which the scorecard marks ❓Unverified, not ✅; start by *enumerating* with Playwright MCP rather than styling. (3) **Voice capture** — ADR-014, already decided: browser Web Speech API, explicitly not Amazon Transcribe, so it adds **$0** to the bill and the transcript enters the existing `POST /chat` path. ⚠ Two standing constraints for any v1.1 work: **`careervault-dev` IS the MVP stack** (ADR-041), and **a prod stack currently cannot deploy** (B-021 — the SES email identity is not env-suffixed and collides with dev's), which becomes a blocker the moment ADR-041 reverses.**
 
-- Last completed: slice 8 — check-in emails (FR-4). EventBridge Scheduler fires `checkin_lambda`
+- Last completed: slice 9 — hardening & MVP close. **461 automated tests** (was 370), every default
+  run **$0**, tiered by cost (**ADR-042**): 376 backend unit · 23 frontend (Vitest + RTL, new) · 56
+  integration (DynamoDB Local + deployed dev) · 5 `--bedrock` (~$0.01) · 1 `--expensive` (~$0.11).
+  *A uniform suite at ~$0.35/run is ~14 runs to the ceiling — and an avoided test is worse than an
+  absent one, because it still implies coverage.* Five things worth carrying. **(1) A `vi.fn()` that
+  returns a rejected promise fails a Vitest test even when the component catches it** — the spy's
+  settlement tracking leaves an unhandled derived chain; reproduces with *zero assertions in the test
+  body*, vanishes without the module mock. Every error-path test is unwritable that way. Fix was
+  better than the original plan: stub `fetch`, keep the real `lib/api`, which puts the
+  201/200/409/422/500 mapping under test and lets assertions check the **actual request body**.
+  **(2) The ADR-041 prod dry run found a blocker — and not the one it was run to check.**
+  `AWS::EarlyValidation::ResourceExistenceCheck` failed with **no detail in `describe-stack-events`
+  or `describe-change-set-hooks`**; diagnosed by re-running the identical template with one parameter
+  changed. `CheckinEmailIdentity` isn't env-suffixed (unlike the ConfigurationSet right below it) and
+  SES identities are unique per account+region, so **prod could never have deployed** (B-021). Once
+  unblocked: 70 resources, billing alarms validate. *A conditional never evaluated is not "probably
+  fine" — it is untested code.* **(3) A falsified requirement scores itself green.** §7.4 and NFR-2.2
+  promised a résumé in 30s; measured 72s/176s, and it was *structurally impossible* — over API
+  Gateway's 29s timeout nothing can be synchronous, which is what forced ADR-037. Slice 6b fixed the
+  parallel claim in arch §3.2.2 **and stopped there**. *Correcting the description while leaving the
+  specification is the more dangerous half to skip* — and the fix specifies async-with-a-ceiling, not
+  a bigger number, because **a latency requirement and a delivery model are not independent
+  choices.** **(4) Cost and latency are one problem:** 72s/20.2K tokens/$0.113 on a 2-entry corpus vs
+  176s/82.9K/$0.35 on 13 — *same `REVISE` verdict*, so it is corpus size, not a cheaper path. **The
+  app gets slower and more expensive precisely as it becomes more useful** (B-004 + B-020).
+  **(5) Tooling caught my bugs, re-reading didn't:** a delete test asserted `204` where the API
+  returns `200`; `tsc` caught an `ErrorContext`/`Error` mismatch the tests accepted; a
+  "rejects invalid input" test passed for the *wrong reason*; and `"${ARR[@]:-}"` under `set -u`
+  silently widened collection to 401 tests instead of 25. Two of three `--expensive` failures were
+  *contract* errors, now guarded for **$0** — *on an endpoint that costs money, the request contract
+  deserves a free test of its own.* **Audit:** 5/6 success criteria (the 6th passed only after
+  correcting it), 20/22 FRs, 16 NFRs met / 4 caveated / 3 unverified. **Cost $3.88/$5.00** in the
+  heaviest month — Bedrock **87%**, all infra **under $0.01 combined**, the reframing behind both
+  ADR-041 and ADR-042. Closed B-014/B-017/B-018; opened B-020..B-024. Playwright MCP added as a
+  dev-loop tool (deliberately *not* a CI gate).
+- Before that: slice 8 — check-in emails (FR-4). EventBridge Scheduler fires `checkin_lambda`
   daily at 23:00 UTC; **`next_checkin_at` on the PROFILE paces the cadence**, so all four FR-4.1
   cadences run off one schedule and a cadence change is a data write, not a control-plane call
   (**ADR-039**). Three things worth carrying. **(1) `required` in a Converse tool schema is a hint,
