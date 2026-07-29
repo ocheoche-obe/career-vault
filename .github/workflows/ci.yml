@@ -26,7 +26,7 @@ jobs:
         run: python -m pytest tests/unit -q
 
   frontend:
-    name: Frontend typecheck + build + lint
+    name: Frontend tests + typecheck + build + lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,6 +40,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install
         run: npm ci
+      - name: Unit tests (Vitest + React Testing Library)
+        # Runs first: typecheck and build cannot tell whether a single component renders, so before
+        # slice 9 a green frontend job proved only that the code compiled. This is the step that
+        # makes the gate real — see the plan doc's note on frontend Dependabot auto-merge.
+        run: npm test
       - name: Build (tsc + vite)
         run: npm run build
       - name: Lint
