@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from careervault.prompt_safety import neutralise_delimiters
 from careervault.pydantic_models.entry import ENTRY_TYPES, SUBTYPE_MODELS
 
 #: Entry attributes the model may see, derived from the entity models so the set cannot drift.
@@ -79,31 +80,11 @@ def render_census(census: dict[str, int]) -> str:
     return "\n".join(lines) + f"\n  TOTAL: {census['total']}"
 
 
-#: Every tag that gives the grounding block its structure. Content is defanged against *all* of
-#: them, not just ``<entry>`` — closing ``</relevant_entries></career_history>`` escapes the data
-#: region just as effectively as closing a single entry, and an injected résumé that knows the
-#: prompt shape would reach for the outermost tag first.
-_STRUCTURAL_TAGS = ("career_history", "census", "relevant_entries", "entry")
-
-
-def _neutralise_delimiters(text: str) -> str:
-    """Defang the grounding block's structural tags inside user-supplied content.
-
-    An entry whose text contains ``</entry>`` — or ``</relevant_entries>``, or
-    ``</career_history>`` — could otherwise close the data region early and have the remainder
-    read as prompt rather than data. That is the cheapest possible delimiter escape, and the one
-    an injected résumé would actually try (entry content can originate in an uploaded file, slice
-    5). Neutralising these *specific sequences* rather than stripping all angle brackets keeps
-    ordinary technical writing ("List<String>", "a -> b") intact.
-
-    This is hygiene on top of the real controls (the synthesis call has no tools at all, and its
-    output is rendered as text) — not a substitute for them. ADR-038 is explicit that prompt-level
-    containment is defense in depth and is not counted on. It is still worth being complete: a
-    control documented as "we delimit the data" should actually delimit it.
-    """
-    for tag in _STRUCTURAL_TAGS:
-        text = text.replace(f"</{tag}", f"&lt;/{tag}").replace(f"<{tag}", f"&lt;{tag}")
-    return text
+# Delimiter defanging moved to `careervault.prompt_safety` in slice 8. It was private to this
+# module, and the check-in prompt builder — same threat, same uploaded-file provenance, written
+# months later — silently had no equivalent. One shared risk should not have two implementations,
+# one of them empty. The tag list and behaviour are unchanged; `recent_entries` was added there for
+# the check-in prompt's own data region.
 
 
 def project_entry(item: dict) -> dict[str, Any]:
@@ -122,7 +103,7 @@ def project_entry(item: dict) -> dict[str, Any]:
             rendered = str(value)
         if name == "content" and len(rendered) > _MAX_CONTENT_CHARS:
             rendered = rendered[:_MAX_CONTENT_CHARS] + _TRUNCATION_MARKER
-        projected[name] = _neutralise_delimiters(rendered)
+        projected[name] = neutralise_delimiters(rendered)
     return projected
 
 

@@ -913,6 +913,22 @@ before calling SES means a failed send still consumes the cycle. Claiming after 
 Scheduler retry delivers a duplicate. Idempotency buys "at most once" by giving up "at least once";
 no ordering yields both. Correct for a nudge, wrong for anything transactional → B-016.
 
+**Security review:** one **LOW** finding, fixed in-slice — the check-in prompt builder had none of
+the ADR-038 containment `chat/qa.py` established for the *same* threat: no delimited data region,
+no delimiter defanging, and `title` (200 chars, attacker-authorable via an uploaded résumé) not
+newline-normalised, so it could forge extra lines in a line-oriented prompt. Bounded by the same
+architectural controls as slice 7 — the compose call's only tool returns text fields, output is
+validated into fixed Pydantic fields, and the email template autoescapes with both `href`s coming
+from an environment variable rather than the model — so the realistic worst case was attacker-chosen
+*prose* in an email from a trusted sender, not markup or a tool call. Fixed by lifting the defanging
+into `careervault/prompt_safety.py` and pointing both prompt builders at it. **The finding is really
+about drift:** the control existed, was documented, and was simply absent in the second place it was
+needed, because it lived as a private helper in the first. *A defense that is one module's private
+function is a defense the next module will not have.* Reviewed clean otherwise — notably the dotted
+document paths use generated placeholders with names passed via `ExpressionAttributeNames` (no
+injection path), no server-owned state is writable through `PUT /settings`, and the SNS topic policy
+scopes publish to `ses.amazonaws.com` with a `SourceAccount` condition.
+
 **Pulled in and closed:** B-014 (nested-`settings` merge — ADR-040, with all four DynamoDB premises
 probed against the live table first; the single-expression seed form was in the ADR's first draft as
 fact and was wrong), B-015 (fabricated placeholders, plus clearing the invented dev PROFILE values).
