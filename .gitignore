@@ -49,3 +49,5 @@ Thumbs.db
 # Logs
 *.log
 logs/
+# Playwright MCP — persistent browser profile. Holds a live Cognito session; never commit.
+.playwright-profile/
