@@ -1675,8 +1675,12 @@ settings form; without it, tier 2 degrades to tier 3 for every user, permanently
 - ✅ Tier 3 needs no Bedrock, so the check-in path has no hard dependency on Bedrock availability.
 - ✅ No runtime budget logic to maintain, and no spend-metering IAM grant on `checkin_lambda`.
 - ✅ Tier 3 is trivially testable — no Bedrock mock required to exercise the fallback.
-- ⚠️ Tier 3 quality is materially lower. It is instrumented (`checkins.sent` carries the tier as a
-  metric dimension) so a silent slide into permanent tier 3 is visible rather than assumed away.
+- ⚠️ Tier 3 quality is materially lower, and the email still *arrives* — so a permanent slide into
+  it is invisible from the inbox. It is therefore instrumented: a dedicated `CheckinsStaticFallback`
+  metric, nonzero only when personalization failed. *(This ADR first specified the tier as a
+  dimension on `CheckinsSent`. Powertools scopes dimensions to the whole invocation rather than to
+  one metric, so setting it inside the per-user loop would relabel every metric the run emits;
+  a separate counter carries the same signal without that coupling.)*
 - ⚠️ The 15-entry cap means a genuinely prolific fortnight is summarized from a subset. Acceptable:
   the email is a nudge, not a report.
 
@@ -1827,16 +1831,28 @@ never named in the expression and therefore cannot be affected.
 
 Two details that make it correct rather than merely working:
 
-- **`settings` must exist before a dotted path can be written into it.** `SET settings.checkin_paused
-  = :v` fails with `ValidationException: The document path provided in the update expression is
-  invalid` when `settings` is absent — which is precisely the state of the live PROFILE today. The
-  update therefore prefixes `SET settings = if_not_exists(settings, :empty_map)` before the
-  sub-field paths, in the same expression. This is not a hypothetical: **every** settings write
-  against the current dev item would fail without it.
+- **`settings` must exist before a dotted path can be written into it, and seeding it needs its own
+  `UpdateItem` call.** A write of `settings.checkin_paused` into an item with no `settings`
+  attribute fails with `ValidationException: The document path provided in the update expression is
+  invalid for update` — which is the state of the live PROFILE today, so **every** settings write
+  would fail without a seed. The obvious fix, prefixing
+  `SET settings = if_not_exists(settings, :empty_map)` onto the same expression, **does not work**:
+  DynamoDB rejects an expression that touches both a path and its own descendant with
+  `Two document paths overlap with each other`. So `update_profile` issues a **separate seeding
+  `UpdateItem`** first, and only when the payload actually carries settings sub-fields. The seed is
+  idempotent (`if_not_exists` leaves a populated object alone) and creates nothing but an empty map,
+  so it is safe to repeat and cannot lose data if the second call never happens.
 - **`exclude_unset` must be applied to the nested model too**, not just the top level. A plain
   `model_dump()` on the nested model materializes Pydantic defaults, so a request touching only
   `checkin_paused` would emit `checkin_cadence: "weekly"` and quietly overwrite a user's monthly
   setting — the original bug, reintroduced one level down and harder to see.
+
+> **All four premises above were probed against the live `CareerVaultTable-dev` before this ADR was
+> settled**, using a throwaway PROFILE item: the dotted-path-into-absent-attribute failure, the
+> overlapping-paths rejection, the seed's idempotency, and — the property FR-4.6 actually needs —
+> that writing `settings.checkin_cadence` leaves `settings.checkin_paused` intact. The
+> single-expression form was in this ADR's first draft as fact and was wrong; it survived exactly
+> as long as it took to run it.
 
 ### Alternatives considered
 - **Read-modify-write** — `GetItem`, merge in Python, `PutItem` the whole item. Simple and obvious.
@@ -1857,10 +1873,16 @@ Two details that make it correct rather than merely working:
 - ✅ Closes B-014 at the layer where the trap lives, not at the call site.
 - ✅ Cadence and pause move independently — tested per sub-field, which is the test that would have
   caught the original behavior.
-- ✅ No read before write: still one round trip, still create-or-update, no lost-update race.
+- ✅ No read before write, still create-or-update, and no lost-update race — the property that
+  motivated rejecting read-modify-write survives the two-call shape, because the extra call is a
+  blind idempotent seed rather than a read.
 - ✅ Generalizes to any future nested attribute on the PROFILE.
 - ⚠️ `update_profile` now has two code paths (top-level and nested) and is correspondingly harder to
   read. The nesting is one level deep only; arbitrary-depth merging is explicitly not built.
+- ⚠️ A settings write costs **two** `UpdateItem` calls, not one, and they are not atomic together.
+  The failure window is harmless in both directions: seed-then-crash leaves an empty `settings`
+  object that the next write fills, and the seed cannot destroy anything. Worth stating rather than
+  discovering — "partial update" now has a second, coarser meaning on this path.
 - ⚠️ An unknown sub-field in a request body is rejected by `extra="forbid"` on the nested model, not
   silently stored. Intentional — same reasoning as the top-level model.
 

@@ -142,6 +142,87 @@ def test_put_rejects_a_non_object_body(fake_ddb):
     assert settings.handler(api_event(json.dumps([1, 2]), method="PUT"), FakeLambdaContext())["statusCode"] == 400
 
 
+# --- slice 8: the nested `settings` object (FR-4.6, ADR-040) --------------------------------
+
+
+def test_put_accepts_cadence_and_pause(fake_ddb):
+    body = {"settings": {"checkin_cadence": "monthly", "checkin_paused": True}}
+
+    response = settings.handler(api_event(body, method="PUT"), FakeLambdaContext())
+
+    assert response["statusCode"] == 200
+    assert fake_ddb["writes"][0]["settings"] == {"checkin_cadence": "monthly", "checkin_paused": True}
+
+
+def test_put_sends_only_the_sub_field_that_changed(fake_ddb):
+    """The B-014 property at the handler boundary.
+
+    `exclude_unset` must reach *into* the nested model. If it did not, this write would carry
+    `checkin_cadence: "weekly"` from the model default and silently reset a user on monthly.
+    """
+    settings.handler(api_event({"settings": {"checkin_paused": True}}, method="PUT"), FakeLambdaContext())
+
+    assert fake_ddb["writes"][0]["settings"] == {"checkin_paused": True}
+
+
+def test_put_rejects_an_unknown_cadence(fake_ddb):
+    response = settings.handler(
+        api_event({"settings": {"checkin_cadence": "hourly"}}, method="PUT"), FakeLambdaContext()
+    )
+
+    assert response["statusCode"] == 400
+    assert fake_ddb["writes"] == []
+
+
+def test_put_rejects_an_unknown_settings_sub_field(fake_ddb):
+    response = settings.handler(
+        api_event({"settings": {"send_at_midnight": True}}, method="PUT"), FakeLambdaContext()
+    )
+
+    assert response["statusCode"] == 400
+    assert fake_ddb["writes"] == []
+
+
+def test_put_rejects_a_null_settings_object(fake_ddb):
+    """Clearing the whole object would drop cadence and pause together — the trap this route avoids."""
+    response = settings.handler(api_event({"settings": None}, method="PUT"), FakeLambdaContext())
+
+    assert response["statusCode"] == 400
+    assert fake_ddb["writes"] == []
+
+
+def test_put_rejects_server_owned_scheduling_state(fake_ddb):
+    """A client that could postpone its own check-in could steer a scheduled job from a body."""
+    for forbidden in (
+        {"next_checkin_at": "2099-01-01T00:00:00Z"},
+        {"last_checkin_sent_at": "1970-01-01T00:00:00Z"},
+        {"bounce_count": 0},
+    ):
+        response = settings.handler(api_event(forbidden, method="PUT"), FakeLambdaContext())
+        assert response["statusCode"] == 400, forbidden
+    assert fake_ddb["writes"] == []
+
+
+def test_put_accepts_the_aspirational_goal(fake_ddb):
+    """Tier 2 of ADR-021 reads this; without the field it degrades to static for every user."""
+    response = settings.handler(
+        api_event({"aspirational_goal": "AWS Solutions Architect"}, method="PUT"), FakeLambdaContext()
+    )
+
+    assert response["statusCode"] == 200
+    assert fake_ddb["writes"][0]["aspirational_goal"] == "AWS Solutions Architect"
+
+
+def test_identity_and_settings_can_be_written_together(fake_ddb):
+    body = {"name": "Ada Lovelace", "settings": {"checkin_cadence": "biweekly"}}
+
+    settings.handler(api_event(body, method="PUT"), FakeLambdaContext())
+
+    written = fake_ddb["writes"][0]
+    assert written["name"] == "Ada Lovelace"
+    assert written["settings"] == {"checkin_cadence": "biweekly"}
+
+
 # --- routing / auth -------------------------------------------------------------------------
 
 

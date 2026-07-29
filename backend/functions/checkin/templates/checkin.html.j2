@@ -1,0 +1,92 @@
+{#
+  Check-in email body (§3.3.3 step 4).
+
+  Table-based layout with inline styles, which looks like 2005 HTML because email clients are
+  2005 HTML — Outlook renders through Word's engine, Gmail strips <style> blocks, and flexbox is
+  not reliably available anywhere. This is the shape that survives.
+
+  Every value here is autoescaped (see rendering.py). The model returns fields, never markup, so
+  entry content that a user uploaded — and that an attacker could therefore have authored — cannot
+  emit tags into an email. Same reasoning as the résumé template: layout is the app's job.
+#}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ email.subject }}</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f5f7;">
+{# Preheader: the grey line clients show next to the subject. Hidden in the body itself. #}
+<div style="display:none; max-height:0; overflow:hidden; opacity:0;">{{ email.greeting }}</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f5f7; padding:24px 12px;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px; background-color:#ffffff; border-radius:8px; border:1px solid #e3e5e8;">
+
+        <tr>
+          <td style="padding:24px 28px 8px 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
+            <div style="font-size:13px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:#6b7280;">CareerVault</div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:8px 28px 0 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; line-height:1.55; color:#1f2933;">
+            <p style="margin:0 0 16px 0;">{{ email.greeting }}</p>
+
+            {% if email.recent_activity_summary %}
+            <p style="margin:0 0 16px 0;">{{ email.recent_activity_summary }}</p>
+            {% endif %}
+
+            {% if email.prompts %}
+            <ul style="margin:0 0 16px 0; padding-left:20px;">
+              {% for prompt in email.prompts %}
+              <li style="margin:0 0 8px 0;">{{ prompt }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+
+            {% if email.aspirational_link %}
+            <p style="margin:0 0 16px 0; color:#4b5563;">{{ email.aspirational_link }}</p>
+            {% endif %}
+          </td>
+        </tr>
+
+        {# FR-4.4 — every check-in links back to the dashboard. #}
+        <tr>
+          <td style="padding:8px 28px 24px 28px;" align="left">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="background-color:#1f2933; border-radius:6px;">
+                  <a href="{{ dashboard_url }}"
+                     style="display:inline-block; padding:11px 20px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:15px; font-weight:600; color:#ffffff; text-decoration:none;">Log an update</a>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:0 28px 24px 28px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:16px; line-height:1.55; color:#1f2933;">
+            <p style="margin:0;">{{ email.sign_off }}</p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:16px 28px 20px 28px; border-top:1px solid #e3e5e8; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; font-size:13px; line-height:1.5; color:#6b7280;">
+            {# FR-4.6's pause is a settings control, not a one-click unsubscribe link. A link that
+               changes state from an unauthenticated GET would need a signed token and a public
+               route, and the same button already exists behind the login. Called out plainly so a
+               reader is not left looking for the usual footer link. #}
+            You're getting this because check-in reminders are on.
+            <a href="{{ settings_url }}" style="color:#4b5563;">Change how often, or pause them</a>.
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

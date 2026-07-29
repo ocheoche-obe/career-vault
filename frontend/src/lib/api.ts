@@ -296,22 +296,49 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
 
 // --- Profile / settings (B-008: the résumé identity header) -------------------------------
 
+/** Check-in cadences (FR-4.1). `weekly` is the default and what an absent value means. */
+export const CHECKIN_CADENCES = ["weekly", "biweekly", "monthly", "quarterly"] as const;
+export type CheckinCadence = (typeof CHECKIN_CADENCES)[number];
+
+export type CheckinSettings = {
+  checkin_cadence?: CheckinCadence;
+  checkin_paused?: boolean;
+  preferred_template_id?: string | null;
+};
+
 /** The PROFILE singleton as `GET /settings` returns it. */
 export type Profile = {
   email: string;
   name?: string | null;
   location?: string | null;
   phone?: string | null;
+  aspirational_goal?: string | null;
   summary?: string | null;
   skills?: string[];
   portfolio_links?: Record<string, string>;
+  /** Absent on every PROFILE written before slice 8 — treat missing as the defaults. */
+  settings?: CheckinSettings;
+  next_checkin_at?: string | null;
+  last_checkin_sent_at?: string | null;
 };
 
-/** The user-editable subset. `email` is deliberately absent — the server takes it from the JWT. */
+/**
+ * The user-editable subset. `email` is deliberately absent — the server takes it from the JWT,
+ * and so are `next_checkin_at` / `last_checkin_sent_at` / the bounce counters, which are
+ * server-owned scheduling state (a client that could postpone its own check-in could steer a
+ * scheduled job from a request body).
+ *
+ * `settings` is a *partial*: send only the sub-fields being changed. The backend merges them one
+ * document path at a time (ADR-040), so sending `{ checkin_paused: true }` alone leaves the
+ * stored cadence intact — sending the whole object back would work too, but relying on that would
+ * make a stale local copy able to overwrite a change made elsewhere.
+ */
 export type ProfileUpdate = {
   name?: string | null;
   location?: string | null;
   phone?: string | null;
+  aspirational_goal?: string | null;
+  settings?: CheckinSettings;
 };
 
 export type SaveProfileResult =

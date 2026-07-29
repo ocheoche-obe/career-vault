@@ -1,0 +1,7 @@
+# checkin_lambda function dependencies (ADR-023 / Section 5.3).
+#
+# Jinja2 renders the email body (pure-Python, ARM64-safe — bundled with the function). Everything
+# else — Powertools, Pydantic, the Bedrock client, the DDB helpers, the check-in schedule/tool
+# models — comes from the careervault-shared layer; boto3 (and with it the SES v2 client) is
+# provided by the Lambda runtime.
+jinja2>=3.1.4,<4.0

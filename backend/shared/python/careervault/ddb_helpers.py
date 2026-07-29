@@ -164,8 +164,42 @@ def update_profile(user_id: str, attributes: dict[str, Any]) -> dict[str, Any]:
     ``None`` values mean *clear this attribute* and are compiled to ``REMOVE``; DynamoDB has no
     null-assignment that reads back as absent, so the two must be split into ``SET`` and
     ``REMOVE`` clauses.
+
+    **Nested ``settings`` is merged, not replaced (ADR-040).** A ``settings`` key whose value is a
+    dict is compiled to one ``SET settings.<sub> = :v`` document path per sub-field, so FR-4.6's
+    cadence and pause move independently — writing one leaves the other alone. Handled as a special
+    case rather than generically because the generic version (recursive merge at arbitrary depth)
+    is meaningfully harder to get right and nothing needs it.
+
+    Two DynamoDB behaviours shape that code, both verified against the live table rather than
+    assumed:
+
+    - A document path cannot be written into an attribute that does not exist yet, and the live
+      PROFILE has no ``settings`` attribute at all — so it must be seeded first.
+    - The seed cannot ride along in the same expression: naming both ``settings`` and
+      ``settings.checkin_paused`` in one ``UpdateExpression`` is rejected outright with
+      *"Two document paths overlap with each other"*. Hence the separate, idempotent seeding call
+      below, issued only when there are sub-fields to write.
     """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    attributes = dict(attributes)
+
+    # Pulled out before the main loop so `settings` never reaches the top-level compiler, where it
+    # would compile to `SET settings = :v` and replace the object — the B-014 bug itself.
+    nested_settings = attributes.pop("settings", None)
+    if nested_settings is not None and not isinstance(nested_settings, dict):
+        raise ValueError("`settings` must be a mapping of sub-fields, not a scalar")
+
+    if nested_settings:
+        # Blind, idempotent, and destroys nothing: `if_not_exists` leaves a populated object
+        # untouched. Not a read, so the no-read-before-write property ADR-040 wanted is intact.
+        get_table().update_item(
+            Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+            UpdateExpression="SET #settings = if_not_exists(#settings, :empty_map)",
+            ExpressionAttributeNames={"#settings": "settings"},
+            ExpressionAttributeValues={":empty_map": {}},
+        )
+
     set_parts = ["#updated_at = :updated_at", "#created_at = if_not_exists(#created_at, :now)"]
     remove_parts: list[str] = []
     names: dict[str, str] = {"#updated_at": "updated_at", "#created_at": "created_at"}
@@ -179,6 +213,16 @@ def update_profile(user_id: str, attributes: dict[str, Any]) -> dict[str, Any]:
         else:
             set_parts.append(f"{placeholder} = :v{index}")
             values[f":v{index}"] = value
+
+    for index, (sub_key, sub_value) in enumerate(sorted((nested_settings or {}).items())):
+        placeholder = f"#s{index}"
+        names[placeholder] = sub_key
+        names.setdefault("#settings", "settings")
+        if sub_value is None:
+            remove_parts.append(f"#settings.{placeholder}")
+        else:
+            set_parts.append(f"#settings.{placeholder} = :sv{index}")
+            values[f":sv{index}"] = sub_value
 
     expression = "SET " + ", ".join(set_parts)
     if remove_parts:
@@ -418,3 +462,152 @@ def delete_entry(user_id: str, entry_id: str) -> bool:
         if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
             return False
         raise
+
+
+# ---------------------------------------------------------------------------
+# Check-in scheduling — PROFILE reads/writes + CHECKINLOG# audit (slice 8, ADR-039)
+# ---------------------------------------------------------------------------
+
+#: How long after a send another invocation is allowed to send again (§3.3.4). Sized to sit well
+#: above Scheduler's retry window and well below the shortest cadence (7 days), so it separates
+#: "Scheduler retried after a timeout" from "the next cycle legitimately came round".
+CHECKIN_IDEMPOTENCY_HOURS = 6
+
+
+def scan_profiles() -> list[dict[str, Any]]:
+    """Return every PROFILE item in the table (ADR-039).
+
+    Named for what it does, not for either caller: ``checkin_lambda`` filters the result by
+    due-ness, ``ses_event_handler`` filters it by email address. Both need "all PROFILEs" and
+    neither can get there by Query.
+
+    **A Scan, deliberately, and the architecture doc used to say Query.** §3.3.3 described this as
+    "query PROFILE items where ``next_checkin_at <= now``" — but PROFILE rows for different users
+    live under different partition keys, and ADR-028 ships no GSIs, so no key expression can reach
+    them. There is no degraded-Query option here; the operation is a Scan or it is nothing.
+
+    The ``next_checkin_at`` / paused filtering is done by the caller in Python rather than in a
+    ``FilterExpression``, for a reason worth keeping: a DynamoDB filter is applied *after* the read
+    and bills identically, so pushing it down would buy no capacity — only a second place for the
+    due-logic to live and drift from :func:`careervault.checkin_schedule.is_due`.
+
+    This is the single function a multi-tenant migration replaces with a GSI Query; nothing about
+    the surrounding flow assumes a Scan.
+    """
+    table = get_table()
+    items: list[dict[str, Any]] = []
+    start_key: dict | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "FilterExpression": "SK = :sk",
+            "ExpressionAttributeValues": {":sk": "PROFILE"},
+        }
+        if start_key:
+            kwargs["ExclusiveStartKey"] = start_key
+        response = table.scan(**kwargs)
+        items.extend(response.get("Items", []))
+        start_key = response.get("LastEvaluatedKey")
+        if not start_key:
+            return items
+
+
+def claim_checkin_slot(user_id: str, now_iso: str, next_checkin_at: str, buffer_iso: str) -> bool:
+    """Claim the right to send this user's check-in. ``True`` if claimed, ``False`` if already sent.
+
+    The idempotency mechanism for the whole scheduled flow (§3.3.4). EventBridge Scheduler is
+    at-least-once: a Lambda timeout mid-send produces a retry, and without this the user gets two
+    emails. The conditional write claims the slot in our own database *before* the side effect, so
+    the duplicate loses the race rather than the mailbox absorbing it.
+
+    The condition admits the claim only if no send has been recorded, or the last one is older than
+    ``buffer_iso``. ISO-8601 UTC strings with a fixed ``Z`` suffix compare correctly under
+    DynamoDB's lexicographic string comparison, which is the whole reason the timestamps are stored
+    in that shape rather than as epoch numbers.
+
+    ``next_checkin_at`` is advanced in the same write: claiming the slot and scheduling the next
+    cycle are one atomic act, so a crash after sending cannot leave the user permanently due.
+    """
+    try:
+        get_table().update_item(
+            Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+            UpdateExpression=(
+                "SET last_checkin_sent_at = :now, next_checkin_at = :next, updated_at = :now"
+            ),
+            ConditionExpression=(
+                "attribute_not_exists(last_checkin_sent_at) OR last_checkin_sent_at < :buffer"
+            ),
+            ExpressionAttributeValues={
+                ":now": now_iso,
+                ":next": next_checkin_at,
+                ":buffer": buffer_iso,
+            },
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def put_checkin_log(item: Mapping[str, Any]) -> None:
+    """Persist a CHECKINLOG# audit item for one send (§3.3.3 step 7).
+
+    Written *after* the send rather than before, so its presence means "SES accepted this", not
+    "we intended to send this". The distinction is the entire value of the record: with only
+    metrics, a missing email is indistinguishable from a cycle where nothing was due — this is what
+    makes that question answerable months later.
+
+    Not conditional: the send slot claim upstream is what guarantees one send per cycle, so a
+    second write here would mean the claim was bypassed, which should be visible rather than
+    swallowed by a condition failure.
+    """
+    assert_sk_prefix(item, "CHECKINLOG#")
+    get_table().put_item(Item=to_ddb_numbers(dict(item)))
+
+
+def query_checkin_logs(user_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Return a user's most recent CHECKINLOG# items, newest first.
+
+    ``run_id`` is a ULID, so SK order is time order and ``ScanIndexForward=False`` gives recency
+    without a sort. Read path for "did my check-in actually go out?" during smoke tests and
+    debugging; no route exposes it at MVP.
+    """
+    response = get_table().query(
+        KeyConditionExpression=(
+            Key("PK").eq(pk_for_user(user_id)) & Key("SK").begins_with("CHECKINLOG#")
+        ),
+        ScanIndexForward=False,
+        Limit=limit,
+    )
+    return response.get("Items", [])
+
+
+def record_bounce(user_id: str, occurred_at: str) -> dict[str, Any]:
+    """Increment the PROFILE's bounce counter (§4.5.4 step 3).
+
+    ``ADD`` rather than a read-then-``SET``: DynamoDB's atomic counter is correct under concurrent
+    SNS deliveries, and it treats a missing attribute as zero, so no seeding is needed for a
+    PROFILE written before slice 8.
+    """
+    response = get_table().update_item(
+        Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+        UpdateExpression="ADD bounce_count :one SET last_bounce_at = :at, updated_at = :at",
+        ExpressionAttributeValues={":one": 1, ":at": occurred_at},
+        ReturnValues="ALL_NEW",
+    )
+    return response.get("Attributes", {})
+
+
+def record_complaint(user_id: str, occurred_at: str) -> dict[str, Any]:
+    """Stamp the PROFILE with a spam complaint (§4.5.4 step 3).
+
+    A timestamp rather than a counter: one complaint is already the signal — a user who marks mail
+    as spam twice is not twice as unhappy, and MVP takes no automated action either way (§3.3.8).
+    """
+    response = get_table().update_item(
+        Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+        UpdateExpression="SET complained_at = :at, updated_at = :at",
+        ExpressionAttributeValues={":at": occurred_at},
+        ReturnValues="ALL_NEW",
+    )
+    return response.get("Attributes", {})

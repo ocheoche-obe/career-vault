@@ -1,26 +1,58 @@
 """Shared test utilities: handler loading, fake Lambda context, and Converse response builders.
 
-The two Lambda handlers are both named ``handler.py``, so they are loaded by path under distinct
-module names rather than imported — otherwise the second import would resolve to the first.
+Every Lambda handler is named ``handler.py``, so they are loaded by path under distinct module
+names rather than imported — otherwise the second import would resolve to the first.
+
+The same collision applies to their *sibling* modules, which is subtler and bites harder. In Lambda
+each function is its own deployment package, so ``rendering.py`` unambiguously means "the one next
+to me". Under pytest all the function directories are visible at once, and a bare
+``from rendering import ...`` resolves to whichever directory reached ``sys.path`` first — so
+``resume_agent`` importing ``render_pdf`` can land in ``checkin``'s renderer and fail with a
+genuinely baffling error. :func:`load_handler` therefore isolates each load, rather than leaving
+callers to avoid ever reusing a filename.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 _ROOT = Path(__file__).resolve().parents[1]
+_FUNCTIONS = _ROOT / "backend" / "functions"
 
 
 def load_handler(module_name: str, function_dir: str):
-    """Load ``backend/functions/<function_dir>/handler.py`` under a unique module name."""
-    path = _ROOT / "backend" / "functions" / function_dir / "handler.py"
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
+    """Load ``backend/functions/<function_dir>/handler.py`` under a unique module name.
+
+    The function's own directory is placed first on ``sys.path`` for the duration of the load and
+    removed afterwards, and any module it imported from there is evicted from ``sys.modules`` on
+    the way out. Both halves are needed: the path entry makes ``from rendering import ...`` find
+    the *right* sibling, and the eviction stops that sibling from being served, from cache, to the
+    next function that asks for the same name.
+    """
+    function_root = _FUNCTIONS / function_dir
+    path = function_root / "handler.py"
+
+    before = set(sys.modules)
+    sys.path.insert(0, str(function_root))
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, path)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    finally:
+        try:
+            sys.path.remove(str(function_root))
+        except ValueError:  # pragma: no cover - only if a test mutated sys.path mid-load
+            pass
+        for name in set(sys.modules) - before:
+            origin = getattr(sys.modules[name], "__file__", None) or ""
+            if origin.startswith(str(function_root)):
+                del sys.modules[name]
+
     return module
 
 

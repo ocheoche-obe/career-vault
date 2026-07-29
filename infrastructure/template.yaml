@@ -99,6 +99,44 @@ Parameters:
       sentinel (ADR-030). The agent self-invokes asynchronously (ADR-037), so it needs room for an
       in-flight worker plus a fresh POST/GET; 2 still bounds parallel runaway Bedrock spend, and the
       per-run token ceiling (ADR-036) is the primary cost guard.
+  CheckinReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for checkin_lambda (-1 = unset). One scheduled invocation per day
+      processes every due user in a single pass, so 1 is the correct cap: a second concurrent run
+      would only ever be a Scheduler retry racing the first, which the conditional slot claim
+      (§3.3.4) already resolves.
+  SesEventHandlerReservedConcurrency:
+    Type: Number
+    Default: -1
+    Description: >
+      Reserved concurrency for ses_event_handler (-1 = unset). Bounce/complaint volume is a handful
+      of events a month at MVP.
+  CheckinSenderAddress:
+    Type: String
+    Default: oche.ocheobe@gmail.com
+    Description: >
+      The From address for check-in emails, created as an SES email identity. SES is in sandbox
+      (verified 2026-07-28: ProductionAccessEnabled=false), which means it can only send *to*
+      verified addresses too — so at MVP this doubles as the recipient identity. CloudFormation
+      creates the identity and SES emails a verification link, but CLICKING IT IS MANUAL: the
+      stack reaches CREATE_COMPLETE with the identity unverified, and sends fail until it's done.
+  CheckinScheduleExpression:
+    Type: String
+    Default: cron(0 23 * * ? *)
+    Description: >
+      When EventBridge Scheduler fires checkin_lambda. Daily at 23:00 UTC (~16:00 PT) — the fire is
+      daily, but next_checkin_at on each PROFILE is what paces the actual cadence, so all four
+      FR-4.1 cadences run off this one schedule (ADR-039). Fixed UTC: the send drifts an hour when
+      the user's zone leaves DST, which is documented and accepted at single-user MVP.
+  CheckinScheduleState:
+    Type: String
+    Default: ENABLED
+    AllowedValues: [ENABLED, DISABLED]
+    Description: >
+      Kill switch for the daily fire. Set DISABLED to stop all check-ins without deleting state —
+      distinct from FR-4.6's per-user pause, which is a user setting rather than an operator one.
   AlarmEmail:
     Type: String
     Default: oche.ocheobe@gmail.com
@@ -124,6 +162,8 @@ Conditions:
   HasCareerCrudReservedConcurrency: !Not [!Equals [!Ref CareerCrudReservedConcurrency, -1]]
   HasResumeParserReservedConcurrency: !Not [!Equals [!Ref ResumeParserReservedConcurrency, -1]]
   HasResumeAgentReservedConcurrency: !Not [!Equals [!Ref ResumeAgentReservedConcurrency, -1]]
+  HasCheckinReservedConcurrency: !Not [!Equals [!Ref CheckinReservedConcurrency, -1]]
+  HasSesEventHandlerReservedConcurrency: !Not [!Equals [!Ref SesEventHandlerReservedConcurrency, -1]]
 
 Globals:
   Function:
@@ -767,11 +807,263 @@ Resources:
       RetentionInDays: !Ref LogRetentionInDays
 
   # ---------------------------------------------------------------------------
+  # Check-in emails (FR-4, arch §3.3 + §4.5, ADR-011/-021/-039)
+  # ---------------------------------------------------------------------------
+  # The sender identity. In sandbox this is also the only address SES will deliver *to*, so one
+  # identity covers both ends at MVP. Verification is a link in the inbox — CloudFormation cannot
+  # complete it, and the stack will report success while sends still fail with a
+  # MessageRejected "Email address is not verified" until it is clicked.
+  CheckinEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref CheckinSenderAddress
+
+  # A Configuration Set rather than account-level notifications (§4.5.3): destinations attach per
+  # sending workflow, so a future transactional send path can route its events somewhere else.
+  # It also carries the TLS-required policy from §4.4.6.
+  CheckinConfigurationSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Sub 'careervault-checkins-${Environment}'
+      DeliveryOptions:
+        TlsPolicy: REQUIRE
+      ReputationOptions:
+        ReputationMetricsEnabled: true
+
+  # Deliberately NOT the alarm topic (§4.5.5). Alarms are rare and must be noticed; SES events are
+  # routine. One topic for both means the routine traffic trains you to ignore the page.
+  SesEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'careervault-ses-events-${Environment}'
+
+  # SES publishes as a service principal, so the topic must grant it — an IAM role on our side
+  # cannot express "let SES publish here". Scoped by SourceAccount so another account's SES cannot
+  # publish into this topic.
+  SesEventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SesEventsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ses.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SesEventsTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+
+  # Bounce and Complaint only (§4.5.3). Delivery/Send/Reject are not useful signal at this volume
+  # and would be pure log noise.
+  CheckinEventDestination:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    Properties:
+      ConfigurationSetName: !Ref CheckinConfigurationSet
+      EventDestination:
+        Name: bounce-complaint-to-sns
+        Enabled: true
+        MatchingEventTypes:
+          - BOUNCE
+          - COMPLAINT
+        SnsDestination:
+          TopicARN: !Ref SesEventsTopic
+
+  # Failure-routing, not event-routing (§4.5.1). Two DLQs for two different invokers: this one
+  # catches Scheduler→Lambda failures after retries are exhausted.
+  CheckinSchedulerDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'careervault-checkin-scheduler-dlq-${Environment}'
+      # 14 days: a Friday-night failure is still investigable the following weekend.
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  # ...and this one catches SNS→Lambda failures. Independent layers, either can fire alone.
+  SesHandlerDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'careervault-ses-handler-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  CheckinFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-checkin-${Environment}'
+      CodeUri: ../backend/functions/checkin/
+      Handler: handler.handler
+      # One pass over every due user: a Scan, then per user a corpus read + one Haiku call + a
+      # conditional write + an SES send. Single-user MVP finishes in a few seconds; the headroom is
+      # for the loop, since a scheduled job has no client waiting on it.
+      Timeout: 120
+      ReservedConcurrentExecutions: !If
+        - HasCheckinReservedConcurrency
+        - !Ref CheckinReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: checkin_lambda
+          BEDROCK_HAIKU_MODEL_ID: !Ref HaikuInferenceProfileId
+          CHECKIN_SENDER_ADDRESS: !Ref CheckinSenderAddress
+          SES_CONFIGURATION_SET: !Ref CheckinConfigurationSet
+          # FR-4.4 — every check-in links back to the app.
+          APP_BASE_URL: !Sub 'https://${SiteDistribution.DomainName}'
+      Policies:
+        - Statement:
+            # Scan finds due PROFILEs (ADR-039 — no GSI, so no Query reaches across users); Query
+            # reads the recency window of ENTRY items; UpdateItem claims the send slot; PutItem
+            # writes the CHECKINLOG audit row. No entry writes: the check-in never mutates career
+            # history, it only asks the user to.
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:Query
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
+                - dynamodb:PutItem
+              Resource: !GetAtt CareerVaultTable.Arn
+            # Haiku composes the email (ADR-011 — bounded, low-stakes generation; Sonnet would cost
+            # 3-5x for no observable gain). INFERENCE_PROFILE-only, so the profile ARN plus the
+            # foundation-model ARN in every region the `us.` profile can route to (ADR-031).
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${HaikuInferenceProfileId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-1::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-east-2::foundation-model/${HaikuFoundationModelId}'
+                - !Sub 'arn:${AWS::Partition}:bedrock:us-west-2::foundation-model/${HaikuFoundationModelId}'
+            # Sending needs permission on both the identity and the configuration set — naming only
+            # the identity yields an AccessDenied that reads as if the identity were the problem.
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${CheckinSenderAddress}'
+                - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/${CheckinConfigurationSet}'
+
+  CheckinLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-checkin-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # Scheduler invokes through this role rather than via a resource-based policy on the function —
+  # that is simply how EventBridge Scheduler targets work, and it is why no AWS::Lambda::Permission
+  # appears here (unlike an SNS or API Gateway trigger).
+  CheckinSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'careervault-checkin-scheduler-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: invoke-checkin-and-dlq
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt CheckinFunction.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt CheckinSchedulerDlq.Arn
+
+  CheckinSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub 'careervault-checkin-${Environment}'
+      Description: Daily check-in run; per-user cadence is paced by next_checkin_at (ADR-039).
+      State: !Ref CheckinScheduleState
+      ScheduleExpression: !Ref CheckinScheduleExpression
+      ScheduleExpressionTimezone: UTC
+      # OFF, not a jitter window: there is one target and no thundering herd to spread out, and an
+      # exact fire time makes "did it run?" answerable from the logs without arithmetic.
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      Target:
+        Arn: !GetAtt CheckinFunction.Arn
+        RoleArn: !GetAtt CheckinSchedulerRole.Arn
+        # Empty payload — the Lambda discovers who is due from DynamoDB (§3.3.3).
+        Input: '{}'
+        RetryPolicy:
+          MaximumRetryAttempts: 3
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn: !GetAtt CheckinSchedulerDlq.Arn
+
+  SesEventHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'careervault-ses-event-handler-${Environment}'
+      CodeUri: ../backend/functions/ses_event_handler/
+      Handler: handler.handler
+      # The smallest function in the system: parse one SNS message, find a PROFILE, stamp it.
+      MemorySize: 256
+      Timeout: 30
+      ReservedConcurrentExecutions: !If
+        - HasSesEventHandlerReservedConcurrency
+        - !Ref SesEventHandlerReservedConcurrency
+        - !Ref AWS::NoValue
+      Layers:
+        - !Ref SharedLayer
+      Environment:
+        Variables:
+          POWERTOOLS_SERVICE_NAME: ses_event_handler
+      # Async invocation config — this DLQ is for SNS→Lambda failures only, and is a different
+      # mechanism from the Scheduler's DLQ above (§4.5.2).
+      EventInvokeConfig:
+        MaximumRetryAttempts: 2
+        MaximumEventAgeInSeconds: 21600
+        DestinationConfig:
+          OnFailure:
+            Type: SQS
+            Destination: !GetAtt SesHandlerDlq.Arn
+      Policies:
+        - Statement:
+            # Scan resolves recipient address → user_id (§4.5.4 assumed a Query; there is no GSI on
+            # email, so it is a Scan). UpdateItem stamps the bounce/complaint. Nothing else — no
+            # Bedrock, no SES, no writes outside the PROFILE.
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:UpdateItem
+              Resource: !GetAtt CareerVaultTable.Arn
+            - Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt SesHandlerDlq.Arn
+      Events:
+        SesEvent:
+          Type: SNS
+          Properties:
+            Topic: !Ref SesEventsTopic
+
+  SesEventHandlerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/careervault-ses-event-handler-${Environment}'
+      RetentionInDays: !Ref LogRetentionInDays
+
+  # ---------------------------------------------------------------------------
   # Cost & operational guardrails (arch §4.1.4)
   # ---------------------------------------------------------------------------
   # Single SNS topic for all CareerVault alarms; the user's email is subscribed (confirm the
-  # subscription via the link AWS emails on first deploy). The SES bounce/complaint topic (4.5)
-  # is intentionally separate and not part of this slice.
+  # subscription via the link AWS emails on first deploy). The SES bounce/complaint topic
+  # (SesEventsTopic, above) is intentionally separate per §4.5.5.
   AlarmTopic:
     Type: AWS::SNS::Topic
     Properties:
@@ -871,6 +1163,88 @@ Resources:
       Period: 300
       EvaluationPeriods: 1
       Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  CheckinErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-checkin-errors-${Environment}'
+      AlarmDescription: checkin_lambda errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref CheckinFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      # Threshold 0, not 5. Every other function here is user-facing and retried by a human, so a
+      # handful of errors is noise. This one runs once a day: five errors would take five days to
+      # accumulate, by which point five check-ins never went out. A scheduled job's errors are the
+      # whole signal (§3.3.5).
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  SesEventHandlerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-ses-event-handler-errors-${Environment}'
+      AlarmDescription: ses_event_handler errors exceeded threshold (arch §4.1.4)
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SesEventHandlerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  # "If there is anything in the DLQ, page me" (§4.5.2 / §4.5.6). A DLQ you do not alarm on is a
+  # place failures go to be forgotten — the entire point is that these queues stay empty.
+  CheckinSchedulerDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-checkin-scheduler-dlq-${Environment}'
+      AlarmDescription: Check-in Scheduler DLQ is non-empty — a scheduled run failed all retries.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt CheckinSchedulerDlq.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  SesHandlerDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'careervault-ses-handler-dlq-${Environment}'
+      AlarmDescription: SES event handler DLQ is non-empty — bounce/complaint events were dropped.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt SesHandlerDlq.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
       ComparisonOperator: GreaterThanThreshold
       TreatMissingData: notBreaching
       AlarmActions:
@@ -1045,3 +1419,15 @@ Outputs:
   CloudFrontUrl:
     Description: Public HTTPS URL of the deployed frontend (default *.cloudfront.net domain).
     Value: !Sub 'https://${SiteDistribution.DomainName}'
+  CheckinFunctionName:
+    Description: checkin_lambda name — for manual `aws lambda invoke` during smoke tests.
+    Value: !Ref CheckinFunction
+  CheckinSenderIdentity:
+    Description: >
+      SES sender identity. Verification is MANUAL — SES emails a link on first deploy and sends
+      fail with MessageRejected until it is clicked. Check with
+      `aws sesv2 get-email-identity --email-identity <this>`.
+    Value: !Ref CheckinEmailIdentity
+  SesEventsTopicArn:
+    Description: SNS topic carrying SES Bounce/Complaint events (separate from the alarm topic).
+    Value: !Ref SesEventsTopic
