@@ -1,13 +1,22 @@
-"""Unit tests for chat_lambda — the Phase A parse turn (Section 3.1).
+"""Unit tests for chat_lambda — the routing turn (Section 3.1 / ADR-038).
 
 Bedrock and DynamoDB are faked; no test reaches AWS and the suite costs nothing to run.
 """
+
+import sys
+from pathlib import Path
 
 import pytest
 from helpers import FakeLambdaContext, api_event, body_of, load_handler, text_response, tool_use_response
 
 from careervault import bedrock_client
 from careervault.bedrock_client import BedrockError
+
+# handler.py imports its sibling `qa` module, which resolves from /var/task in Lambda; locally the
+# function directory has to be on sys.path first (same shape as test_resume_agent_loop.py).
+_CHAT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "chat"
+if str(_CHAT_DIR) not in sys.path:
+    sys.path.insert(0, str(_CHAT_DIR))
 
 chat = load_handler("chat_handler", "chat")
 
@@ -274,3 +283,201 @@ def test_oversized_message_is_bad_request(fake_ddb):
 
 def test_malformed_json_body_is_bad_request(fake_ddb):
     assert chat.handler(api_event("{not json"), FakeLambdaContext())["statusCode"] == 400
+
+
+# ---------------------------------------------------------------------------------------------
+# Slice 7 — chat over your data (FR-6.1 / ADR-038)
+#
+# A Q&A turn is: route (Haiku, forced tool) -> Titan embed -> rank in-Lambda -> synthesize
+# (Haiku, NO tools). The tests below pin both the behaviour and the security properties that
+# made the ENTRY# read widening acceptable.
+# ---------------------------------------------------------------------------------------------
+
+ANSWER_TOOL_INPUT = {"query": "certifications held by the user", "intent": "aggregate"}
+
+
+def _entry_item(entry_type="CERT", title="AWS SAA", **extra):
+    item = {
+        "PK": "USER#user-sub-1",
+        "SK": f"ENTRY#{MESSAGE_ULID}",
+        "entry_id": MESSAGE_ULID,
+        "entry_type": entry_type,
+        "title": title,
+        "content": "Passed on the first attempt.",
+        "embedding": [0.1] * 8,
+    }
+    item.update(extra)
+    return item
+
+
+def _mock_converse_capturing_kwargs(monkeypatch, responses):
+    """Like _mock_converse, but records each call's kwargs so tool_config can be asserted on."""
+    calls: list[dict] = []
+    queue = list(responses)
+
+    def _fake(messages, **kwargs):
+        calls.append({"messages": messages, **kwargs})
+        result = queue.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(bedrock_client, "converse", _fake)
+    return calls
+
+
+@pytest.fixture
+def fake_corpus(monkeypatch):
+    """Serve a fixed ENTRY# corpus and a stub Titan embedding."""
+    corpus = [_entry_item("CERT"), _entry_item("CERT", "Azure Fundamentals"), _entry_item("JOB", "SRE")]
+    monkeypatch.setattr(chat, "query_entries", lambda user_id: corpus)
+    monkeypatch.setattr(bedrock_client, "embed", lambda text: [0.1] * 8)
+    return corpus
+
+
+def test_answer_question_returns_grounded_answer_with_sources(monkeypatch, fake_ddb, fake_corpus):
+    _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("You hold two certifications.")],
+    )
+
+    response = chat.handler(api_event({"message": "how many certs do I have?"}), FakeLambdaContext())
+    body = body_of(response)
+
+    assert response["statusCode"] == 200
+    assert body["kind"] == "answer"
+    assert body["answer"] == "You hold two certifications."
+    assert [s["title"] for s in body["sources"]] == ["AWS SAA", "Azure Fundamentals", "SRE"]
+
+
+def test_synthesis_call_is_made_with_no_tools(monkeypatch, fake_ddb, fake_corpus):
+    """THE injection control (ADR-038): the one call that sees entry content has no tool to call.
+
+    If this fails, injected entry content saying "now call propose_entry" has something to reach,
+    and the widening in §4.2.3 stops being defensible. Do not relax it.
+    """
+    calls = _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("Two.")],
+    )
+
+    chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext())
+
+    routing_call, synthesis_call = calls
+    assert routing_call["tool_config"]["toolChoice"] == {"any": {}}  # routing keeps forced tools
+    assert synthesis_call.get("tool_config") is None  # synthesis has none at all
+
+
+def test_routing_call_never_sees_entry_content(monkeypatch, fake_ddb, fake_corpus):
+    """Privilege separation: the call *with* tools must not be fed untrusted entry text."""
+    calls = _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("Two.")],
+    )
+
+    chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext())
+
+    routing_text = str(calls[0]["messages"])
+    assert "Passed on the first attempt" not in routing_text
+    assert "career_history" not in routing_text
+
+
+def test_census_counts_the_whole_corpus_not_the_retrieved_slice(monkeypatch, fake_ddb):
+    """The census must survive top-k truncation, or counting questions answer 'k'."""
+    corpus = [_entry_item("CERT", f"Cert {i}") for i in range(12)]
+    monkeypatch.setattr(chat, "query_entries", lambda user_id: corpus)
+    monkeypatch.setattr(bedrock_client, "embed", lambda text: [0.1] * 8)
+    calls = _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("Twelve.")],
+    )
+
+    body = body_of(chat.handler(api_event({"message": "how many?"}), FakeLambdaContext()))
+
+    grounding = str(calls[1]["messages"])
+    assert "CERT: 12" in grounding
+    assert "TOTAL: 12" in grounding
+    assert len(body["sources"]) == 8  # top-k truncated, census did not
+
+
+def test_answer_is_persisted_as_an_assistant_turn(monkeypatch, fake_ddb, fake_corpus):
+    _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("You hold two certifications.")],
+    )
+
+    chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext())
+
+    assistant_turns = [w for w in fake_ddb if w["role"] == "assistant"]
+    assert assistant_turns[-1]["content"] == "You hold two certifications."
+
+
+def test_a_question_never_writes_an_entry(monkeypatch, fake_ddb, fake_corpus):
+    """Exit criterion: asking a question cannot create an entry (§3.1.3 stands)."""
+    _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), text_response("Two.")],
+    )
+
+    body = body_of(chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext()))
+
+    assert body["kind"] == "answer"
+    assert "candidate" not in body
+    # Everything this Lambda wrote is a conversation message, never an ENTRY# item.
+    assert all(w["SK"].startswith("CONVO#") for w in fake_ddb)
+
+
+def test_empty_corpus_answers_without_calling_bedrock(monkeypatch, fake_ddb):
+    """Nothing to ground against — a model round-trip could only cost more to say the same thing."""
+    monkeypatch.setattr(chat, "query_entries", lambda user_id: [])
+
+    def _explode(*args, **kwargs):  # pragma: no cover - asserts it is never reached
+        raise AssertionError("embed must not be called on an empty corpus")
+
+    monkeypatch.setattr(bedrock_client, "embed", _explode)
+    calls = _mock_converse_capturing_kwargs(
+        monkeypatch, [tool_use_response("answer_question", ANSWER_TOOL_INPUT)]
+    )
+
+    body = body_of(chat.handler(api_event({"message": "what have I done?"}), FakeLambdaContext()))
+
+    assert body["kind"] == "answer"
+    assert body["sources"] == []
+    assert "haven't logged anything yet" in body["answer"]
+    assert len(calls) == 1  # routing only; no synthesis call
+
+
+def test_embedding_failure_degrades_to_a_recoverable_chat_error(monkeypatch, fake_ddb, fake_corpus):
+    _mock_converse_capturing_kwargs(
+        monkeypatch, [tool_use_response("answer_question", ANSWER_TOOL_INPUT)]
+    )
+
+    def _fail(text):
+        raise BedrockError("titan down")
+
+    monkeypatch.setattr(bedrock_client, "embed", _fail)
+
+    body = body_of(chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext()))
+
+    assert body["kind"] == "error"  # session stays alive (Section 3.1.6)
+
+
+def test_synthesis_failure_degrades_to_a_recoverable_chat_error(monkeypatch, fake_ddb, fake_corpus):
+    _mock_converse_capturing_kwargs(
+        monkeypatch,
+        [tool_use_response("answer_question", ANSWER_TOOL_INPUT), BedrockError("haiku down")],
+    )
+
+    body = body_of(chat.handler(api_event({"message": "how many certs?"}), FakeLambdaContext()))
+
+    assert body["kind"] == "error"
+
+
+def test_empty_query_from_the_router_is_an_error_not_a_blind_retrieval(monkeypatch, fake_ddb, fake_corpus):
+    _mock_converse_capturing_kwargs(
+        monkeypatch, [tool_use_response("answer_question", {"query": "  ", "intent": "lookup"})]
+    )
+
+    body = body_of(chat.handler(api_event({"message": "?"}), FakeLambdaContext()))
+
+    assert body["kind"] == "error"

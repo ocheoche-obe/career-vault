@@ -7,6 +7,7 @@ validate-time contracts cannot drift. These tests pin that property.
 from careervault.pydantic_models.entry import ENTRY_TYPES
 from careervault.pydantic_models.tools import (
     CLARIFICATION_REASONS,
+    QUESTION_INTENTS,
     build_extract_tool_config,
     build_tool_config,
 )
@@ -19,13 +20,26 @@ def _propose_schema():
 
 
 def test_tool_choice_forces_a_tool_call():
-    # `any` = the model must call one of the two tools; it may not answer with free text.
+    # `any` = the model must call one of the tools; it may not answer with free text. ADR-038
+    # keeps this while adding a third tool — that is what leaves 2b ingestion behaviour untouched.
     assert build_tool_config()["toolChoice"] == {"any": {}}
 
 
-def test_exactly_two_tools_are_offered():
+def test_exactly_three_tools_are_offered():
     names = {t["toolSpec"]["name"] for t in build_tool_config()["tools"]}
-    assert names == {"propose_entry", "ask_clarification"}
+    assert names == {"propose_entry", "ask_clarification", "answer_question"}
+
+
+def test_answer_question_schema_carries_a_query_and_an_intent():
+    """ADR-038: the tool signals routing and returns a retrieval query — never an answer."""
+    config = build_tool_config()
+    spec = next(t["toolSpec"] for t in config["tools"] if t["toolSpec"]["name"] == "answer_question")
+    schema = spec["inputSchema"]["json"]
+
+    assert set(schema["required"]) == {"query", "intent"}
+    assert schema["properties"]["intent"]["enum"] == list(QUESTION_INTENTS)
+    # No field through which the model could smuggle an answer past retrieval.
+    assert set(schema["properties"]) == {"query", "intent"}
 
 
 def test_entry_type_enum_matches_the_models():

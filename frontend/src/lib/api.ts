@@ -30,9 +30,18 @@ export type Entry = {
   [key: string]: unknown;
 };
 
+/** What grounded an answer, so the user can check it against their own entries (ADR-038). */
+export type AnswerSource = {
+  entry_id: string;
+  entry_type: string;
+  title: string;
+  score: number;
+};
+
 export type ChatResponse =
   | { kind: "clarification"; question: string; reason?: string; session_id: string }
   | { kind: "parse_candidate"; candidate: EntryCandidate; session_id: string }
+  | { kind: "answer"; answer: string; sources: AnswerSource[]; session_id: string }
   | { kind: "error"; message: string; session_id: string };
 
 export type FieldError = { field: string; error: string };

