@@ -13,9 +13,16 @@ The DLQ attached to it is for *SNS→Lambda* delivery failures and is unrelated 
 on ``checkin_lambda`` — failure handling belongs to whichever component did the invoking, and here
 that is two different components at two different layers.
 
-MVP takes **no automated action** on either event (§3.3.8): it records, counts, and alarms. Auto
--pausing check-ins after repeated bounces is the v1.1 hook, deliberately not built, because the
-first thing an auto-pause does when it misfires is silently stop a working feature.
+MVP takes **no automated action** on either event (§3.3.8): it records and counts, and that is all.
+`CheckinsBounced` / `CheckinsComplained` are emitted but **nothing alarms on them yet** — the only
+alarm here is on this function's own errors. Auto-pausing check-ins after repeated bounces is the
+v1.1 hook, deliberately not built, because the first thing an auto-pause does when it misfires is
+silently stop a working feature.
+
+That gap is a deadline, not a preference: nothing in :func:`careervault.checkin_schedule.is_due`
+consults `bounce_count`, so a permanently-bouncing address keeps being sent to indefinitely. Harmless
+in the SES sandbox with one self-owned verified recipient; an account-reputation liability the moment
+production access is granted. See B-019 — it must be closed *before* leaving the sandbox, not after.
 """
 
 from __future__ import annotations

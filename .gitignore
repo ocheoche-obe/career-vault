@@ -51,3 +51,5 @@ Thumbs.db
 logs/
 # Playwright MCP — persistent browser profile. Holds a live Cognito session; never commit.
 .playwright-profile/
+# Playwright MCP — per-run page snapshots. Regenerated on every browser call.
+.playwright-mcp/
