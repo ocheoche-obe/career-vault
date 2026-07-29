@@ -960,7 +960,9 @@ Resources:
   CheckinSchedulerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'careervault-checkin-scheduler-${Environment}'
+      # Deliberately unnamed. An explicit RoleName makes the whole stack require
+      # CAPABILITY_NAMED_IAM, and every other role here is SAM-generated — widening the deploy
+      # capability for one cosmetic name is a bad trade.
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

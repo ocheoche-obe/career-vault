@@ -111,6 +111,51 @@ def test_malformed_tool_output_degrades_to_static(monkeypatch):
     assert tier == "static"
 
 
+def test_an_output_missing_only_a_pleasantry_is_salvaged_not_discarded(monkeypatch):
+    """Regression from the first live personalized send.
+
+    Haiku returned a complete, well-written email but omitted `sign_off`, which the tool schema
+    lists as `required` — Converse treats that as a hint, not a constraint, and the same call
+    varies run to run at temperature 0. The response was rejected and the run fell to the static
+    tier, discarding a good email over a missing closing line.
+    """
+    response = converse_returning()
+    payload = response()["output"]["message"]["content"][0]["toolUse"]["input"]
+    payload.pop("sign_off")
+    payload.pop("greeting")
+    monkeypatch.setattr(bedrock_client, "converse", lambda **kwargs: {
+        "output": {"message": {"content": [{"toolUse": {"name": "compose_checkin", "input": payload}}]}}
+    })
+
+    email, tier = composer.compose(profile(), [entry()])
+
+    assert tier == "personalized"
+    assert email.sign_off  # defaulted, not empty
+    assert email.greeting
+
+
+def test_an_output_with_no_prompts_is_not_salvageable(monkeypatch):
+    """The line between tolerance and dishonesty: no prompts means it is not a check-in."""
+    monkeypatch.setattr(bedrock_client, "converse", converse_returning(prompts=[]))
+
+    _, tier = composer.compose(profile(), [entry()])
+
+    assert tier == "static"
+
+
+def test_an_output_with_no_subject_is_not_salvageable(monkeypatch):
+    response = converse_returning()
+    payload = response()["output"]["message"]["content"][0]["toolUse"]["input"]
+    payload.pop("subject")
+    monkeypatch.setattr(bedrock_client, "converse", lambda **kwargs: {
+        "output": {"message": {"content": [{"toolUse": {"name": "compose_checkin", "input": payload}}]}}
+    })
+
+    _, tier = composer.compose(profile(), [entry()])
+
+    assert tier == "static"
+
+
 def test_a_response_with_no_tool_use_block_degrades_to_static(monkeypatch):
     monkeypatch.setattr(
         bedrock_client,

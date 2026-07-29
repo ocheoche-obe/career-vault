@@ -30,23 +30,48 @@ MAX_ENTRY_CHARS = 400
 MAX_OUTPUT_TOKENS = 700
 
 
+#: Filled in when the model omits a cosmetic field. See :class:`CheckinEmail` for why that is not
+#: treated as a failure.
+DEFAULT_GREETING = "Hi there,"
+DEFAULT_SIGN_OFF = "Takes a minute now; saves an afternoon when you next update your résumé."
+
+
 class CheckinEmail(BaseModel):
     """The composed check-in, as Haiku returns it through the ``compose_checkin`` tool.
 
     Deliberately a set of *fields* rather than a blob of HTML. The Jinja2 template owns layout and
     escaping (§3.3.3 step 4), so the model never emits markup — which keeps a model that has just
     read arbitrary user-supplied entry content from being able to inject any into an email.
+
+    **Which fields are strict is a deliberate split, learned from a live run.** ``required`` in a
+    Converse tool schema is a strong hint, not a constraint: the first personalized send omitted
+    ``sign_off`` despite it being listed, while the generic send moments earlier included it — the
+    same temperature-0 variance this project has hit before. Rejecting that response sent the run
+    to the static tier, which means a *complete, well-written email was discarded over a missing
+    pleasantry*.
+
+    So the model is tolerant where tolerance is honest and strict where it is not:
+
+    - ``subject`` and ``prompts`` stay required. Without a subject there is no email, and without
+      prompts there is no *check-in* — just a greeting. A response missing either genuinely is
+      unusable, and falling back is right.
+    - ``greeting`` and ``sign_off`` default. They are framing, not content; substituting a fixed
+      line costs nothing a reader would notice.
+
+    The general shape worth carrying: **validate what makes the output useful, default what merely
+    makes it polished.** A schema that is strict about cosmetics converts recoverable variance into
+    a visible downgrade.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     subject: str = Field(max_length=140)
-    greeting: str = Field(max_length=200)
+    greeting: str = Field(default=DEFAULT_GREETING, max_length=200)
     # Present only in the personalized tier; the template hides the block when absent (§3.3.6).
     recent_activity_summary: str | None = Field(default=None, max_length=800)
-    prompts: list[str] = Field(default_factory=list, max_length=4)
+    prompts: list[str] = Field(min_length=1, max_length=4)
     aspirational_link: str | None = Field(default=None, max_length=400)
-    sign_off: str = Field(max_length=200)
+    sign_off: str = Field(default=DEFAULT_SIGN_OFF, max_length=200)
 
 
 def build_checkin_tool_config() -> dict:

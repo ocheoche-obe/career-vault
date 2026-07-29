@@ -31,13 +31,27 @@ const CADENCE_LABELS: Record<CheckinCadence, string> = {
   quarterly: "Every three months",
 };
 
-/** Render a stored UTC timestamp in the reader's own zone, or a dash if it isn't set yet. */
-function formatWhen(value: string | null | undefined): string {
-  if (!value) return "—";
+/** Render a stored UTC timestamp in the reader's own zone, or null if it isn't usable. */
+function formatWhen(value: string | null | undefined): string | null {
+  if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime())
-    ? "—"
+    ? null
     : parsed.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
+
+/**
+ * Describe the next send.
+ *
+ * `next_checkin_at` is written *only* by the check-in run, never by this form — it is server-owned
+ * scheduling state, so the API rejects it in a request body. That means it is legitimately absent
+ * until the first check-in goes out, and an earlier version of this component rendered that as
+ * "Next check-in: —" immediately after a save. Technically accurate, and it reads exactly like the
+ * save silently failed. Say what absent actually means instead.
+ */
+function nextCheckinLabel(next: string | null | undefined): string {
+  const when = formatWhen(next);
+  return when ? `Next check-in: ${when}` : "Next check-in: with the next daily run";
 }
 
 export function Settings({ idToken }: { idToken: string }) {
@@ -188,11 +202,16 @@ export function Settings({ idToken }: { idToken: string }) {
       </label>
 
       <p className="settings-meta">
-        {paused
-          ? "Paused — no check-ins will be sent."
-          : `Next check-in: ${formatWhen(profile.next_checkin_at)}`}
-        {profile.last_checkin_sent_at && ` · Last sent: ${formatWhen(profile.last_checkin_sent_at)}`}
+        {paused ? "Paused — no check-ins will be sent." : nextCheckinLabel(profile.next_checkin_at)}
+        {formatWhen(profile.last_checkin_sent_at) &&
+          ` · Last sent: ${formatWhen(profile.last_checkin_sent_at)}`}
       </p>
+      {!paused && (
+        <p className="settings-meta">
+          Changing how often takes effect from the next check-in onward — it doesn't reschedule one
+          that's already due.
+        </p>
+      )}
 
       {errors.length > 0 && (
         <ul className="settings-error">

@@ -66,7 +66,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
-| 8 | Check-in emails | FR-4 | 🔨 | — |
+| 8 | Check-in emails | FR-4 | ✅ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
@@ -786,7 +786,7 @@ B-008 (P1 résumé identity header — still the highest-value standalone fix).
 
 ---
 
-## Slice 8 — Check-in emails 🔨
+## Slice 8 — Check-in emails ✅
 
 **Goal:** The habit loop — periodic personalized emails nudge the user to log fresh
 accomplishments, with a working unsubscribe/pause and bounce handling.
@@ -868,7 +868,69 @@ send; cadence moves `next_checkin_at`); the generic-reminder fallback (FR-4.5) i
 just coded; a simulated bounce (SES mailbox simulator) lands in `ses_event_handler` and is visible
 in logs and on the PROFILE; a CHECKINLOG item is written per send.
 
-**Completion notes:** _(filled at wrap)_
+**Completion notes:**
+
+Deployed to dev and verified end to end. **All three ADR-021 tiers were exercised live, not just
+coded** — each one produced a real email and a CHECKINLOG row:
+
+| Tier | Subject it produced | Entries referenced |
+|---|---|---|
+| `generic` | "What have you shipped lately?" | 0 |
+| `static` | "Anything worth logging this week?" | 1 (fallback fired) |
+| `personalized` | "Nice work on the AZ-900" | 1 |
+
+Also verified live: **both** idempotency layers (the due-ness gate, and separately the conditional
+slot claim under the real Scheduler-retry shape — due, but sent minutes ago → `skipped_idempotent`,
+no second email); pause suppressing a send while leaving `next_checkin_at` untouched; a
+weekly→monthly change pacing the next cycle at 30 days rather than 7; and the full bounce pipeline
+(SES mailbox simulator → Configuration Set → SNS → `ses_event_handler` → `bounce_count: 1`,
+`bounceType: Permanent` on the PROFILE). Both DLQs empty. Test data restored afterwards; the cycle
+is anchored to Friday 2026-07-31T23:00Z so the first *unassisted* run is the final confirmation.
+
+Measured **~$0.0026 per check-in** (~1.3K in / ~220 out tokens on Haiku), so ~**$0.01/month** at
+weekly cadence — matching §3.3.7's estimate and immaterial against the $5 ceiling.
+
+**Three things worth carrying out of this slice:**
+
+**(1) `required` in a Converse tool schema is a hint, not a constraint.** The first personalized
+send returned a complete, well-written email that omitted `sign_off` — a `required` field — and
+Pydantic rejected it, dropping a good email to the static tier. The generic send a minute earlier
+had included it; same prompt, same temperature 0. The fix was not a looser schema but a split:
+`subject` and `prompts` stay strict (without them it is not a check-in), `greeting` and `sign_off`
+default. **Validate what makes the output useful; default what merely makes it polished** — a schema
+strict about cosmetics converts recoverable model variance into a visible downgrade, and because the
+email still *arrives*, that downgrade is invisible without the `CheckinsStaticFallback` metric.
+
+**(2) The docs described two fields that had never existed** — `checkin_time_local` (§3.3.3) and
+`aspirational_goal` (§3.3.6). Exactly B-008's failure mode, twice, in the same feature. One was
+added (the generic fallback is inert without it) and one deliberately was not (nothing reads it;
+a field that implies a capability it does not have is worse than an absent one). The pattern is
+worth naming: **prose describing a data model drifts silently, because nothing fails when a field
+in a sentence never becomes a field in a schema.**
+
+**(3) The idempotency ordering has a price, and it is the right one here.** Claiming the send slot
+before calling SES means a failed send still consumes the cycle. Claiming after would mean a
+Scheduler retry delivers a duplicate. Idempotency buys "at most once" by giving up "at least once";
+no ordering yields both. Correct for a nudge, wrong for anything transactional → B-016.
+
+**Pulled in and closed:** B-014 (nested-`settings` merge — ADR-040, with all four DynamoDB premises
+probed against the live table first; the single-expression seed form was in the ADR's first draft as
+fact and was wrong), B-015 (fabricated placeholders, plus clearing the invented dev PROFILE values).
+
+**Also fixed in-slice:** a test-harness bug this slice exposed — `checkin/rendering.py` shadowed
+`resume_agent/rendering.py` because sibling modules resolved off a shared `sys.path`, breaking the
+agent's tests with a misleading error. `load_handler` now isolates each load; the residual case
+(tests importing siblings directly) is B-017.
+
+**Deferred:** B-016 (failed send consumes the cycle), B-017 (remaining test-harness `sys.path`
+fragility), B-018 (no integration test for the scheduled flow — slice 9 owns it, and it is the
+highest-value flow to cover since a scheduled job cannot be smoke-tested by clicking around),
+B-019 (bounce state has no UI and no automated response). **Not pulled in:** B-003, B-004, B-005,
+B-006/B-007, B-009, B-011, B-012, B-013.
+
+**Docs:** architecture **v2.1** (three corrections — §3.3.3 and §4.5.4 both said "Query" for what
+is necessarily a `Scan`; §4.5.4's IAM row gains `dynamodb:Scan`; the `checkin_time_local` claim
+retracted). New ADRs **-039**, **-040**, and **-021** promoted from placeholder to accepted.
 
 ---
 

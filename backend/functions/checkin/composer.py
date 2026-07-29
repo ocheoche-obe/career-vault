@@ -19,6 +19,7 @@ from typing import Any, Mapping, Sequence
 from careervault import bedrock_client
 from careervault.observability import logger
 from careervault.pydantic_models.checkin import (
+    DEFAULT_SIGN_OFF,
     MAX_ENTRY_CHARS,
     MAX_OUTPUT_TOKENS,
     MAX_PROMPT_ENTRIES,
@@ -116,7 +117,7 @@ def _static_email(profile: Mapping[str, Any]) -> CheckinEmail:
             "Learn something new, or finish a course or certification?",
             "Any wins, big or small, worth capturing while they're fresh?",
         ],
-        sign_off="Takes a minute now; saves an afternoon when you next update your résumé.",
+        sign_off=DEFAULT_SIGN_OFF,
     )
 
 

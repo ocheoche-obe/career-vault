@@ -1684,6 +1684,29 @@ settings form; without it, tier 2 degrades to tier 3 for every user, permanently
 - ⚠️ The 15-entry cap means a genuinely prolific fortnight is summarized from a subset. Acceptable:
   the email is a nudge, not a report.
 
+### Addendum — what actually triggers tier 3 (found on the first live run)
+
+The tier-3 trigger above is stated as "Bedrock failed after retries". The first live personalized
+send exposed a more common failure that the original design handled *too aggressively*: Haiku
+returned a complete, well-written email but **omitted `sign_off`**, a field the `compose_checkin`
+tool schema lists as `required`. Converse treats `required` as a strong hint rather than a
+constraint, and this project has already recorded that Haiku varies run-to-run even at temperature
+0 — the generic send a minute earlier had included the field. Pydantic rejected the response, and a
+perfectly good email was discarded in favour of the static template.
+
+The fix is a split in how strictly fields are validated, not a looser schema:
+
+- **`subject` and `prompts` stay required.** Without a subject there is no email; without prompts
+  there is no *check-in*, only a greeting. A response missing either is genuinely unusable and tier
+  3 is the right answer.
+- **`greeting` and `sign_off` default.** They are framing, not content.
+
+Generalised: **validate what makes the output useful; default what merely makes it polished.** A
+schema that is strict about cosmetics converts recoverable model variance into a visible downgrade —
+and because the email still arrives, the downgrade is invisible without the
+`CheckinsStaticFallback` metric. Structured-output flows over a non-deterministic model should
+prefer salvage over rejection wherever the missing piece is not load-bearing.
+
 ### Cross-cloud parallel
 The portable idea is **graceful degradation across capability tiers**, with the lowest tier having
 no dependency on the thing that fails. Azure Functions with a Durable Functions fallback activity,
@@ -1781,8 +1804,21 @@ Idempotency is unchanged from §3.3.4: the conditional `UpdateItem` claiming the
   and it is the trigger for the GSI that ADR-028 deferred.
 - ⚠️ Send time drifts one hour across DST boundaries. Accepted and documented above.
 - ⚠️ `next_checkin_at` is now load-bearing state with no UI. If it is ever written wrong, the symptom
-  is a silently missing email — hence the CHECKINLOG audit item and the `checkins.no_due_users`
+  is a silently missing email — hence the CHECKINLOG audit item and the `CheckinsNoDueUsers`
   metric, which distinguish "nothing to do" from "broken."
+- ⚠️ **A failed send still consumes the cycle.** The slot claim writes `last_checkin_sent_at` and
+  `next_checkin_at` *before* SES is called (§3.3.4), so an SES failure after the claim leaves the
+  user marked as sent and the next nudge a full cadence away. This is not an oversight in the
+  ordering — it is the ordering's price. Claiming *after* the send would make a Scheduler retry
+  deliver a duplicate; claiming *before* makes a transient failure skip a cycle. **Idempotency buys
+  "at most once" by giving up "at least once", and no ordering yields both.** For a nudge the trade
+  is right — a missed reminder is a non-event, a duplicate is an irritation — but the reverse
+  choice would be correct for, say, a billing notice, and the reasoning should be re-derived rather
+  than inherited if this pattern is copied.
+- ⚠️ Cadence changes take effect from the *next* send, not immediately: `next_checkin_at` is only
+  rewritten when a check-in goes out, so a weekly→monthly switch still honours the already-scheduled
+  send and starts spacing at 30 days after it. Surfaced in the settings UI rather than fixed, since
+  recomputing on write would let a cadence change repeatedly postpone a due check-in.
 
 ### Cross-cloud parallel
 The pattern — **a frequent fixed trigger plus a due-timestamp in the datastore**, rather than a
