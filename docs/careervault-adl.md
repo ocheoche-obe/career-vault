@@ -2036,7 +2036,7 @@ Tier the suite by **cost**, and make cost a visible property of a test rather th
 | **local** | *(default)* | DynamoDB Local — conditional writes, SK-prefix scoping, nested-`settings` merge | $0 |
 | **cloud** | *(default)* | Deployed dev: auth, CRUD, settings, presign, check-in state machine with Bedrock stubbed at the seam | ~$0 |
 | **bedrock** | `@pytest.mark.bedrock` | Real Converse round-trips — chat parse, Q&A, check-in composition (all Haiku) | ~$0.01 |
-| **expensive** | `@pytest.mark.expensive` | Full résumé-agent run (Sonnet) | ~$0.31 |
+| **expensive** | `@pytest.mark.expensive` | Full résumé-agent run (Sonnet) | ~$0.11 measured |
 
 `./scripts/run-integration.sh` runs **local + cloud** by default and is genuinely free — safe to run
 on every change. `--bedrock` and `--expensive` opt the higher tiers in explicitly. The default is the
@@ -2064,6 +2064,22 @@ or neither for free.
 - ⚠️ `expensive` will be run rarely, so the résumé agent stays the least-integration-tested Lambda
   despite being the most complex. That is a deliberate purchase of budget with coverage, and the
   right place to spend the coverage is the deterministic finalize phase, which needs no model at all.
+
+**Measured on first green run (2026-07-29).** The `expensive` tier's own run came in at **72s /
+20,183 tokens / $0.113** with a **2-entry** corpus and a `REVISE` critique — against slice 6b's
+**176s / 82.9K tokens / $0.35** for a `REVISE` run over the real **13-entry** corpus. Same verdict,
+same phases, so the gap is not a cheaper code path: **cost and latency scale with corpus size**,
+because the retrieval loop re-sends a growing history each iteration (B-004). Two consequences worth
+separating. For this ADR, the tier is cheaper than budgeted, so `--expensive` is more affordable than
+"~14 runs to the ceiling" implied — but it is cheap *because the fixture corpus is small*, and it
+must not be read as the agent getting cheaper. For B-020, this is the first direct evidence that
+lever (c) — short-circuiting the agentic loop for small corpora — attacks cost and latency together.
+
+One process note, since it is the reason the tier cost ~$0.34 rather than ~$0.11 to land: three runs
+were needed, two of them lost to test bugs (`job_description` vs `target`, then `complete` vs
+`completed`). Both were *contract* errors, and both are now guarded for **$0** in the `cloud` tier.
+**On an endpoint this expensive, the request contract deserves a free test of its own** — otherwise
+every typo is discovered at full price.
 
 ### Cross-cloud parallel
 Marking tests by resource cost rather than by speed is the same instinct as pytest's conventional

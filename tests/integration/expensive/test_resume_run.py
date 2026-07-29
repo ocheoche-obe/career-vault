@@ -60,15 +60,22 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, clean
     started = invoke(
         lambda_client,
         "resume_agent",
-        api_event(method="POST", user_id=cleanup_user, body={"job_description": JOB_DESCRIPTION}),
+        # The field is `target`, not `job_description` — it accepts a full JD or a bare role name.
+        api_event(method="POST", user_id=cleanup_user, body={"target": JOB_DESCRIPTION}),
     )
     # ADR-037: the request returns immediately and a self-invoked worker does the work — the run
     # takes ~176s, far past API Gateway's 29s integration timeout.
     assert started["statusCode"] == 202, body_of(started)
     run_id = body_of(started)["run_id"]
 
-    deadline = time.time() + POLL_TIMEOUT_SECONDS
-    status = None
+    # The run's own vocabulary is pending -> completed | failed. Naming the terminal set here rather
+    # than inline: an unrecognised status silently polls to the deadline and then fails on a string
+    # compare, which is a 7-minute way to learn about a typo.
+    terminal = {"completed", "failed"}
+
+    started_at = time.time()
+    deadline = started_at + POLL_TIMEOUT_SECONDS
+    status, polled = None, {}
     while time.time() < deadline:
         polled = body_of(
             invoke(
@@ -78,11 +85,21 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, clean
             )
         )
         status = polled.get("status")
-        if status in {"complete", "failed"}:
+        if status in terminal:
             break
         time.sleep(POLL_INTERVAL_SECONDS)
 
-    assert status == "complete", f"run {run_id} ended as {status!r}: {polled}"
+    elapsed = time.time() - started_at
+    assert status == "completed", f"run {run_id} ended as {status!r} after {elapsed:.0f}s: {polled}"
+
+    # Reported rather than asserted. Requirements §7.4's original "within 30 seconds" is why
+    # generation is async at all (ADR-037), and duration varies with corpus size and whether the
+    # critique returns REVISE — an upper bound here would be a flake, not a guarantee (B-020).
+    print(
+        f"\nrésumé run {run_id}: {elapsed:.0f}s, {polled.get('tokens')} tokens, "
+        f"${polled.get('cost_usd')}, critique={polled.get('critique_verdict')}, "
+        f"entries={polled.get('retrieved_count')}"
+    )
 
     # Presigned URLs for both artifacts — the PDF is what the user downloads, the HTML is what the
     # in-app preview iframes (slice 6b).
@@ -99,9 +116,16 @@ def _assert_is_a_real_pdf(url: str) -> None:
     when that layer is wrong is a zero-byte or HTML-shaped object at a URL that presigns perfectly
     well. "A URL came back" is not the same claim as "a PDF exists".
     """
+    import ssl
     import urllib.request
 
-    with urllib.request.urlopen(url, timeout=30) as response:
+    from botocore.httpsession import DEFAULT_CA_BUNDLE
+
+    # botocore's bundled CA rather than the interpreter's default trust store: a python.org build on
+    # macOS has no system certificates wired up, so plain urlopen fails CERTIFICATE_VERIFY_FAILED on
+    # a URL that is perfectly valid. That failure looks like a broken artifact and is not one.
+    context = ssl.create_default_context(cafile=DEFAULT_CA_BUNDLE)
+    with urllib.request.urlopen(url, timeout=30, context=context) as response:
         head = response.read(5)
 
     assert head == b"%PDF-", f"presigned object is not a PDF (starts {head!r})"

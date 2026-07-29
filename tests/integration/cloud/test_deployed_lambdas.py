@@ -171,6 +171,47 @@ class TestEntryLifecycle:
         assert [e["field"] for e in body_of(response)["errors"]] == ["CERT.issued_date"]
 
 
+class TestResumeAgentRejectionPaths:
+    """The résumé agent's guard rails, which cost nothing because they fire before any Bedrock call.
+
+    §3.2.6 hoists both checks ahead of spend deliberately, and that is exactly what makes them
+    testable in the free tier. Worth having for a second reason: the request contract is the easiest
+    thing to get wrong about the most expensive endpoint, and getting it wrong in the `--expensive`
+    tier costs a real run to find out.
+    """
+
+    def test_a_missing_target_is_rejected_before_any_spend(self, lambda_client, cleanup_user):
+        response = invoke(
+            lambda_client, "resume_agent", api_event(method="POST", user_id=cleanup_user, body={})
+        )
+
+        assert response["statusCode"] == 400
+        # The field is `target` — it takes a full job description or a bare role name.
+        assert "`target`" in body_of(response)["message"]
+
+    def test_an_empty_corpus_is_rejected_before_any_spend(self, lambda_client, cleanup_user):
+        # No entries were created for this throwaway user, so the empty-corpus checkpoint fires.
+        response = invoke(
+            lambda_client,
+            "resume_agent",
+            api_event(method="POST", user_id=cleanup_user, body={"target": "Senior Cloud Engineer"}),
+        )
+
+        assert response["statusCode"] == 400
+        assert "career entries" in body_of(response)["message"]
+
+    def test_an_unknown_run_id_is_not_found(self, lambda_client, cleanup_user):
+        response = invoke(
+            lambda_client,
+            "resume_agent",
+            api_event(
+                method="GET", user_id=cleanup_user, path_params={"run_id": "01JQ9999999999999999999999"}
+            ),
+        )
+
+        assert response["statusCode"] == 404
+
+
 class TestCheckinRun:
     """§3.3.3 / §4.5.4 — the scheduled path, invoked without sending anything.
 
