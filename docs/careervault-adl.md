@@ -1996,6 +1996,44 @@ Only the first is in doubt, so only the first is worth buying.
 - ⚠️ If CareerVault ever takes a second user, this decision reverses and prod becomes required —
   the reasoning above is explicitly contingent on single-user (ADR-006/-007).
 
+### Dry-run result (2026-07-29) — it found a real blocker
+
+The dry run was justified on the billing alarms and paid for itself on something else entirely.
+
+**First attempt failed outright**, before producing a change set:
+
+```
+Waiter ChangeSetCreateComplete failed ... Status: FAILED.
+Reason: The following hook(s)/validation failed: [AWS::EarlyValidation::ResourceExistenceCheck]
+```
+
+Neither `describe-stack-events` nor `describe-change-set-hooks` returned any detail — the events
+list held one `REVIEW_IN_PROGRESS` row and the hooks array was empty — so the cause was isolated by
+re-running the identical template with a single parameter changed. That is the diagnosis, and it is
+conclusive: with `CheckinSenderAddress` pointed at a different address the change set builds cleanly.
+
+**The blocker is `CheckinEmailIdentity` (template §816).** It creates an `AWS::SES::EmailIdentity`
+from `CheckinSenderAddress`, which defaults to `oche.ocheobe@gmail.com` and — unlike
+`CheckinConfigurationSet` immediately below it, named `careervault-checkins-${Environment}` — is
+**not environment-suffixed**. An SES email identity is unique per account+region, and the dev stack
+already owns this one, so a prod deploy in the same account collides with dev on a resource that
+*cannot* be suffixed: the identity is literally the address.
+
+So **the prod stack could never have deployed as configured**, and nothing would have revealed that
+until someone tried it — which, under a "declare dev the MVP" decision, might have been much later
+and under pressure. Logged as **B-021**.
+
+**What the dry run confirmed, once unblocked:** the change set enumerates **70 resources**, and it
+includes `BillingAlarmWarning` and `BillingAlarmCritical` — the prod-gated branch this ADR was
+written to exercise. Both conditionals resolve and validate. The question the dry run was run to
+answer is answered: *yes, the billing alarms are well-formed.* The empty `REVIEW_IN_PROGRESS` stack
+was deleted afterwards; no resource was ever created and no charge incurred.
+
+The general lesson is sharper than the specific bug. **A conditional that has never been evaluated is
+not "probably fine", it is untested code** — and the cheapest possible test found a blocker on the
+first run. It also refines this ADR's own claim: a dry run tests the template *and* the account's
+existing state, which is more than "synthesizes and diffs" suggested.
+
 ### Cross-cloud parallel
 `--no-execute-changeset` is CloudFormation's plan-without-apply, the same primitive as
 `terraform plan`, Azure's ARM/Bicep `what-if`, and `gcloud deployment-manager --preview`. The
