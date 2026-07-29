@@ -67,7 +67,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
 | 8 | Check-in emails | FR-4 | ✅ | — |
-| 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
+| 9 | Hardening & MVP close | NFRs, coverage audit | 🔨 ⚠ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -972,14 +972,52 @@ the shipped MVP against the requirements §7 success criteria and the NFRs (cost
 capturing what worked / what to improve and routing each finding into the v1.1 plan or parking
 lot; cost review against the $5 ceiling with real Bedrock numbers; memory + docs sweep.
 
-**⚠ Decisions:**
-- Deploy the prod stack (billing alarms are already prod-gated) vs declare dev-as-MVP for a
-  single-user app. Genuine fork — cost vs realism.
-- Which parking-lot items graduate to a v1.1 plan.
+**Scope adjustments made at slice start (2026-07-28):**
 
-**Exit criteria:** every FR maps to a verified slice or a documented deferral; integration tests
-runnable with one command; MVP scored against the §7 success criteria + NFRs with findings routed;
-this doc's status board all ✅; MVP declared.
+- **Folded in from the backlog:** **B-018** (integration coverage for the check-in flow — the
+  highest-value flow to cover, since a scheduled job is the one thing that cannot be smoke-tested by
+  clicking around) and **B-017** (test-harness `sys.path` fragility, already tagged as a slice-9
+  fit). **B-009** is *adjudicated, not implemented*: FR-5.3 says "format-select" and slice 6 shipped
+  HTML-vs-PDF rather than layout choice, so the FR audit must rule on met-vs-deferred.
+- **Consciously left:** B-001 (UI polish), B-003, B-004, B-006/B-007, B-011, B-013. B-010 (Sonnet 5)
+  remains `blocked-external`.
+- **Requirements §7.4 is falsified and must be corrected, not scored around.** It asserts tailored
+  résumé output "within 30 seconds"; measured reality is **~176s**. Slice 6b corrected architecture
+  §3.2.2's parallel "under 90 seconds" claim but left §7.4 standing — the drift got half-fixed. The
+  scorecard cannot honestly score a criterion the project already knows to be unmeetable, so §7.4
+  gets a defensible target with ADR-037 (async generation) recorded as *why* the original was
+  abandoned.
+- **Cost reframed by live numbers.** July MTD is **$3.52 / $5.00**, of which Sonnet 4.6 is **$2.88
+  (82%)** and *all* non-Bedrock infrastructure is **under $0.01 combined**. The ceiling constrains
+  Bedrock call volume, not environment count — which is what settles the prod decision below and
+  what forces the integration suite to be tiered.
+- **Browser tooling (out of scope, dev-loop only).** Playwright MCP added via a checked-in
+  `.mcp.json` (persistent profile at `.playwright-profile/`, gitignored — it holds a live Cognito
+  session). It is a tool for *inspecting* the app, not a CI gate: slice 9's frontend deliverable
+  remains Vitest + RTL running headless in CI. Its first job is turning B-001 from one vague line
+  into a concrete list. No browser-driven E2E enters CI this slice.
+
+**⚠ Decisions:**
+- ~~Deploy the prod stack vs declare dev-as-MVP.~~ **Resolved → ADR-041: dev *is* the MVP, prod
+  proven by `sam deploy --no-execute-changeset`.** Cost turned out not to be the tie-breaker (idle
+  infra is <$0.01/mo); the real costs are operational — a second Cognito pool, a second SES identity
+  needing a *manual* verification click, and permanent two-stack drift on a single-user app. The one
+  genuine gap, the never-evaluated prod-gated billing alarms, is closed by the dry run at zero cost.
+- ~~Integration-suite cost posture.~~ **Resolved → ADR-042: tiered, expensive tier opt-in.** Default
+  run is free (DynamoDB Local + deployed dev with Bedrock stubbed); `--bedrock` (~$0.01, Haiku) and
+  `--expensive` (~$0.31, the Sonnet résumé run) are explicit. A uniform suite would cost ~$0.35/run
+  — ~14 runs to the ceiling — which is a suite that gets avoided rather than run.
+- **Still open: which parking-lot items graduate to a v1.1 plan.** Deliberately deferred to *after*
+  the MVP scorecard exists — graduating items before the audit produces its findings would be
+  deciding without the evidence the audit is meant to generate.
+
+**Exit criteria:** every FR maps to a verified slice or a documented deferral (FR-5.3/B-009
+explicitly ruled on); integration tests runnable with one command whose default tier costs **$0**;
+frontend unit tests (Vitest + RTL) green in CI, proving the app renders; requirements §7.4 corrected
+to a measured, defensible target; prod change set generated and its manual-step gap documented
+(ADR-041); MVP scored against the §7 success criteria + NFRs with every finding routed to v1.1 or the
+parking lot; README refreshed beyond slice 1 and stating plainly that `careervault-dev` *is* the MVP
+stack; this doc's status board all ✅; MVP declared.
 
 **Completion notes:** _(filled at wrap)_
 
