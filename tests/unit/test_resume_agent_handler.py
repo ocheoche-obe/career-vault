@@ -5,17 +5,11 @@ DynamoDB, S3, Lambda self-invoke, the agent, and rendering are all faked; no tes
 
 import json
 import os
-import sys
-from pathlib import Path
 
 import pytest
 from helpers import FakeLambdaContext, api_event, body_of, load_handler
 
 from careervault.pydantic_models.resume import ResumeDocument
-
-_AGENT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "resume_agent"
-if str(_AGENT_DIR) not in sys.path:
-    sys.path.insert(0, str(_AGENT_DIR))
 
 os.environ.setdefault("DATA_BUCKET_NAME", "careervault-data-test")
 os.environ.setdefault("AWS_LAMBDA_FUNCTION_NAME", "careervault-resume-agent-test")

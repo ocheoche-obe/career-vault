@@ -3,21 +3,15 @@
 Bedrock and DynamoDB are faked; no test reaches AWS and the suite costs nothing to run.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 from helpers import FakeLambdaContext, api_event, body_of, load_handler, text_response, tool_use_response
 
 from careervault import bedrock_client
 from careervault.bedrock_client import BedrockError
 
-# handler.py imports its sibling `qa` module, which resolves from /var/task in Lambda; locally the
-# function directory has to be on sys.path first (same shape as test_resume_agent_loop.py).
-_CHAT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "chat"
-if str(_CHAT_DIR) not in sys.path:
-    sys.path.insert(0, str(_CHAT_DIR))
-
+# handler.py imports its sibling `qa` module, which resolves from /var/task in Lambda. `load_handler`
+# puts the function directory on sys.path for the duration of the load and takes it back off after,
+# so no permanent path entry is needed here.
 chat = load_handler("chat_handler", "chat")
 
 VALID_CERT_INPUT = {

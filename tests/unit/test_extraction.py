@@ -6,17 +6,12 @@ extractors stubbed so the suite needs no file fixtures or extra dependencies.
 """
 
 import io
-import sys
 import zipfile
-from pathlib import Path
 
 import pytest
+from helpers import load_sibling
 
-_PARSER_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "resume_upload_parser"
-if str(_PARSER_DIR) not in sys.path:
-    sys.path.insert(0, str(_PARSER_DIR))
-
-import extraction  # noqa: E402
+extraction = load_sibling("resume_upload_parser_extraction", "resume_upload_parser", "extraction")
 
 
 def test_ext_from_filename_is_lowercased_and_dotless():

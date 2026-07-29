@@ -6,18 +6,12 @@ freshly minted entry_id for the confirm step.
 """
 
 import os
-import sys
-from pathlib import Path
 
 import pytest
 from helpers import FakeLambdaContext, api_event, body_of, load_handler, tool_use_response
 
 from careervault import bedrock_client
 from careervault.bedrock_client import BedrockError
-
-_PARSER_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "resume_upload_parser"
-if str(_PARSER_DIR) not in sys.path:
-    sys.path.insert(0, str(_PARSER_DIR))
 
 os.environ.setdefault("DATA_BUCKET_NAME", "careervault-data-test")
 

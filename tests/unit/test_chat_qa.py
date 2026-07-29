@@ -5,14 +5,9 @@ model's hands and into the Lambda's, and these tests are what make that claim ch
 than aspirational.
 """
 
-import sys
-from pathlib import Path
+from helpers import load_sibling
 
-_CHAT_DIR = Path(__file__).resolve().parents[2] / "backend" / "functions" / "chat"
-if str(_CHAT_DIR) not in sys.path:
-    sys.path.insert(0, str(_CHAT_DIR))
-
-import qa  # noqa: E402  (path must be set first)
+qa = load_sibling("chat_qa", "chat", "qa")
 
 
 def entry(entry_type="CERT", title="AWS SAA", **extra):

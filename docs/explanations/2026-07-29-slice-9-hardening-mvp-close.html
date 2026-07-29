@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slice 9: proving it works — cost-tiered testing and an honest MVP close</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Slice 9: proving it works — cost-tiered testing and an honest MVP close</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">Prepared 2026-07-29 · PR #32 · ADR-041, ADR-042 · Phase 2 complete</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+
+<p>Every slice before this one added a <em>feature</em>. Slice 9 adds none. Its job is to answer a
+harder question: <strong>is the thing we built actually what we said we built?</strong> That makes it
+the most transferable slice in the project, because the techniques here — cost-aware test design,
+running a real database engine locally, planning an infrastructure deploy without performing it —
+apply to any system, not just this one.</p>
+
+<h3>Skippable primer: what "testing" means for a serverless app</h3>
+<p>If you already know the test pyramid, skip to the next heading. Otherwise, the thing that makes
+serverless testing awkward is that <em>most of your application is not your code</em>. A CareerVault
+request touches CloudFront, Cognito, API Gateway, a Lambda role's IAM policy, a Lambda layer,
+DynamoDB, and Bedrock. Your Python is a thin filling in a very large sandwich.</p>
+
+<p>So there are three quite different questions you might be asking, and they need three different
+kinds of test:</p>
+
+<table>
+  <tr><th>Question</th><th>Kind of test</th><th>What it fakes</th></tr>
+  <tr><td>Does my logic branch correctly?</td><td><strong>Unit</strong></td><td>Everything external — DynamoDB, Bedrock, S3 are all stand-ins</td></tr>
+  <tr><td>Does the <em>database</em> behave as I assumed?</td><td><strong>Local integration</strong></td><td>Nothing about the database; it runs for real, just on your laptop</td></tr>
+  <tr><td>Does the <em>deployed thing</em> work?</td><td><strong>Cloud integration</strong></td><td>Nothing — real IAM, real table, real Lambda</td></tr>
+</table>
+
+<p>CareerVault had 370 tests before this slice and <em>all of them were the first kind</em>. That is
+not a small gap. A unit test that fakes DynamoDB can only check that your code <em>asked</em> for the
+right thing; it can never tell you whether DynamoDB would have <em>agreed</em>.</p>
+
+<div class="callout">
+  <strong>The bug that motivated all of this.</strong> An earlier slice shipped a bug where a Lambda
+  wrote an item with the wrong sort-key prefix. Every unit test passed, because the tests asserted on
+  the <em>string</em> that was passed to a fake. Nothing checked what a real engine would do with it.
+  Architecture §5.6 has asked for a DynamoDB-Local safety net ever since.
+</div>
+
+<h3>DynamoDB Local</h3>
+<p>DynamoDB Local is the actual DynamoDB query engine, packaged as a Docker container that listens on
+<code>localhost:8000</code>. It is not a mock and not a reimplementation — it speaks the real wire
+protocol and enforces the real rules. If you write a <code>ConditionExpression</code> that DynamoDB
+would reject, DynamoDB Local rejects it, with the same error code.</p>
+
+<p>CareerVault was already built to accommodate this. <code>get_table()</code> in the shared layer
+reads an optional <code>DDB_ENDPOINT_URL</code>; set it, and every helper in the codebase transparently
+talks to your laptop instead of AWS. That one environment variable is the whole seam.</p>
+
+<h3>CloudFormation change sets</h3>
+<p>The second technique worth knowing. <code>sam deploy</code> normally computes what needs to change
+and then <em>does</em> it. <code>--no-execute-changeset</code> stops after the computing: CloudFormation
+validates the template, resolves every conditional, works out the exact list of resources it would
+create — and then hands you that list and waits.</p>
+
+<p>This is the same primitive as <code>terraform plan</code>, Azure's <code>what-if</code>, and
+<code>gcloud deployment-manager --preview</code>. It costs nothing and creates nothing.</p>
+
+
+<h2 id="intuition">Intuition</h2>
+
+<h3>Idea 1: sort your tests by what they cost, not by how fast they are</h3>
+
+<p>The usual axis for splitting a test suite is speed — "unit" versus "slow". CareerVault has a
+different constraint. Bedrock charges per token, and one tailored-résumé run costs real money. The
+project runs under a <strong>$5/month ceiling</strong>. So the meaningful question about a test here is
+not "how long does it take?" but <strong>"what does it cost to run?"</strong></p>
+
+<p>Work through the arithmetic and the design falls out on its own. Suppose you write one uniform
+suite that exercises everything, résumé agent included:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">One suite<br><strong>~$0.35/run</strong></div>
+  <span class="arrow">→</span>
+  <div class="box">$5 ceiling<br>÷ $0.35</div>
+  <span class="arrow">→</span>
+  <div class="box fail">~14 runs<br><strong>per month</strong></div>
+</div>
+<p style="text-align:center; margin:.8rem 0 0; color:#6b6b6b;">Fourteen runs is not a test suite. It is a budget you spend nervously.</p>
+</div>
+
+<p>A suite you can only run fourteen times a month is a suite you <em>don't</em> run. You skip it
+before a small commit, you skip it when you're in a hurry, and eventually you skip it always. And
+here is the part that matters:</p>
+
+<div class="callout">
+  <strong>An avoided test is worse than an absent one</strong> — because it still appears in the repo,
+  still gets counted, and still implies coverage that nobody is actually getting.
+</div>
+
+<p>So the tests are tiered by price, and the <em>default</em> tier is free:</p>
+
+<table>
+  <tr><th>Tier</th><th>Runs against</th><th>Cost</th><th>In the default run?</th></tr>
+  <tr><td><code>local</code></td><td>DynamoDB Local on your laptop</td><td><strong>$0</strong></td><td>✅ yes</td></tr>
+  <tr><td><code>cloud</code></td><td>The deployed dev stack, no model calls</td><td><strong>$0</strong></td><td>✅ yes</td></tr>
+  <tr><td><code>bedrock</code></td><td>Real Claude Haiku round-trips</td><td>~$0.01</td><td>❌ <code>--bedrock</code></td></tr>
+  <tr><td><code>expensive</code></td><td>A full Sonnet résumé run</td><td>~$0.11</td><td>❌ <code>--expensive</code></td></tr>
+</table>
+
+<p>56 tests run for nothing, in about 15 seconds. That is the suite that actually gets used.</p>
+
+<h3>Idea 2: mocks encode your beliefs, not the model's behaviour</h3>
+
+<p>The tempting shortcut is to fake Bedrock everywhere and pay nothing. It forfeits the entire point,
+and slice 8 supplied the proof. The check-in composer asks Claude for a structured email through a
+tool schema that marks <code>sign_off</code> as <code>required</code>. One day the model returned a
+complete, perfectly good email — <em>without</em> <code>sign_off</code>. Validation rejected it, and a
+personalized email silently degraded to a generic one.</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Tool schema says<br><code>required</code></div>
+  <span class="arrow">→</span>
+  <div class="box">Mock written<br><em>from the schema</em></div>
+  <span class="arrow">→</span>
+  <div class="box">Mock always<br>includes it</div>
+  <span class="arrow">→</span>
+  <div class="box fail">Bug invisible<br>forever</div>
+</div>
+</div>
+
+<p>You cannot catch that with a mock, because <strong>you wrote the mock from the same schema you
+misunderstood</strong>. A mock encodes the author's belief about the model; the bug lives precisely in
+the gap between that belief and reality. That gap is what the ~$0.01 <code>bedrock</code> tier buys.</p>
+
+<div class="callout">
+  <strong>A useful generalisation.</strong> <code>required</code> in a tool schema is a <em>hint to the
+  model</em>, not a constraint the API enforces. Validate the fields that make output <em>useful</em>;
+  supply defaults for fields that merely make it <em>polished</em>.
+</div>
+
+<h3>Idea 3: a conditional that has never run is untested code</h3>
+
+<p>CareerVault's SAM template contains billing alarms gated behind <code>Condition: IsProd</code>.
+Only dev had ever been deployed, so CloudFormation had <em>never once evaluated that branch</em>.
+Everyone assumed it was fine. It looked fine.</p>
+
+<p>A change-set dry run costs nothing, so slice 9 ran one. It failed immediately — and not on the
+alarms:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">dev stack<br>creates SES identity<br><code>oche@…</code></div>
+  <span class="arrow">→</span>
+  <div class="box">prod stack<br>creates SES identity<br><code>oche@…</code></div>
+  <span class="arrow">→</span>
+  <div class="box fail">Collision<br><small>identities are unique<br>per account+region</small></div>
+</div>
+</div>
+
+<p>The DynamoDB table is named <code>CareerVaultTable-${Environment}</code>. The SES configuration set
+is named <code>careervault-checkins-${Environment}</code>. But the SES <em>email identity</em> is an
+email address — and an email address cannot carry an environment suffix. Two stacks in one account
+therefore fight over it, and <strong>the prod stack could never have deployed at all</strong>.</p>
+
+<p>Nobody would have discovered that until the day they urgently needed a prod stack.</p>
+
+<h3>Idea 4: a requirement can be false and nothing fails</h3>
+
+<p>The requirements document promised a tailored résumé <em>"within 30 seconds"</em>. Measurement says
+72 seconds on a small corpus and about 176 on a real one. Worse, the target was never achievable:
+API Gateway hard-limits a synchronous request to <strong>29 seconds</strong>, which is exactly why the
+résumé endpoint returns a job id and polls.</p>
+
+<div class="callout">
+  <strong>A latency requirement and a delivery model are not independent choices.</strong> "Within 30
+  seconds" quietly assumed a synchronous request. Once you exceed the gateway timeout, you are not
+  slightly missing the target — you are in a different architecture. The fix specifies
+  <em>asynchronous, with a ceiling</em>, not merely a bigger number.
+</div>
+
+<p>The instructive part is why it survived nine slices: <strong>nothing fails when a latency
+requirement is wrong.</strong> The résumé still arrives. The user is still happy. The number in the
+document simply stops meaning anything, silently — the same shape as the check-in tier degrading
+without a metric.</p>
+
+<h3>Idea 5: cost and latency turned out to be one problem</h3>
+
+<p>The <code>expensive</code> tier measured its own run, and the number was surprising: <strong>$0.113
+and 72 seconds</strong>, against the 13-entry corpus's <strong>$0.35 and 176 seconds</strong>. Both runs
+returned the same <code>REVISE</code> critique verdict and executed the same six phases — so this is
+not a cheaper code path. The only difference is <strong>corpus size</strong>.</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">2 entries<br>20K tokens<br><strong>72s · $0.11</strong></div>
+  <span class="arrow">→</span>
+  <div class="box">13 entries<br>83K tokens<br><strong>176s · $0.35</strong></div>
+  <span class="arrow">→</span>
+  <div class="box fail">More history<br>= slower <em>and</em><br>pricier</div>
+</div>
+</div>
+
+<p>The agent's retrieval loop re-sends its whole growing message history on every iteration, so both
+the bill and the wall-clock scale with how much career history you have. Which is the uncomfortable
+part: <strong>CareerVault gets slower and more expensive precisely as it becomes more useful.</strong>
+Two backlog items that had been filed separately — one about cost, one about latency — turn out to be
+one mechanism viewed from two sides.</p>
+
+
+<h2 id="code">Code walkthrough</h2>
+
+<p>Roughly 2,000 lines landed, almost all of it tests. Here is the story rather than the file list.</p>
+
+<h3>1. The seam that makes local testing possible</h3>
+
+<p>Nothing in the application changed to support DynamoDB Local, because the seam was already there:</p>
+
+<pre><code>def get_table():
+    global _table
+    if _table is None:
+        kwargs = {}
+        endpoint = os.environ.get("DDB_ENDPOINT_URL")   # ← the whole seam
+        if endpoint:
+            kwargs["endpoint_url"] = endpoint
+        _table = boto3.resource("dynamodb", **kwargs).Table(os.environ["CAREERVAULT_TABLE_NAME"])
+    return _table</code></pre>
+
+<p><code>backend/shared/python/careervault/ddb_helpers.py:34</code>. Set one variable and every helper
+in the codebase talks to localhost. Note <code>_table</code> is <em>cached</em> — that detail causes a
+real bug later in this walkthrough.</p>
+
+<h3>2. Testing what only a real engine can tell you</h3>
+
+<p>The <code>local</code> tier's most valuable file is the one that pins ADR-040. That ADR describes how
+nested <code>settings</code> updates work, and every claim in it is a claim about the <em>engine</em>.
+Each was originally established by poking the live table by hand — including one the first draft
+asserted confidently and got <strong>wrong</strong>.</p>
+
+<pre><code>def test_seeding_and_writing_in_one_expression_is_rejected_as_overlapping(self, table, user_id):
+    table.put_item(Item={"PK": pk_for_user(user_id), "SK": "PROFILE"})
+
+    with pytest.raises(ClientError) as exc:
+        table.update_item(
+            Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+            UpdateExpression="SET #s = if_not_exists(#s, :empty), #s.checkin_paused = :v",
+            ...
+        )
+
+    assert "overlap" in str(exc.value).lower()</code></pre>
+
+<p><code>tests/integration/local/test_nested_settings.py</code>. DynamoDB refuses an expression naming
+both a path and its own descendant — <em>"Two document paths overlap with each other"</em>. Manual
+probes do not survive into CI; these do. And DynamoDB Local reproduces both engine rejections
+faithfully.</p>
+
+<h3>3. Testing the deployed stack without a login</h3>
+
+<p>The <code>cloud</code> tier needs to call deployed Lambdas as an authenticated user — but Cognito is
+configured PKCE-only (<code>ExplicitAuthFlows: ALLOW_REFRESH_TOKEN_AUTH</code>), so there is no way to
+mint a token unattended. Adding one would permanently widen the auth surface to buy a test
+convenience.</p>
+
+<p>So the tests invoke Lambdas <strong>directly</strong>, handing them the event shape API Gateway
+produces <em>after</em> the authorizer has already run:</p>
+
+<pre><code>"requestContext": {
+    "authorizer": {"claims": {"sub": user_id, "email": email}},
+}</code></pre>
+
+<div class="callout">
+  <strong>Be precise about what this covers.</strong> Real handler code, real environment variables,
+  real DynamoDB, and — most valuably — <strong>the real IAM policy attached to each role</strong>, which
+  is impossible to test locally and the most likely thing to be wrong after a template edit. It does
+  <em>not</em> cover API Gateway routing, CORS preflight, or the JWT authorizer itself. Stating the
+  boundary is the point; a test whose coverage you cannot describe is a test you cannot trust.
+</div>
+
+<h3>4. Testing a scheduled job that sends real email</h3>
+
+<p>The check-in Lambda is the one thing you cannot verify by clicking around the app. It is also
+dangerous to test: invoking it sends actual email and consumes the user's cycle, because the send slot
+is claimed <em>before</em> SES is called.</p>
+
+<p>The solution is to split the flow along what is genuinely separable:</p>
+
+<div class="diagram">
+<div class="flow">
+  <div class="box">Decision half<br><small>who is due, slot claim,<br>cadence, pause</small><br><strong>local · $0</strong></div>
+  <span class="arrow">→</span>
+  <div class="box">Compose half<br><small>Claude writes the email</small><br><strong>bedrock · $0.01</strong></div>
+  <span class="arrow">→</span>
+  <div class="box">Send half<br><small>SES delivery</small><br><strong>not tested</strong></div>
+</div>
+</div>
+
+<p>The decision half — which is the half that actually regressed under manual testing — runs free
+against DynamoDB Local. The deployed Lambda is invoked too, but only after reading live state and
+<em>skipping</em> if any real user is due, since <code>_process_user</code> runs only for due users. A
+no-due run still executes <code>scan_profiles()</code>, which is what exercises the
+<code>dynamodb:Scan</code> IAM grant. The send half is deliberately untested: a test whose assertion is
+"an email arrived" is a test nobody can run twice.</p>
+
+<h3>5. The frontend gate that proved nothing</h3>
+
+<p>CI ran typecheck, build, and lint. None of those <em>execute a component</em>, so a green pipeline
+proved the code compiled and nothing more. Filling that gap ran straight into a Vitest trap worth
+knowing about:</p>
+
+<div class="callout">
+  <strong>A <code>vi.fn()</code> that returns a rejected promise fails the test even when your component
+  catches the rejection correctly.</strong> Vitest's spy tracks settlement, and the derived promise
+  chain it attaches for that goes unhandled. Confirmed by bisection: it reproduces with
+  <em>zero assertions in the test body</em>, and vanishes entirely without the module mock.
+</div>
+
+<p>Every error-path test is unwritable that way. The workaround turned out to be the better design —
+stub <code>fetch</code> and keep the real API module:</p>
+
+<pre><code>const calls = stubFetch(
+  { status: 409, body: { possible_duplicates: [DUPLICATE] } },
+  { status: 201, body: { entry: {} } },
+);
+
+await user.click(confirmButton());
+await user.click(await screen.findByRole("button", { name: /save anyway/i }));
+
+expect(calls[1].body).toMatchObject({ acknowledge_duplicate: true });</code></pre>
+
+<p>Testing at the network boundary puts the API layer's 201/200/409/422/500 mapping under test too, and
+lets assertions check <strong>the actual request body</strong> — which is where the backend contract
+lives. "Save anyway" now verifies the acknowledge flag really goes on the wire.</p>
+
+<h3>6. What the code review caught afterwards</h3>
+
+<p>An advisory review run after all of the above found fifteen issues in this slice's own test code.
+Two could have caused real side effects on live data, and both are instructive:</p>
+
+<pre><code># Before — a single Scan
+profiles = live_table.scan(FilterExpression="SK = :sk", ...).get("Items", [])
+if any(is_due(p, now) for p in profiles):
+    pytest.skip(...)</code></pre>
+
+<p>DynamoDB reads up to <strong>1 MB before applying a filter</strong>, and each entry carries a
+~1024-float embedding (~20 KB). So that call can return having seen ~50 items and no PROFILE at all —
+the guard misses a due user, the test invokes anyway, and it sends a real email while advancing the
+schedule a full cadence. The guard that existed to prevent a side effect could cause one. It now
+paginates.</p>
+
+<p>The second: settings tests wrote PROFILE rows that were <em>immediately due</em> (the handler stamps
+the caller's email, and a profile with an email and no <code>next_checkin_at</code> is due now). Cleanup
+normally removes them, but a Ctrl-C during a 7-minute poll leaves an orphan the daily scheduler bills a
+model call for, every day. The fix seeds a far-future date <em>before</em> the test writes anything —
+making the orphan impossible rather than unlikely.</p>
+
+<div class="callout">
+  <strong>A recurring lesson across the whole slice:</strong> several tests written this slice passed
+  for the wrong reason — one asserted a status code the system never emits, one checked
+  <code>"one" in answer</code> (which "someone" satisfies), one compared timestamps formatted to
+  whole seconds so the comparison was always trivially true. The remedy each time was the same:
+  <em>break the thing on purpose and confirm the test notices.</em>
+</div>
+
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>The integration suite&#x27;s default tier deliberately costs $0. What is the strongest argument for that, beyond saving money?</strong></p>
+<button class="quiz-opt" data-correct="true">A suite that costs money to run gets avoided, and an avoided test still implies coverage nobody is getting.</button>
+<button class="quiz-opt" data-correct="false">Free tests are more reliable because they do not depend on the network.</button>
+<button class="quiz-opt" data-correct="false">Paid tests cannot run in CI because CI has no AWS credentials.</button>
+<button class="quiz-opt" data-correct="false">Free tests run faster, so developers get feedback sooner.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why can&#x27;t a mocked Bedrock client catch the bug where Claude omitted a `required` field from its tool output?</strong></p>
+<button class="quiz-opt" data-correct="false">The bug only appears at temperatures above zero, which mocks do not simulate.</button>
+<button class="quiz-opt" data-correct="false">Mocks cannot represent JSON responses with optional fields.</button>
+<button class="quiz-opt" data-correct="true">The mock is written from the same schema the author misunderstood, so it always produces the field.</button>
+<button class="quiz-opt" data-correct="false">Validation runs before the mock is consulted, so the mock never sees the request.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The prod change-set dry run failed on the SES email identity. Why can&#x27;t the usual fix — an environment suffix — be applied here?</strong></p>
+<button class="quiz-opt" data-correct="false">SES identities are global rather than regional, so suffixes have no effect.</button>
+<button class="quiz-opt" data-correct="false">SES identities are immutable once created, so CloudFormation cannot rename them.</button>
+<button class="quiz-opt" data-correct="true">The identity *is* an email address, and an address cannot carry an environment suffix the way a table or config-set name can.</button>
+<button class="quiz-opt" data-correct="false">The suffix would exceed the 64-character limit on SES identity names.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The résumé requirement said &quot;within 30 seconds&quot; and measurement showed 72–176s. Why was replacing it with a larger number still the wrong fix?</strong></p>
+<button class="quiz-opt" data-correct="true">Any bound over API Gateway's 29s timeout implies a synchronous request that cannot exist, so the requirement had to specify async delivery, not just a bigger number.</button>
+<button class="quiz-opt" data-correct="false">A larger number would have exceeded the Lambda maximum execution timeout.</button>
+<button class="quiz-opt" data-correct="false">The measurement was taken on a small corpus, so no bound can be stated honestly.</button>
+<button class="quiz-opt" data-correct="false">Latency requirements should never appear in a requirements document.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The expensive tier measured $0.113 versus the earlier $0.35 for the same REVISE verdict. What does that difference actually show?</strong></p>
+<button class="quiz-opt" data-correct="false">The newer run used Haiku for the draft phase instead of Sonnet.</button>
+<button class="quiz-opt" data-correct="false">Sonnet's per-token price dropped between the two measurements.</button>
+<button class="quiz-opt" data-correct="false">The agent found a cheaper code path because the critique returned early.</button>
+<button class="quiz-opt" data-correct="true">Cost scales with corpus size, because the retrieval loop re-sends its growing history each iteration — so the app gets pricier as it becomes more useful.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

@@ -72,6 +72,8 @@ Each ADR has:
 | ADR-038 | Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any` | Accepted   |
 | ADR-039 | Check-in scheduling — daily UTC fire paced by `next_checkin_at`, due-users by Scan | Accepted   |
 | ADR-040 | Nested `settings` updates — dotted-path `SET`, one path per sub-field       | Accepted   |
+| ADR-041 | MVP delivery posture — dev *is* the MVP, prod proven by dry run             | Accepted   |
+| ADR-042 | Integration tests tiered by cost, expensive tier opt-in                     | Accepted   |
 
 ---
 
@@ -1929,6 +1931,200 @@ operation, including the same gotcha that a nested-object *assignment* replaces 
 (Firestore's `set(..., {merge: true})` exists precisely for this). The transferable instinct: **in
 document stores, "update" defaults to replace at whatever level you name** — merging is something you
 opt into, and the failure is silent data loss rather than an error.
+
+---
+
+## ADR-041: MVP delivery posture — dev *is* the MVP, prod proven by dry run
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 9)
+
+### Context
+The plan doc has carried an open ⚠ since slice 9 was written: deploy a real prod stack, or declare
+the dev stack the MVP? The framing assumed cost was the tie-breaker. Measured against the live bill,
+**it is not.** July month-to-date:
+
+| Service | MTD |
+|---|---|
+| Claude Sonnet 4.6 (resume agent) | $2.88 |
+| Claude Haiku 4.5 | $0.16 |
+| S3 + DynamoDB + API Gateway + CloudWatch + SNS + SQS + Cognito + CloudFront | **< $0.01 combined** |
+
+**82% of the bill is one Lambda's model calls, and the entire deployed infrastructure costs less
+than a penny a month.** A second stack sitting idle would not move the needle — the $5 ceiling is a
+constraint on *Bedrock usage*, not on how many environments exist. Any argument for or against prod
+has to be made on other grounds, which is the opposite of what the plan doc assumed.
+
+The real costs of a prod stack are operational, and two of them are not automatable:
+
+- A second Cognito user pool means a second user identity and a second login to maintain.
+- A second SES identity requires a **manual verification link click** — CloudFormation cannot
+  complete it (established in slice 8). Prod would deploy into a half-working state until a human
+  opened an inbox.
+- Two stacks drift. Every future slice pays a sync tax on a single-user application where nobody but
+  Oche will ever sign in.
+
+Against that sits one genuine gap: the template's billing alarms are **prod-gated** (§4.1.4), so that
+branch of the template has **never been evaluated by CloudFormation**. It would first execute on the
+day it is actually needed, which is the worst possible time to discover a typo in a conditional.
+
+### Decision
+**Declare the dev stack the MVP.** It is the stack Oche uses; a "promotion" to prod would produce a
+second copy of an application with one user, not a more real one.
+
+Separately, **prove the prod path without deploying it**: run
+`sam deploy --config-env prod --no-execute-changeset` and inspect the generated change set. This
+evaluates every prod-gated conditional — the billing alarms above all — and fails on template errors
+without creating a single resource or incurring a cent. Record what the change set *would* create,
+and what remains manual (SES identity verification, Cognito user creation), as the documented
+prod-readiness gap.
+
+The distinction being drawn: **a dry run tests the template; a deployment tests the operations.**
+Only the first is in doubt, so only the first is worth buying.
+
+### Consequences
+- ✅ The one genuinely unverified branch of the template gets exercised, at zero cost and zero
+  resources.
+- ✅ No second Cognito pool, no second SES verification, no drift tax on future slices.
+- ✅ Reframes the $5 ceiling correctly for every future decision: it governs **Bedrock call volume**,
+  not environment count. Deploying more infrastructure is nearly free; calling Sonnet is not.
+- ⚠️ "MVP" now names a stack called `careervault-dev`. The name is misleading to anyone who joins
+  later and must be stated plainly in the README rather than left to be inferred.
+- ⚠️ The dry run proves the template *synthesizes and diffs*; it does not prove the resources would
+  reach `CREATE_COMPLETE`. IAM propagation, service quotas, and cross-resource ordering are still
+  untested. This is a narrower guarantee than a deploy and is claimed as such.
+- ⚠️ If CareerVault ever takes a second user, this decision reverses and prod becomes required —
+  the reasoning above is explicitly contingent on single-user (ADR-006/-007).
+
+### Dry-run result (2026-07-29) — it found a real blocker
+
+The dry run was justified on the billing alarms and paid for itself on something else entirely.
+
+**First attempt failed outright**, before producing a change set:
+
+```
+Waiter ChangeSetCreateComplete failed ... Status: FAILED.
+Reason: The following hook(s)/validation failed: [AWS::EarlyValidation::ResourceExistenceCheck]
+```
+
+Neither `describe-stack-events` nor `describe-change-set-hooks` returned any detail — the events
+list held one `REVIEW_IN_PROGRESS` row and the hooks array was empty — so the cause was isolated by
+re-running the identical template with a single parameter changed. That is the diagnosis, and it is
+conclusive: with `CheckinSenderAddress` pointed at a different address the change set builds cleanly.
+
+**The blocker is `CheckinEmailIdentity` (template §816).** It creates an `AWS::SES::EmailIdentity`
+from `CheckinSenderAddress`, which defaults to `oche.ocheobe@gmail.com` and — unlike
+`CheckinConfigurationSet` immediately below it, named `careervault-checkins-${Environment}` — is
+**not environment-suffixed**. An SES email identity is unique per account+region, and the dev stack
+already owns this one, so a prod deploy in the same account collides with dev on a resource that
+*cannot* be suffixed: the identity is literally the address.
+
+So **the prod stack could never have deployed as configured**, and nothing would have revealed that
+until someone tried it — which, under a "declare dev the MVP" decision, might have been much later
+and under pressure. Logged as **B-021**.
+
+**What the dry run confirmed, once unblocked:** the change set enumerates **70 resources**, and it
+includes `BillingAlarmWarning` and `BillingAlarmCritical` — the prod-gated branch this ADR was
+written to exercise. Both conditionals resolve and validate. The question the dry run was run to
+answer is answered: *yes, the billing alarms are well-formed.* The empty `REVIEW_IN_PROGRESS` stack
+was deleted afterwards; no resource was ever created and no charge incurred.
+
+The general lesson is sharper than the specific bug. **A conditional that has never been evaluated is
+not "probably fine", it is untested code** — and the cheapest possible test found a blocker on the
+first run. It also refines this ADR's own claim: a dry run tests the template *and* the account's
+existing state, which is more than "synthesizes and diffs" suggested.
+
+### Cross-cloud parallel
+`--no-execute-changeset` is CloudFormation's plan-without-apply, the same primitive as
+`terraform plan`, Azure's ARM/Bicep `what-if`, and `gcloud deployment-manager --preview`. The
+transferable habit is treating **environment count as a cost/benefit question rather than a ritual**:
+the dev/staging/prod ladder exists to protect *users* from *changes*, so with one user who is also
+the developer, the ladder is protecting nobody and still charging the sync tax.
+
+---
+
+## ADR-042: Integration tests are tiered by cost, with the expensive tier opt-in
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 9)
+
+### Context
+Slice 9 owns the integration suite (arch §5.6). The obvious design — one suite, one command,
+exercises everything — collides with a hard number: **a single résumé-agent run costs ~$0.31** and
+the monthly ceiling is $5. A uniform suite would cost roughly **$0.35 per invocation**, meaning
+**~14 runs would consume an entire month's budget**. That is not a suite anyone runs before a
+commit; it is a suite that gets avoided, and an avoided test is worse than no test because it
+carries false assurance.
+
+The naive alternative — mock Bedrock everywhere — costs nothing and proves nothing that matters here.
+The unit suite already mocks Bedrock (370 tests, all green). The *entire reason* to add integration
+tests is to catch what mocks structurally cannot: that the real model returns output the real parser
+accepts. Slice 8's own headline lesson is exactly this class of bug — Converse returned a response
+omitting a `required` field, which no mock would ever have produced because the mock was written from
+the schema. **A mock encodes the author's belief about the model; the bug lives in the gap between
+that belief and the model.**
+
+So the tension is real in both directions, and neither uniform answer survives it.
+
+### Decision
+Tier the suite by **cost**, and make cost a visible property of a test rather than a surprise:
+
+| Tier | Marker | What it covers | Cost/run |
+|---|---|---|---|
+| **local** | *(default)* | DynamoDB Local — conditional writes, SK-prefix scoping, nested-`settings` merge | $0 |
+| **cloud** | *(default)* | Deployed dev: auth, CRUD, settings, presign, check-in state machine with Bedrock stubbed at the seam | ~$0 |
+| **bedrock** | `@pytest.mark.bedrock` | Real Converse round-trips — chat parse, Q&A, check-in composition (all Haiku) | ~$0.01 |
+| **expensive** | `@pytest.mark.expensive` | Full résumé-agent run (Sonnet) | ~$0.11 measured |
+
+`./scripts/run-integration.sh` runs **local + cloud** by default and is genuinely free — safe to run
+on every change. `--bedrock` and `--expensive` opt the higher tiers in explicitly. The default is the
+one that gets used, so the default must cost nothing.
+
+The check-in flow (**B-018**) lands in **cloud**, not **bedrock**: slice 8's fallback ladder means the
+scheduling logic — due-user Scan, slot claim, idempotency, cadence pacing, pause — is separable from
+the composition call and is the part that actually regressed under manual testing. Testing the
+state machine for free and the composition for a cent is a better split than testing both for a cent
+or neither for free.
+
+### Consequences
+- ✅ The suite people actually run is free, so it is actually run.
+- ✅ Cost becomes a **declared attribute of a test**. A future test that quietly adds a Sonnet call to
+  the default tier now has to lie about its marker to do so.
+- ✅ Real-model verification survives where it earns its price (Haiku, ~$0.01) rather than being
+  dropped wholesale to protect the budget.
+- ⚠️ The default tier stubs Bedrock at a seam, so it inherits the mock-drift risk the `bedrock` tier
+  exists to catch. The mitigation is that the `bedrock` tier is cheap enough to run at every slice
+  wrap — but it must actually be run, and nothing enforces that. Stated so it is a known gap, not a
+  forgotten one.
+- ⚠️ Four tiers is more machinery than a single-user MVP strictly needs, and the boundaries will
+  blur under maintenance. Accepted because the alternative failure — a test suite too expensive to
+  run — is unrecoverable, while over-organization is merely untidy.
+- ⚠️ `expensive` will be run rarely, so the résumé agent stays the least-integration-tested Lambda
+  despite being the most complex. That is a deliberate purchase of budget with coverage, and the
+  right place to spend the coverage is the deterministic finalize phase, which needs no model at all.
+
+**Measured on first green run (2026-07-29).** The `expensive` tier's own run came in at **72s /
+20,183 tokens / $0.113** with a **2-entry** corpus and a `REVISE` critique — against slice 6b's
+**176s / 82.9K tokens / $0.35** for a `REVISE` run over the real **13-entry** corpus. Same verdict,
+same phases, so the gap is not a cheaper code path: **cost and latency scale with corpus size**,
+because the retrieval loop re-sends a growing history each iteration (B-004). Two consequences worth
+separating. For this ADR, the tier is cheaper than budgeted, so `--expensive` is more affordable than
+"~14 runs to the ceiling" implied — but it is cheap *because the fixture corpus is small*, and it
+must not be read as the agent getting cheaper. For B-020, this is the first direct evidence that
+lever (c) — short-circuiting the agentic loop for small corpora — attacks cost and latency together.
+
+One process note, since it is the reason the tier cost ~$0.34 rather than ~$0.11 to land: three runs
+were needed, two of them lost to test bugs (`job_description` vs `target`, then `complete` vs
+`completed`). Both were *contract* errors, and both are now guarded for **$0** in the `cloud` tier.
+**On an endpoint this expensive, the request contract deserves a free test of its own** — otherwise
+every typo is discovered at full price.
+
+### Cross-cloud parallel
+Marking tests by resource cost rather than by speed is the same instinct as pytest's conventional
+`slow` marker, Go's `testing.Short()`, and Maven's failsafe/surefire split — but the axis is dollars,
+not seconds. The transferable idea: **when a test consumes a metered external resource, the meter
+belongs in the test's metadata.** Anything that costs real money to run should have to say so at the
+point where someone decides to run it.
 
 ---
 

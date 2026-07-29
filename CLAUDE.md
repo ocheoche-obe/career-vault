@@ -112,130 +112,78 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Cost constraints
 
-- **$5/month effective hard ceiling.** The account lost its 12-month free tier / credits when it
-  joined an AWS Organization (now paid), so the project tightened the original $10 NFR-1.1 ceiling
-  to $5. Bedrock usage (future slices) is the dominant cost driver; the deployed infra is ~cents/mo
-  at idle.
-- Guards in place: an account-wide **AWS Budget** `careervault-monthly-5usd` (email alerts at ~$1 /
-  $4 / $5 + forecast); template billing alarms tightened to **$3 warning / $5 critical** (prod-gated,
-  arch §4.1.4); 14-day CloudWatch log retention.
-- Reserved concurrency is a per-Lambda runaway-cost guard (§4.7.4), parameterized per ADR-030
-  (template default `-1` = off). The account's Lambda quota was restored to 1000, so the caps are
-  **live** via `samconfig.toml`: chat/career_crud/settings = 5, `resume_upload_parser` = 2,
-  `resume_agent` = 2 (ADR-037 — needs room for an async worker + a fresh POST/GET).
-- **Resume agent = dominant Bedrock cost driver.** A tailored-résumé run is ~70K tokens / **~$0.31**
-  on Sonnet 4-6 (~16 runs/month within $5); the per-run token ceiling is 150K (~$1) + reserved
-  concurrency 2 (ADR-036/037). Sonnet 5 is *not grantable* on this account (`agreement: NOT_AVAILABLE`)
-  — 6a runs on the newest accessible Sonnet, 4-6.
+- **$5/month hard ceiling** (NFR-1.1). Tightened from $10 after the account lost its free tier on
+  joining an AWS Organization. **July 2026 — the heaviest month — came in at $3.88.**
+- **The ceiling constrains Bedrock call volume, not how much infrastructure exists.** Bedrock is
+  ~87% of the bill; *all* deployed services combined are under **$0.01/month**. This reframing is
+  what decided ADR-041 (a second stack is nearly free, so prod-vs-dev turns on operational cost) and
+  ADR-042 (integration tests must be tiered).
+- Measured per operation: chat Q&A **~$0.006** · check-in email **~$0.0026** · tailored résumé
+  **$0.11–$0.35**. The résumé agent is the only thing that meaningfully costs money, and **its cost
+  scales with corpus size** — the app gets pricier as it becomes more useful (B-004, B-020).
+- Guards: AWS Budget `careervault-monthly-5usd` (alerts ~$1/$4/$5 + forecast); prod-gated billing
+  alarms at $3/$5 (arch §4.1.4); 14-day log retention; per-Lambda reserved concurrency live via
+  `samconfig.toml` (ADR-030, §4.7.4).
 
-## Current build phase
+## Current phase
 
-**Phase 2 — Implementation (in progress). Next slice: 9 — hardening & MVP close (integration test suite against deployed dev + DynamoDB Local for conditional-write semantics; frontend unit tests wired into CI — the current frontend job is typecheck+build+lint only, so green CI does not prove the app renders; README refresh; FR/NFR coverage audit; MVP evaluation scorecard against requirements §7; cost review with real Bedrock numbers). ⚠ open decisions: deploy a prod stack vs declare dev-as-MVP for a single-user app, and which parking-lot items graduate to v1.1. Highest-value backlog item to fold in: **B-018** — no integration test covers the check-in flow, which slice 8 verified entirely by hand; a scheduled job is the one thing that cannot be smoke-tested by clicking around the app.**
+**Phase 2 complete — MVP declared 2026-07-29 (slice 9, PR #32). Next: v1.1.**
 
-- Last completed: slice 8 — check-in emails (FR-4). EventBridge Scheduler fires `checkin_lambda`
-  daily at 23:00 UTC; **`next_checkin_at` on the PROFILE paces the cadence**, so all four FR-4.1
-  cadences run off one schedule and a cadence change is a data write, not a control-plane call
-  (**ADR-039**). Three things worth carrying. **(1) `required` in a Converse tool schema is a hint,
-  not a constraint.** The first personalized send returned a complete email that omitted `sign_off`
-  — a `required` field — and validation rejected it, dropping a good email to the static fallback;
-  the generic send a minute earlier had included it, same prompt, temperature 0. Fix was a split,
-  not a looser schema: `subject`/`prompts` strict, `greeting`/`sign_off` defaulted. *Validate what
-  makes output useful; default what merely makes it polished* — and note the downgrade is
-  **invisible** without a metric, because the email still arrives (**ADR-021** addendum).
-  **(2) The docs described two fields that never existed** — `checkin_time_local` and
-  `aspirational_goal` — which is B-008's failure mode repeating twice in one feature. One was added
-  (the generic fallback is inert without it), one deliberately not. *Prose describing a data model
-  drifts silently, because nothing fails when a field in a sentence never becomes a field in a
-  schema.* **(3) Idempotency has a price:** claiming the send slot before calling SES means a failed
-  send consumes the cycle; claiming after would duplicate on a Scheduler retry. *At most once is
-  bought by giving up at least once* — right for a nudge, wrong for anything transactional (B-016).
-  **ADR-040** closed **B-014**: nested `settings` merges via one dotted `SET settings.#f` path per
-  sub-field, plus a *separate* idempotent seeding `UpdateItem` — a dotted path cannot be written
-  into an absent attribute, and the seed cannot ride along in the same expression (DynamoDB rejects
-  naming both a path and its descendant). All four premises were probed against the live table
-  before the ADR was settled; the single-expression form was in the first draft as fact and was
-  wrong. **Arch v2.1 corrections:** §3.3.3 and §4.5.4 both said "Query" for what is necessarily a
-  `Scan` (different partition keys per user + no GSIs per ADR-028 — a GSI is what would *make* it a
-  Query, not what would make it faster); §4.5.4's IAM row gains `dynamodb:Scan`. All three tiers,
-  both idempotency layers, pause, cadence pacing, and the full SES→SNS→handler bounce path verified
-  live. Measured **~$0.0026/check-in** (~$0.01/mo weekly). SES stays in **sandbox** — sufficient for
-  one verified recipient, and note identity verification is a **manual link click** CloudFormation
-  cannot complete. Deferred: B-016..B-019.
-- Interlude after slice 7: **B-008 closed** (PR #30) — generated résumés had no identity header.
-  The backlog's proposed fix ("take identity from the JWT") turned out **insufficient**: Cognito
-  holds only `email`/`email_verified`/`sub` — no name — and the `Profile` model had neither `name`
-  nor `location`, the two fields `_contact_from_profile` reads. Real fix was three-part: those two
-  model fields, a `PUT /settings` route to write them (the `UpdateItem` grant had been sitting
-  unused since slice 1), and a "Details" view. JWT email is the *fallback*, not the answer. Also
-  fixed a latent slice-1 bug it surfaced: `settings/handler.py` hardcoded `http://localhost:5173`
-  as its allow-origin instead of reading `CORS_ALLOW_ORIGIN` like every other Lambda does after
-  ADR-034, so `GET /settings` would have failed CORS from CloudFront — invisible until something
-  called the route. `tests/conftest.py` now uses the *deployed* wildcard so that class of bug fails
-  a test. Verified live: header renders **"Oche Obe"** with email + location beneath.
+Scope is already agreed and sliced in `docs/careervault-plan.md` § "v1.1 — graduated scope":
 
-- Before that: slice 7 — chat over your data (FR-6.1). `chat_lambda` now routes a message to
-  entry-parsing **or** grounded Q&A via a third *control-flow* tool, `answer_question`, with
-  `toolChoice=any` **retained** (**ADR-038**). A Q&A turn is route (Haiku) → Titan embed →
-  `rank_by_similarity` top-k **in-Lambda** → synthesis (Haiku, **no tools**); ingestion is
-  unchanged from 2b. Two things worth carrying: **(1) the corpus census.** Semantic top-k is the
-  wrong index for counting — hand a model k entries and it answers "k" — so every synthesis prompt
-  carries counts by `entry_type` over the *whole* corpus, computed in Python. Live proof: top-k
-  returned 8 entries of which 4 were certs, and "how many certifications do I have?" answered **4**.
-  *Let Python count, let the model narrate.* **(2) The IAM widening this slice was supposed to make
-  did not exist.** Chat's `dynamodb:Query` grant was always unconditional on the table ARN, so
-  `ENTRY#` reads were permitted since slice 2; the only real policy delta is Titan `InvokeModel`.
-  §4.2.3's "chat can only touch `CONVO#`" was never enforceable in IAM (one PK per user;
-  `LeadingKeys` scopes the partition key only) and was always an application-code invariant —
-  **a least-privilege boundary IAM cannot express is a code invariant wearing an IAM costume**
-  (arch v2.0 corrects §4.2.3). Injection controls that *are* real and test-pinned: no `toolConfig`
-  on the synthesis call, model-free retrieval, privilege separation across the two calls,
-  answers rendered as text never markdown. Security review found one LOW issue (delimiter
-  defanging covered only `<entry>`, not the outer block tags) — **fixed in-slice**. Measured
-  **~$0.006/Q&A turn**. Deferred: B-011 hybrid retrieval for aggregates (the `intent` field ships
-  reserved), B-012 keep answers plain-text, B-013 full-corpus read weight. Before that: slice 6b —
-  resume agent output UI (FR-5.3/5.4). The `Résumé` tab runs the ADR-037
-  async flow end to end: JD input → `POST` `202 {run_id}` → 3s poll with an elapsed counter → iframe
-  HTML preview + PDF download + Regenerate. Two of its four slice-start decisions turned out to be
-  *backend* work, which is the lesson: **the PDF presign needed a `Content-Disposition: attachment`
-  override** (HTML's `download` attribute is ignored cross-origin, so the button opened a tab
-  instead of saving), and the preview uses an **iframe `src`** because the data bucket's CORS is
-  PUT-only — an iframe navigation isn't subject to CORS, and it keeps agent-generated HTML out of
-  the app's origin. `run_id` lives in `sessionStorage` so a mid-run reload re-attaches to a paid run
-  instead of orphaning it. **ADR-015 amended:** `resumes/` now expires on a flat 30-day lifecycle
-  matching the RESUMERUN TTL — the original "keep the newest indefinitely, 7 days for the rest" is
-  not expressible as an S3 lifecycle rule. **Arch v1.9 correction:** §3.2.2's "under 90 seconds per
-  run" is wrong; measured ~176s, which is exactly why generation is async. Measured run: 82.9K
-  tokens / **$0.35** (a `REVISE` run — the realistic upper end vs 6a's 70K/$0.31 `PASS` baseline).
-  Deferred: the run-metadata row is developer-facing and the elapsed timer disappears on completion
-  → backlog B-006/B-007. Before that: slice 6a — resume agent backend loop (ADR-036/-037; arch §3.2 corrected). The
-  `resume_agent` Lambda runs the six-phase bounded loop (Haiku analyze → Sonnet 4-6 retrieve/draft/
-  critique/revise → deterministic HTML+PDF finalize) as an **async job** (ADR-037: `POST
-  /resumes/generate` → `202 {run_id}` + self-invoked worker; `GET /resumes/{run_id}` polls,
-  presigns 1h URLs). New: `careervault-weasyprint` layer (Docker/makefile, renders PDF on arm64),
-  RESUMERUN trace items (table TTL), Bedrock Sonnet IAM. **Sonnet 5 ungrantable on this account →
-  runs on Sonnet 4-6** (ADR-036 live-access correction). Measured ~70K tokens / **$0.31** / ~176s
-  per run after tuning (`max_iterations 15→8`, `max_revisions 2→1`). Deployed to dev; async
-  start→poll→**valid PDF** smoke-verified. Retrieval-loop context growth (dominant cost) → backlog
-  B-004. Before that: slice 5 — resume upload bootstrap (ADR-035; arch v1.7). Private S3 data bucket
-  (`careervault-data-${Env}-${AccountId}`, `uploads/`+`resumes/`) + `resume_upload_parser` owning
-  `POST /uploads/presign` and `POST /uploads/parse` — a **parse-only** Haiku transform (no Titan, no
-  DDB grant): presigned PUT → parse to entry candidates → select-all review table → saved through
-  the existing `POST /entries` (the single embedding site). Pure-Python extraction (pypdf + stdlib
-  `zipfile`/`xml.etree` for DOCX — deliberately no python-docx/lxml). Deployed to dev, backend +
-  UI smoke passed; parse ~3.4–4s (sync route holds). Dedup-precision gap for exact-identity certs
-  → backlog B-003. Before that: slice 4 — frontend hosting (S3 + CloudFront via OAC; ADR-019
-  amendment; ADR-034 wildcard CORS; arch v1.5, PR #20); slice 3 — entries dashboard + CRUD (ADR-033;
-  arch v1.4, PR #4); 2b chat UI (PR #3); 2a chat backend (PR #2); 1 auth + settings (PR #1).
-- **The roadmap lives in `docs/careervault-plan.md`** — slice order, per-slice scope, exit
-  criteria, open ⚠ decisions, and completion notes (including the slice 1/2a details and the
-  Bedrock gotchas that used to live here). Read the status board + current slice section at
-  session start; update it when a slice wraps.
-- Session rituals: `/start-slice` and `/wrap-slice` (project skills in `.claude/skills/`).
-- Learning artifacts: `/explain-diff` renders an interactive explainer for a slice/PR (background →
-  intuition → code walkthrough → quiz) into `docs/explanations/`. This project is an AWS-learning
-  vehicle; run it on any slice the user wants to understand rather than just merge.
+1. **Résumé speed + usability** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and optimising
+   without a baseline ships changes that only *feel* faster), then B-020/B-004 (one mechanism — the
+   retrieval loop's growing history drives both cost and latency), then B-022 (copyable plain-text
+   bullets, the cheapest real win).
+2. **UI + mobile pass** — B-001 plus NFR-6.2, which the scorecard marks ❓Unverified, not ✅. Start by
+   *enumerating* with Playwright MCP, not styling.
+3. **Voice capture** — ADR-014, already decided: browser Web Speech API, explicitly not Amazon
+   Transcribe. Adds **$0**; the transcript enters the existing `POST /chat` path.
 
-Refer to the architecture doc as you implement. If a decision needs to be made that isn't covered, capture it as a new ADR in `careervault-adl.md` before coding it in.
+**Read at session start:** the plan doc's status board + current slice section. Per-slice history,
+completion notes, and the reasoning behind every past decision live there and in the ADL — not here.
+
+## Standing constraints (these will bite you)
+
+Each of these caused, or would have caused, a wrong action. Detail is in the linked source.
+
+| Constraint | Where |
+|---|---|
+| **`careervault-dev` IS the MVP stack.** Not an unfinished promotion — do not deploy prod. | ADR-041 |
+| **A prod stack cannot currently deploy.** `CheckinEmailIdentity` isn't env-suffixed and SES identities are unique per account+region, so it collides with dev's. | B-021 |
+| **Sonnet 5 is ungrantable on this account.** A commercial-agreement wall, not a misconfiguration. Stop probing; runs on Sonnet 4-6. | B-010 |
+| **`required` in a Converse tool schema is a hint, not a constraint.** Validate what makes output *useful*; default what merely makes it *polished*. | ADR-021 |
+| **Haiku at temperature 0 is not deterministic.** Structured-output flows need a retry or salvage path. | memory |
+| **IAM cannot scope a sort-key prefix.** `LeadingKeys` scopes the partition key only, and one user is one partition — so "this Lambda only touches `CONVO#`" is a *code* invariant, never an IAM one. | arch §4.2.3 |
+| **A latency requirement and a delivery model are not independent choices.** Anything over API Gateway's 29s timeout cannot be synchronous. | ADR-037 |
+
+## Testing
+
+466 tests. **The default run of every suite is free** — that is deliberate, because a suite that
+costs money is a suite people avoid, and an avoided test still implies coverage nobody has (ADR-042).
+
+```bash
+./scripts/run-tests.sh                    # 376 backend unit                        $0
+cd frontend && npm test                   # 28 component (Vitest + RTL)             $0
+./scripts/run-integration.sh              # 56 · DynamoDB Local + deployed dev      $0
+./scripts/run-integration.sh --bedrock    # + real Haiku round-trips           ~$0.01
+./scripts/run-integration.sh --expensive  # + a full Sonnet résumé run         ~$0.11
+```
+
+- Backend + frontend tests gate every PR in CI. Integration tests are local-only.
+- **Never `python -m pytest` directly** — it misses the venv deps; use `./scripts/run-tests.sh`.
+- Writing frontend tests: stub `fetch` (`src/test/http.ts`), don't mock the api module. A `vi.fn()`
+  returning a rejected promise fails the test *even when the component catches it correctly*.
+
+## Session rituals
+
+- **`/start-slice`** and **`/wrap-slice`** (project skills in `.claude/skills/`). **Invoke them; do
+  not reproduce their steps from memory** — that is how slice 8 shipped without a code review.
+  `/wrap-slice` blocks on: green tests, **both** reviews having *run*, and docs current.
+- **`/explain-diff`** renders an interactive explainer into `docs/explanations/`. This project is an
+  AWS-learning vehicle — run it on any slice the user wants to understand rather than just merge.
+- New decision not covered by the architecture doc? **Write the ADR in `careervault-adl.md` before
+  the code.** When live AWS behavior contradicts a doc, say so plainly and correct the doc.
 
 ## AWS Guidance
 
