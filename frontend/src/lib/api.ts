@@ -293,3 +293,48 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
   }
   return { status: "pending", runId };
 }
+
+// --- Profile / settings (B-008: the résumé identity header) -------------------------------
+
+/** The PROFILE singleton as `GET /settings` returns it. */
+export type Profile = {
+  email: string;
+  name?: string | null;
+  location?: string | null;
+  phone?: string | null;
+  summary?: string | null;
+  skills?: string[];
+  portfolio_links?: Record<string, string>;
+};
+
+/** The user-editable subset. `email` is deliberately absent — the server takes it from the JWT. */
+export type ProfileUpdate = {
+  name?: string | null;
+  location?: string | null;
+  phone?: string | null;
+};
+
+export type SaveProfileResult =
+  | { status: "saved"; profile: Profile }
+  | { status: "invalid"; errors: FieldError[] }
+  | { status: "failed"; message: string };
+
+export async function getSettings(idToken: string): Promise<Profile> {
+  const res = await fetch(`${apiBaseUrl}/settings`, { headers: authHeaders(idToken) });
+  if (!res.ok) throw new Error(`GET /settings → ${res.status}`);
+  return (await res.json()) as Profile;
+}
+
+export async function putSettings(idToken: string, body: ProfileUpdate): Promise<SaveProfileResult> {
+  const res = await fetch(`${apiBaseUrl}/settings`, {
+    method: "PUT",
+    headers: authHeaders(idToken),
+    body: JSON.stringify(body),
+  });
+  const payload = await jsonOf(res);
+  if (res.ok) return { status: "saved", profile: payload as unknown as Profile };
+  if (res.status === 400 && Array.isArray(payload.errors)) {
+    return { status: "invalid", errors: payload.errors as FieldError[] };
+  }
+  return { status: "failed", message: (payload.message as string) ?? `PUT /settings → ${res.status}` };
+}

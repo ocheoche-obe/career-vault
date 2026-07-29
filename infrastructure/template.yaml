@@ -356,6 +356,16 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /settings
             Method: get
+        # B-008: the résumé identity header needs a name, and nothing could write one. The
+        # UpdateItem grant above has been in place since slice 1 in anticipation of this route,
+        # so this is a route + handler branch, not an IAM change. Slice 8's cadence/pause
+        # settings (FR-4.6) land on this same route.
+        PutSettings:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /settings
+            Method: put
 
   # Explicit log group so retention is bounded (arch §4.7 operational hygiene) rather than
   # "never expire". Name matches Lambda's convention so the function writes here.

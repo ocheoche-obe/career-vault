@@ -3,6 +3,7 @@
 DynamoDB, S3, Lambda self-invoke, the agent, and rendering are all faked; no test reaches AWS.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -248,3 +249,51 @@ def test_poll_not_found_is_404(stubs, monkeypatch):
 
 def test_poll_missing_run_id_is_400(stubs):
     assert h.handler(api_event(None, method="GET", path_params=None), FakeLambdaContext())["statusCode"] == 400
+
+
+# --- B-008: the résumé identity header --------------------------------------------------------
+
+def test_contact_prefers_profile_name_over_everything():
+    contact = h._contact_from_profile(
+        {"name": "Ada Lovelace", "email": "stored@x.com", "location": "London"},
+        jwt_email="jwt@x.com",
+    )
+
+    assert contact["name"] == "Ada Lovelace"
+    assert contact["email"] == "stored@x.com"  # the editable row wins over the claim
+    assert contact["location"] == "London"
+
+
+def test_contact_falls_back_to_the_jwt_email_when_no_profile_exists():
+    """The B-008 symptom: no PROFILE row at all, so the header had nothing and rendered "Résumé"."""
+    contact = h._contact_from_profile(None, jwt_email="jwt@x.com")
+
+    assert contact["email"] == "jwt@x.com"
+    assert contact["name"] is None
+
+
+def test_contact_is_empty_only_when_there_is_genuinely_no_identity():
+    contact = h._contact_from_profile(None)
+
+    assert contact["name"] is None and contact["email"] is None
+
+
+def test_worker_payload_carries_the_jwt_email(monkeypatch):
+    """The worker runs async (ADR-037) and never sees the API event, so the claim must be carried."""
+    captured: dict = {}
+
+    class _FakeLambda:
+        def invoke(self, **kwargs):
+            captured.update(json.loads(kwargs["Payload"].decode()))
+            return {}
+
+    monkeypatch.setattr(h, "_lambda", lambda: _FakeLambda())
+    monkeypatch.setattr(h, "query_entries", lambda user_id: [{"entry_id": "x"}])
+    monkeypatch.setattr(h, "create_resume_run", lambda item: True)
+    monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", "careervault-resume-agent-test")
+
+    event = api_event({"target": "Senior SRE role"}, method="POST", email="claim@x.com")
+    response = h.handler(event, FakeLambdaContext())
+
+    assert response["statusCode"] == 202
+    assert captured["jwt_email"] == "claim@x.com"

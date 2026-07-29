@@ -130,7 +130,19 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 8 — check-in emails (FR-4: SES identity + Configuration Set, EventBridge Scheduler → `checkin_lambda` with Haiku/RAG personalization per ADR-011, `ses_event_handler` + bounce/complaint SNS topic + SQS DLQs, settings PUT for cadence/pause, CHECKINLOG audit items). ⚠ open decisions: whether SES sandbox suffices for MVP (one verified recipient — likely yes, document rather than request production access), and the default send day/time for the weekly cadence.**
+**Phase 2 — Implementation (in progress). Next slice: 8 — check-in emails (FR-4: SES identity + Configuration Set, EventBridge Scheduler → `checkin_lambda` with Haiku/RAG personalization per ADR-011, `ses_event_handler` + bounce/complaint SNS topic + SQS DLQs, cadence/pause on the *existing* `PUT /settings`, CHECKINLOG audit items). ⚠ open decisions: whether SES sandbox suffices for MVP (one verified recipient — likely yes, document rather than request production access), and the default send day/time for the weekly cadence. Note two things already done for it: `PUT /settings` **exists** (shipped with B-008), and **B-014** is a prerequisite — `ProfileUpdate` deliberately omits `settings` because a nested object would be *replaced*, not merged, silently dropping `checkin_cadence`; slice 8 must add it with real nested-merge semantics.**
+
+- Interlude after slice 7: **B-008 closed** (PR #30) — generated résumés had no identity header.
+  The backlog's proposed fix ("take identity from the JWT") turned out **insufficient**: Cognito
+  holds only `email`/`email_verified`/`sub` — no name — and the `Profile` model had neither `name`
+  nor `location`, the two fields `_contact_from_profile` reads. Real fix was three-part: those two
+  model fields, a `PUT /settings` route to write them (the `UpdateItem` grant had been sitting
+  unused since slice 1), and a "Details" view. JWT email is the *fallback*, not the answer. Also
+  fixed a latent slice-1 bug it surfaced: `settings/handler.py` hardcoded `http://localhost:5173`
+  as its allow-origin instead of reading `CORS_ALLOW_ORIGIN` like every other Lambda does after
+  ADR-034, so `GET /settings` would have failed CORS from CloudFront — invisible until something
+  called the route. `tests/conftest.py` now uses the *deployed* wildcard so that class of bug fails
+  a test. Verified live: header renders **"Oche Obe"** with email + location beneath.
 
 - Last completed: slice 7 — chat over your data (FR-6.1). `chat_lambda` now routes a message to
   entry-parsing **or** grounded Q&A via a third *control-flow* tool, `answer_question`, with

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _utcnow_iso() -> str:
@@ -32,6 +32,13 @@ class Profile(BaseModel):
     SK: str = "PROFILE"
     entity_type: str = "PROFILE"
     email: str
+    # `name` and `location` back the résumé identity header (backlog B-008). They were absent
+    # through slice 6, which is why a generated résumé rendered the literal word "Résumé": the
+    # template reads `contact.name or contact.email`, `_contact_from_profile` read `profile
+    # ["name"]`, and nothing on either side of that ever existed. Cognito cannot supply them
+    # either — the user pool holds only `email`, `email_verified` and `sub`.
+    name: str | None = None
+    location: str | None = None
     summary: str | None = None
     skills: list[str] = Field(default_factory=list)
     portfolio_links: dict[str, str] = Field(default_factory=dict)
@@ -39,6 +46,40 @@ class Profile(BaseModel):
     settings: Settings = Field(default_factory=Settings)
     created_at: str
     updated_at: str
+
+
+class ProfileUpdate(BaseModel):
+    """The write-side contract for ``PUT /settings`` — *only* user-editable fields.
+
+    Deliberately not `Profile`. The server owns `PK`, `SK`, `entity_type`, `created_at`,
+    `updated_at`, and — critically — `email`, which comes from the Cognito JWT and must never be
+    settable from a request body (§4.2.4 applies to identity generally, not just to `user_id`).
+    A client that submits any of them is rejected rather than silently ignored, so a confused
+    caller learns immediately instead of believing a write landed.
+
+    Every field is optional: the route is a partial update, and omitting a field leaves the
+    stored value alone. Sending an explicit ``null`` is how a field gets cleared.
+
+    **Only the three fields the identity form actually writes are here**, and that restraint is
+    deliberate rather than laziness. An earlier draft also accepted ``summary``, ``skills``,
+    ``portfolio_links`` and ``settings``. Two reasons they were removed:
+
+    - Nothing writes them yet, so they would ship untested, with no UI to exercise them.
+    - ``settings`` in particular carried a trap. Partial-update semantics are per *top-level
+      attribute*: DynamoDB would ``SET settings = <what was sent>``, replacing the whole nested
+      object. So ``{"settings": {"checkin_paused": true}}`` would silently drop
+      ``checkin_cadence``. Slice 8 needs both fields independently (FR-4.6), so it should add
+      ``settings`` together with real nested-merge semantics and tests — not inherit a field whose
+      behaviour is quietly wrong.
+
+    Add a field here when something writes it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
 
 
 def default_profile(user_id: str, email: str) -> Profile:
