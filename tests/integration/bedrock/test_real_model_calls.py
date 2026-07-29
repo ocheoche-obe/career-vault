@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 
 import pytest
 
@@ -26,11 +27,18 @@ pytestmark = pytest.mark.bedrock
 
 
 @pytest.fixture(scope="module")
-def composer():
-    """The check-in composer, loaded in-process so it runs against real Bedrock."""
-    # Cleared so a DynamoDB Local endpoint left by the `local` tier cannot redirect real clients.
-    os.environ.pop("DDB_ENDPOINT_URL", None)
-    os.environ.setdefault("AWS_PROFILE", "careervault-dev")
+def composer(aws_session):
+    """The check-in composer, loaded in-process so it runs against real Bedrock.
+
+    Depends on `aws_session` for two things it cannot do for itself. First, the **account
+    assertion**: this fixture bills real Converse calls, and `os.environ.setdefault("AWS_PROFILE",
+    ...)` — which is what it used to do — is a no-op when AWS_PROFILE is already set to the *other*
+    project's profile sharing this SSO login, so the calls would land on the wrong account silently.
+    Second, the **skip**: `compose()` never raises (it catches everything and returns the static
+    tier), so with absent or expired credentials these tests would fail on
+    `assert 'static' == 'personalized'` rather than skipping — contradicting this suite's contract
+    that anything unavailable skips with a reason.
+    """
     from helpers import load_sibling
 
     return load_sibling("int_checkin_composer", "checkin", "composer")
@@ -142,7 +150,7 @@ class TestGroundedQa:
         assert response["statusCode"] == 200
         answer = body_of(response).get("answer") or ""
         assert answer, f"no answer in {json.dumps(body_of(response))[:400]}"
-        # The corpus census is computed in Python over the whole corpus, so the count is the one
-        # thing that should be reliable regardless of what top-k returned — "let Python count, let
-        # the model narrate".
-        assert "1" in answer or "one" in answer.lower()
+        # Word-boundary match, not a substring. `"one" in answer` is satisfied by "someone",
+        # "none" and "done", and `"1" in answer` by any date containing a 1 — so the obvious
+        # assertion passes even if a census regression made the model answer "8 certifications".
+        assert re.search(r"\b(1|one)\b", answer, re.IGNORECASE), answer

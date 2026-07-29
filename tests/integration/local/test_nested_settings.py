@@ -119,9 +119,18 @@ class TestGuards:
 
         assert get_profile(user_id) is None
 
-    def test_created_at_is_preserved_across_updates_while_updated_at_moves(self, table, user_id):
+    def test_created_at_is_preserved_across_updates(self, table, user_id):
         first = update_profile(user_id, {"name": "Ada"})
         second = update_profile(user_id, {"name": "Ada Lovelace"})
 
+        # `if_not_exists(created_at, :now)` is what makes this hold — a plain SET would silently
+        # reset the account's creation date on every profile edit.
         assert second["created_at"] == first["created_at"]
-        assert second["updated_at"] >= first["updated_at"]
+        assert second["name"] == "Ada Lovelace"
+
+        # Deliberately NOT asserting that updated_at advanced. `update_profile` formats with
+        # `timespec="seconds"`, so two back-to-back calls almost always produce an identical string
+        # and `second >= first` would hold even if the field were frozen or removed entirely —
+        # a green assertion carrying no information. Testing it honestly needs an injectable clock,
+        # which the helper does not currently expose.
+        assert "updated_at" in second

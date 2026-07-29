@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthContextProps } from "react-oidc-context";
 
@@ -59,7 +60,7 @@ describe("auth states (ADR-025)", () => {
     expect(screen.queryByRole("button", { name: /entries/i })).not.toBeInTheDocument();
   });
 
-  it("renders the authed shell with all five views reachable", () => {
+  it("renders the authed shell and lands on chat", () => {
     mockAuth.mockReturnValue(AUTHED);
     render(<App />);
 
@@ -69,8 +70,27 @@ describe("auth states (ADR-025)", () => {
     for (const name of ["Chat", "Upload résumé", "Entries", "Résumé", "Details"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
-    // Chat is the landing view.
     expect(screen.getByText("chat-view")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["Upload résumé", "upload-view"],
+    ["Entries", "entries-view"],
+    ["Résumé", "resume-view"],
+    ["Details", "settings-view"],
+    ["Chat", "chat-view"],
+  ])("clicking %s renders %s", async (button, view) => {
+    // Asserting the buttons *exist* is not the same as asserting they route correctly. App.tsx
+    // dispatches through a nested ternary whose final else is Dashboard, so any unmatched value
+    // silently lands on Entries — swapping two setView arguments would leave a presence-only test
+    // completely green while the app navigated to the wrong screen.
+    mockAuth.mockReturnValue(AUTHED);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: button }));
+
+    expect(screen.getByText(view)).toBeInTheDocument();
   });
 
   it("falls back to a re-sign-in prompt when authenticated without an id_token", () => {

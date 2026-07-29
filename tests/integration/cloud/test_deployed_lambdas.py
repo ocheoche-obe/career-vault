@@ -23,7 +23,7 @@ class TestSettingsRoundTrip:
 
         assert response["statusCode"] == 200
 
-    def test_identity_fields_written_by_put_come_back_on_get(self, lambda_client, cleanup_user):
+    def test_identity_fields_written_by_put_come_back_on_get(self, lambda_client, scheduler_safe_user):
         # B-008's fix, verified against the deployed function: PUT /settings is what puts a name on a
         # generated résumé, and the UpdateItem grant it needs sat unused from slice 1 until then.
         put = invoke(
@@ -31,31 +31,31 @@ class TestSettingsRoundTrip:
             "settings",
             api_event(
                 method="PUT",
-                user_id=cleanup_user,
+                user_id=scheduler_safe_user,
                 body={"name": "Ada Lovelace", "location": "London, England"},
             ),
         )
         assert put["statusCode"] == 200
 
-        got = body_of(invoke(lambda_client, "settings", api_event(method="GET", user_id=cleanup_user)))
+        got = body_of(invoke(lambda_client, "settings", api_event(method="GET", user_id=scheduler_safe_user)))
         profile = got.get("profile", got)
         assert profile["name"] == "Ada Lovelace"
         assert profile["location"] == "London, England"
 
-    def test_nested_settings_sub_fields_move_independently(self, lambda_client, cleanup_user):
+    def test_nested_settings_sub_fields_move_independently(self, lambda_client, scheduler_safe_user):
         """ADR-040 through the deployed function, not just through the helper."""
         invoke(
             lambda_client,
             "settings",
-            api_event(method="PUT", user_id=cleanup_user, body={"settings": {"checkin_cadence": "monthly"}}),
+            api_event(method="PUT", user_id=scheduler_safe_user, body={"settings": {"checkin_cadence": "monthly"}}),
         )
         invoke(
             lambda_client,
             "settings",
-            api_event(method="PUT", user_id=cleanup_user, body={"settings": {"checkin_paused": True}}),
+            api_event(method="PUT", user_id=scheduler_safe_user, body={"settings": {"checkin_paused": True}}),
         )
 
-        got = body_of(invoke(lambda_client, "settings", api_event(method="GET", user_id=cleanup_user)))
+        got = body_of(invoke(lambda_client, "settings", api_event(method="GET", user_id=scheduler_safe_user)))
         settings = (got.get("profile", got)).get("settings", {})
         assert settings.get("checkin_cadence") == "monthly"
         assert settings.get("checkin_paused") is True
@@ -228,7 +228,27 @@ class TestCheckinRun:
         # Never invoke while a real user is due: that would send an actual email and consume their
         # cycle, since the slot is claimed before SES (B-016). Reading the state first is what keeps
         # this test free of side effects rather than merely usually free of them.
-        profiles = live_table.scan(FilterExpression="SK = :sk", ExpressionAttributeValues={":sk": "PROFILE"}).get("Items", [])
+        #
+        # The scan MUST paginate. DynamoDB reads up to 1 MB *before* applying a FilterExpression,
+        # and entries carry a ~1024-float Titan embedding each (~20 KB/item), so a single call can
+        # return LastEvaluatedKey having seen ~50 items and no PROFILE at all. A guard that misses a
+        # due profile does not fail safe — it invokes, bills a compose call, sends a real email, and
+        # advances `next_checkin_at` a full cadence, silently consuming that user's check-in.
+        profiles: list[dict] = []
+        start_key = None
+        while True:
+            kwargs: dict = {
+                "FilterExpression": "SK = :sk",
+                "ExpressionAttributeValues": {":sk": "PROFILE"},
+            }
+            if start_key:
+                kwargs["ExclusiveStartKey"] = start_key
+            page = live_table.scan(**kwargs)
+            profiles.extend(page.get("Items", []))
+            start_key = page.get("LastEvaluatedKey")
+            if not start_key:
+                break
+
         now = datetime.now(timezone.utc)
         if any(is_due(p, now) for p in profiles):
             pytest.skip("a real user is due for a check-in — invoking would send them an email")

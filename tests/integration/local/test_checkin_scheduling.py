@@ -22,6 +22,7 @@ import pytest
 from careervault.checkin_schedule import advance, cadence_of, is_due, is_paused, utcnow_iso
 from careervault.pydantic_models.profile import CADENCE_DAYS
 from careervault.ddb_helpers import (
+    CHECKIN_IDEMPOTENCY_HOURS,
     claim_checkin_slot,
     pk_for_user,
     scan_profiles,
@@ -31,7 +32,8 @@ from careervault.ddb_helpers import (
 pytestmark = pytest.mark.local
 
 NOW = datetime(2026, 7, 28, 23, 0, 0, tzinfo=timezone.utc)
-IDEMPOTENCY_HOURS = 12
+# Imported, not restated. A local literal here would keep passing if the production window changed
+# to a minute — the test would be asserting its own copy rather than the Lambda's behaviour.
 
 
 def seed_profile(table, user_id: str, **attrs) -> dict:
@@ -52,7 +54,7 @@ def claim(user_id: str, now: datetime = NOW, cadence: str = "weekly") -> bool:
         user_id,
         now_iso=utcnow_iso(now),
         next_checkin_at=utcnow_iso(advance(cadence, now)),
-        buffer_iso=utcnow_iso(now - timedelta(hours=IDEMPOTENCY_HOURS)),
+        buffer_iso=utcnow_iso(now - timedelta(hours=CHECKIN_IDEMPOTENCY_HOURS)),
     )
 
 

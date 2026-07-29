@@ -8,13 +8,12 @@ Tier         Marker                What it needs
 local        ``local``             DynamoDB Local on ``DDB_ENDPOINT_URL`` — $0, no AWS at all
 cloud        ``cloud``             Deployed dev stack + AWS creds — ~$0 (no model calls)
 bedrock      ``bedrock``           Real Converse round-trips, Haiku only — ~$0.01
-expensive    ``expensive``         A full Sonnet résumé run — ~$0.31
+expensive    ``expensive``         A full Sonnet résumé run — ~$0.11 measured
 ===========  ====================  ==========================================================
 
 ``scripts/run-integration.sh`` runs ``local`` + ``cloud`` by default and deselects the two paid
 tiers. The default has to be free, because the suite that costs nothing is the one that actually
-gets run — a uniform suite at ~$0.35 a go is ~14 runs to the monthly ceiling, which is a suite
-people avoid rather than use.
+gets run — a uniform suite is a suite people avoid rather than use.
 
 Anything unavailable **skips with a reason** rather than failing: a developer without Docker
 running should still get a useful signal from the rest.
@@ -31,6 +30,7 @@ import pytest
 
 DDB_LOCAL_ENDPOINT = os.environ.get("DDB_ENDPOINT_URL", "http://localhost:8000")
 LOCAL_TABLE_NAME = "CareerVaultTable-inttest"
+DEPLOYED_TABLE_NAME = "CareerVaultTable-dev"
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -38,7 +38,7 @@ def pytest_configure(config: pytest.Config) -> None:
         ("local", "needs DynamoDB Local; costs nothing"),
         ("cloud", "needs the deployed dev stack; no model calls, ~$0"),
         ("bedrock", "makes real Haiku Converse calls; ~$0.01 per run"),
-        ("expensive", "runs the Sonnet résumé agent; ~$0.31 per run"),
+        ("expensive", "runs the Sonnet résumé agent; ~$0.11 per run"),
     ]:
         config.addinivalue_line("markers", f"{marker}: {description}")
 
@@ -67,8 +67,13 @@ def ddb_local_table():
             "start it with `docker run -d -p 8000:8000 amazon/dynamodb-local`"
         )
 
-    # Set before importing ddb_helpers so get_table() picks up the endpoint, and blank out any real
-    # credentials so a misconfigured endpoint cannot reach the actual account.
+    # Set before importing ddb_helpers so get_table() picks up the endpoint.
+    #
+    # The placeholder credentials below are *not* a safety net, despite looking like one: setdefault
+    # is a no-op when the variable already exists, and run-integration.sh exports AWS_PROFILE, which
+    # boto3 resolves to real SSO credentials regardless. The only thing keeping this tier off the
+    # real account is the explicit endpoint_url below. They are set purely so boto3 can construct a
+    # client at all when no credentials are configured.
     os.environ["DDB_ENDPOINT_URL"] = DDB_LOCAL_ENDPOINT
     os.environ["CAREERVAULT_TABLE_NAME"] = LOCAL_TABLE_NAME
     os.environ.setdefault("AWS_ACCESS_KEY_ID", "local")
@@ -142,8 +147,20 @@ def aws_session():
     from botocore.exceptions import BotoCoreError, ClientError
 
     os.environ.setdefault("AWS_PROFILE", "careervault-dev")
-    # Cleared so a DynamoDB Local endpoint left by the `local` tier cannot redirect real clients.
+
+    # Undo the `local` tier's rebinding — properly. Popping DDB_ENDPOINT_URL alone is not enough and
+    # the previous comment here claimed a guard that did not exist: `get_table()` caches the Table
+    # object at module level for warm-container reuse, and `CAREERVAULT_TABLE_NAME` is still pointing
+    # at `CareerVaultTable-inttest`. Without all three lines, any in-process `ddb_helpers` call from
+    # a "deployed" test reads DynamoDB Local, or a table that does not exist in us-east-1. It is
+    # currently masked only by alphabetical collection order (bedrock < cloud < expensive < local),
+    # which `-k` or a reordered path argument silently defeats.
     os.environ.pop("DDB_ENDPOINT_URL", None)
+    os.environ["CAREERVAULT_TABLE_NAME"] = DEPLOYED_TABLE_NAME
+
+    from careervault import ddb_helpers
+
+    ddb_helpers._table = None
 
     session = boto3.Session()
     try:
@@ -165,7 +182,7 @@ def lambda_client(aws_session):
 @pytest.fixture(scope="session")
 def live_table(aws_session):
     """The *deployed* dev table. Only ever touched under a throwaway test user's partition."""
-    return aws_session.resource("dynamodb").Table("CareerVaultTable-dev")
+    return aws_session.resource("dynamodb").Table(DEPLOYED_TABLE_NAME)
 
 
 @pytest.fixture
@@ -174,16 +191,61 @@ def cloud_user_id() -> str:
     return f"int-test-{uuid.uuid4().hex[:12]}"
 
 
+def _purge_user(live_table, user_id: str) -> None:
+    """Delete every item under one user's partition, following pagination to completion.
+
+    Pagination is not optional. A Query returns at most 1 MB, and entries carry a ~1024-float Titan
+    embedding each (~20 KB/item, ADR-016) while a RESUMERUN trace stores the agent's whole action
+    history — so one test user's partition can exceed a page. Anything left behind is not merely
+    untidy: an orphaned PROFILE becomes a permanent recipient for the daily check-in scan.
+    """
+    from boto3.dynamodb.conditions import Key
+
+    start_key = None
+    while True:
+        kwargs = {"KeyConditionExpression": Key("PK").eq(f"USER#{user_id}")}
+        if start_key:
+            kwargs["ExclusiveStartKey"] = start_key
+        response = live_table.query(**kwargs)
+
+        with live_table.batch_writer() as batch:
+            for item in response.get("Items", []):
+                batch.delete_item(Key={"PK": item["PK"], "SK": item["SK"]})
+
+        start_key = response.get("LastEvaluatedKey")
+        if not start_key:
+            return
+
+
 @pytest.fixture
 def cleanup_user(live_table, cloud_user_id):
     """Delete everything written under the test user, whatever the test did or how it failed."""
     yield cloud_user_id
+    _purge_user(live_table, cloud_user_id)
 
-    from boto3.dynamodb.conditions import Key
 
-    items = live_table.query(
-        KeyConditionExpression=Key("PK").eq(f"USER#{cloud_user_id}")
-    ).get("Items", [])
-    with live_table.batch_writer() as batch:
-        for item in items:
-            batch.delete_item(Key={"PK": item["PK"], "SK": item["SK"]})
+@pytest.fixture
+def scheduler_safe_user(live_table, cloud_user_id):
+    """A test user that can never be picked up by the daily check-in run.
+
+    Any test that writes a PROFILE needs this. `settings/handler.py` stamps the caller's claim email
+    onto the profile, and `is_due` treats *any* profile with an email, not paused, and with no
+    `next_checkin_at` as due right now — which is exactly the shape a bare `PUT /settings` creates.
+    Teardown normally removes it, but a Ctrl-C, a crashed session, or a hard kill leaves an orphan
+    that the 23:00 UTC run then bills a Bedrock compose call for, every day, and tries to deliver to
+    an unverified address.
+
+    Seeding `next_checkin_at` far in the future *before* the test writes anything makes that
+    impossible rather than unlikely — the item is never due at any point in its life, so no ordering
+    of failures can produce an orphan recipient. `ProfileUpdate` never writes this field, so a
+    subsequent `PUT /settings` leaves it intact.
+    """
+    live_table.put_item(
+        Item={
+            "PK": f"USER#{cloud_user_id}",
+            "SK": "PROFILE",
+            "next_checkin_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    yield cloud_user_id
+    _purge_user(live_table, cloud_user_id)

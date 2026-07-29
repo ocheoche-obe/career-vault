@@ -2,13 +2,13 @@
 # Run the CareerVault integration suite (ADR-042).
 #
 # Tiers are separated by what a run *costs*, because the suite that costs nothing is the one that
-# actually gets run. A uniform suite that exercises the résumé agent is ~$0.35 a go — about 14 runs
-# to the $5 monthly ceiling — which is a suite people avoid rather than use.
+# actually gets run. A uniform suite that exercises the résumé agent costs real money every time —
+# which makes it a suite people avoid rather than use.
 #
 #   ./scripts/run-integration.sh                 local + cloud            $0
 #   ./scripts/run-integration.sh --bedrock       + real Haiku calls       ~$0.01
-#   ./scripts/run-integration.sh --expensive     + a Sonnet résumé run    ~$0.31
-#   ./scripts/run-integration.sh --all           everything               ~$0.32
+#   ./scripts/run-integration.sh --expensive     + a Sonnet résumé run    ~$0.11
+#   ./scripts/run-integration.sh --all           everything               ~$0.12
 #
 # Anything unavailable (Docker down, no AWS creds) skips with a reason rather than failing.
 set -euo pipefail
@@ -57,7 +57,11 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   if ! docker ps --format '{{.Names}}' | grep -qx "$DDB_CONTAINER"; then
     echo "Starting DynamoDB Local ($DDB_CONTAINER)..."
     docker rm -f "$DDB_CONTAINER" >/dev/null 2>&1 || true
-    docker run -d --name "$DDB_CONTAINER" -p 8000:8000 amazon/dynamodb-local >/dev/null
+    # `|| echo` matters under `set -e`: port 8000 is a common local port, and a bare failing
+    # command here would abort before pytest ran at all — taking the cloud tier, which needs no
+    # Docker, down with it and contradicting this script's own "skips with a reason" contract.
+    docker run -d --name "$DDB_CONTAINER" -p 8000:8000 amazon/dynamodb-local >/dev/null \
+      || echo "Could not start DynamoDB Local — the 'local' tier will skip." >&2
     for _ in $(seq 1 30); do
       curl -s -o /dev/null http://localhost:8000 && break
       sleep 0.5

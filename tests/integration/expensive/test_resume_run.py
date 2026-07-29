@@ -1,9 +1,10 @@
-"""A full tailored-résumé run against the deployed agent (~$0.31). Opt in with `--expensive`.
+"""A full tailored-résumé run against the deployed agent (~$0.11 measured). Opt in with `--expensive`.
 
 The single most expensive thing CareerVault does, and therefore the one deliberately excluded from
-every default run: at ~$0.31 a go, ~16 runs is the entire $5 monthly ceiling. That is a conscious
-purchase of budget with coverage, and it leaves the most complex Lambda the least
-integration-tested — stated here rather than discovered later.
+every default run. Measured **$0.113** here — cheaper than the $0.31–0.35 a real corpus costs, but
+only because this test seeds a 2-entry fixture; cost scales with corpus size (B-004/B-020), so do
+not read this number as the agent's price. It is still a conscious purchase of budget with coverage,
+and it leaves the most complex Lambda the least integration-tested — stated rather than discovered.
 
 What earns the money is the part no cheaper tier can reach: that the six-phase bounded loop
 terminates, that the deterministic finalize produces a real PDF, and that the ADR-037 async contract
@@ -50,7 +51,7 @@ POLL_TIMEOUT_SECONDS = 420  # measured ~176s in slice 6b; generous headroom, not
 POLL_INTERVAL_SECONDS = 5
 
 
-def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, cleanup_user):
+def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, cleanup_user, aws_session):
     for entry in SEED_ENTRIES:
         created = invoke(
             lambda_client, "career_crud", api_event(method="POST", user_id=cleanup_user, body=entry)
@@ -106,26 +107,31 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, clean
     assert polled.get("pdf_url"), "a completed run must presign a PDF"
     assert polled.get("html_url"), "a completed run must presign an HTML preview"
 
-    _assert_is_a_real_pdf(polled["pdf_url"])
+    _assert_is_a_real_pdf(aws_session, polled["pdf_url"])
 
 
-def _assert_is_a_real_pdf(url: str) -> None:
-    """Fetch the presigned URL and check the magic bytes.
+def _assert_is_a_real_pdf(aws_session, url: str) -> None:
+    """Read the first bytes of the generated PDF and check its magic number.
 
     Worth the extra request: WeasyPrint runs from a Docker-built native layer, and the failure mode
     when that layer is wrong is a zero-byte or HTML-shaped object at a URL that presigns perfectly
     well. "A URL came back" is not the same claim as "a PDF exists".
+
+    Read through boto3 rather than `urllib`. The obvious version — `urllib.request.urlopen(url)` —
+    fails `CERTIFICATE_VERIFY_FAILED` on a python.org macOS build, which has no system trust store
+    wired up, and the workaround for *that* was an ssl context built from
+    `botocore.httpsession.DEFAULT_CA_BUNDLE`: an undocumented private constant whose relocation
+    would break the suite's most expensive test at import time. boto3 already has trust configured,
+    a `Range` header fetches five bytes instead of the whole document, and "use boto3 for all AWS SDK
+    calls" is the project convention anyway.
     """
-    import ssl
-    import urllib.request
+    from urllib.parse import unquote, urlparse
 
-    from botocore.httpsession import DEFAULT_CA_BUNDLE
+    parsed = urlparse(url)
+    bucket = parsed.netloc.split(".s3.")[0]
+    key = unquote(parsed.path.lstrip("/"))
 
-    # botocore's bundled CA rather than the interpreter's default trust store: a python.org build on
-    # macOS has no system certificates wired up, so plain urlopen fails CERTIFICATE_VERIFY_FAILED on
-    # a URL that is perfectly valid. That failure looks like a broken artifact and is not one.
-    context = ssl.create_default_context(cafile=DEFAULT_CA_BUNDLE)
-    with urllib.request.urlopen(url, timeout=30, context=context) as response:
-        head = response.read(5)
+    response = aws_session.client("s3").get_object(Bucket=bucket, Key=key, Range="bytes=0-4")
+    head = response["Body"].read()
 
-    assert head == b"%PDF-", f"presigned object is not a PDF (starts {head!r})"
+    assert head == b"%PDF-", f"generated object is not a PDF (starts {head!r})"
