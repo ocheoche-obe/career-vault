@@ -1,0 +1,75 @@
+/* Your details (B-008) — a short form, so it stays a single readable column rather than a grid. */
+.settings {
+  max-width: 32rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+.settings h2 {
+  margin: 0;
+}
+.settings-intro {
+  margin: 0;
+  color: var(--muted, #666);
+  font-size: 0.9em;
+}
+.settings-warning {
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  font-size: 0.9em;
+}
+.settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.settings label > span {
+  font-size: 0.85em;
+  color: var(--text-h);
+}
+.settings input {
+  padding: 0.5rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.settings input:disabled {
+  opacity: 0.6;
+}
+.settings label > small {
+  color: var(--muted, #666);
+  font-size: 0.78em;
+}
+.settings-error {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: crimson;
+  font-size: 0.9em;
+}
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.settings-actions button {
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.settings-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.settings-saved {
+  font-size: 0.9em;
+  color: var(--accent);
+}

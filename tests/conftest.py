@@ -27,7 +27,11 @@ _ENV_DEFAULTS = {
     "POWERTOOLS_METRICS_NAMESPACE": "CareerVault",
     # No X-Ray daemon under pytest; without this the Tracer tries to emit segments.
     "POWERTOOLS_TRACE_DISABLED": "1",
-    "CORS_ALLOW_ORIGIN": "http://localhost:5173",
+    # Mirrors the SAM template's Globals value (ADR-034 wildcard), not a dev-server origin. Using
+    # the *deployed* value matters: it is what makes a handler that hardcodes "http://localhost:5173"
+    # instead of reading this env var fail a test rather than pass one — which is exactly the bug
+    # settings_lambda carried from slice 1 until B-008.
+    "CORS_ALLOW_ORIGIN": "*",
 }
 for _key, _value in _ENV_DEFAULTS.items():
     os.environ.setdefault(_key, _value)

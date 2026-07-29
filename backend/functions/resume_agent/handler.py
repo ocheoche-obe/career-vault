@@ -149,7 +149,7 @@ def _final_item(
 
 # --- POST /resumes/generate (start the job) -------------------------------------------------------
 
-def _start(user_id: str, body: dict) -> dict:
+def _start(user_id: str, body: dict, *, jwt_email: str | None = None) -> dict:
     target_text = (body.get("target") or "").strip()
     if not target_text:
         return _response(400, {"message": "Provide a job description or target role in `target`."})
@@ -173,7 +173,17 @@ def _start(user_id: str, body: dict) -> dict:
             FunctionName=os.environ["AWS_LAMBDA_FUNCTION_NAME"],
             InvocationType="Event",  # async — the worker runs detached from this request (ADR-037)
             Payload=json.dumps(
-                {"job": _WORKER_JOB, "user_id": user_id, "run_id": run_id, "target_text": target_text, "created_at": created_at}
+                {
+                    "job": _WORKER_JOB,
+                    "user_id": user_id,
+                    "run_id": run_id,
+                    "target_text": target_text,
+                    "created_at": created_at,
+                    # Carried from the JWT because the worker never sees the API Gateway event
+                    # (ADR-037). Only used as the résumé header's fallback when the user has no
+                    # PROFILE row yet — see `_contact_from_profile` (B-008).
+                    "jwt_email": jwt_email,
+                }
             ).encode(),
         )
     except ClientError:
@@ -201,12 +211,22 @@ def _upload_and_keys(user_id: str, run_id: str, html: str, pdf: bytes) -> dict:
     return {"html_key": html_key, "pdf_key": pdf_key}
 
 
-def _contact_from_profile(profile: dict | None) -> dict:
-    """Deterministic identity for the résumé header — never LLM-generated (§3.2.2)."""
+def _contact_from_profile(profile: dict | None, *, jwt_email: str | None = None) -> dict:
+    """Deterministic identity for the résumé header — never LLM-generated (§3.2.2).
+
+    Precedence is PROFILE first, JWT email as the fallback, and that order matters: the PROFILE
+    row is user-editable through ``PUT /settings``, so a user who has set their details should see
+    them, while a user who never opened the settings form still gets *something* real rather than
+    the literal word "Résumé" (backlog B-008).
+
+    ``jwt_email`` is threaded down from the API entrypoint because the worker runs asynchronously
+    (ADR-037) and never sees the API Gateway event — the claims have to be carried in the job
+    payload or they are simply not available at render time.
+    """
     profile = profile or {}
     return {
-        "name": profile.get("name"),  # PROFILE has no name field at MVP; header falls back to email
-        "email": profile.get("email"),
+        "name": profile.get("name"),
+        "email": profile.get("email") or jwt_email,
         "phone": profile.get("phone"),
         "location": profile.get("location"),
         "links": profile.get("portfolio_links") or {},
@@ -245,7 +265,10 @@ def _run_worker(payload: dict) -> dict:
         return _fail(result.status, result=result)
 
     try:
-        html = render_html(result.document, contact=_contact_from_profile(profile))
+        html = render_html(
+            result.document,
+            contact=_contact_from_profile(profile, jwt_email=payload.get("jwt_email")),
+        )
         pdf = render_pdf(html)
     except Exception:  # noqa: BLE001 — a render failure shouldn't crash the worker opaquely
         logger.exception("Résumé rendering failed")
@@ -358,6 +381,9 @@ def handler(event, context) -> dict:
             return _response(400, {"message": "Body must be valid JSON"})
         if not isinstance(body, dict):
             return _response(400, {"message": "Body must be a JSON object"})
-        return _start(user_id, body)
+        # Read from the validated claims, never the body — the same rule `user_id` follows
+        # (§4.2.4). This is the only point in the async flow where the JWT is visible.
+        jwt_email = (event.get("requestContext", {}).get("authorizer", {}).get("claims", {}) or {}).get("email")
+        return _start(user_id, body, jwt_email=jwt_email)
 
     return _response(405, {"message": f"{method} not allowed"})

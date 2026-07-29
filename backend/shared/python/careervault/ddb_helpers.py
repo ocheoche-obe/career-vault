@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Mapping
 
@@ -137,6 +138,60 @@ def get_profile(user_id: str) -> dict[str, Any] | None:
         Key={"PK": pk_for_user(user_id), "SK": "PROFILE"}
     )
     return response.get("Item")
+
+
+def update_profile(user_id: str, attributes: dict[str, Any]) -> dict[str, Any]:
+    """Upsert user-editable attributes onto the PROFILE singleton (AP-2), returning the new item.
+
+    An ``UpdateItem`` rather than a ``PutItem``, and that choice carries weight here:
+
+    - It is **create-or-update in one call**. A brand-new user has no PROFILE item at all —
+      ``settings_lambda``'s read path synthesises a default without persisting it — so the first
+      write must create. ``UpdateItem`` does that without a separate existence check, and without
+      the read-then-write race a check-then-put would open.
+    - It is a **partial** write. The caller sends only the fields the user edited; everything else
+      on the item (``settings`` sub-fields, ``created_at``, anything a later slice adds) is left
+      untouched. A full-item ``PutItem`` here would silently drop attributes the caller did not
+      know about — the opposite of what ``career_crud`` wants for entries, where the client
+      genuinely submits the whole re-validated object (§2.5 AP-5).
+    - ``created_at`` uses ``if_not_exists`` so it is stamped once, on create, and never moved by a
+      later edit.
+
+    The key is constructed here from ``user_id`` and the literal ``"PROFILE"`` sort key, so no
+    caller can steer this write at another item — the same in-code enforcement the ``SK``-prefix
+    helpers apply to entries and conversations (§4.2.4).
+
+    ``None`` values mean *clear this attribute* and are compiled to ``REMOVE``; DynamoDB has no
+    null-assignment that reads back as absent, so the two must be split into ``SET`` and
+    ``REMOVE`` clauses.
+    """
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    set_parts = ["#updated_at = :updated_at", "#created_at = if_not_exists(#created_at, :now)"]
+    remove_parts: list[str] = []
+    names: dict[str, str] = {"#updated_at": "updated_at", "#created_at": "created_at"}
+    values: dict[str, Any] = {":updated_at": now, ":now": now}
+
+    for index, (key, value) in enumerate(attributes.items()):
+        placeholder = f"#f{index}"
+        names[placeholder] = key
+        if value is None:
+            remove_parts.append(placeholder)
+        else:
+            set_parts.append(f"{placeholder} = :v{index}")
+            values[f":v{index}"] = value
+
+    expression = "SET " + ", ".join(set_parts)
+    if remove_parts:
+        expression += " REMOVE " + ", ".join(remove_parts)
+
+    response = get_table().update_item(
+        Key={"PK": pk_for_user(user_id), "SK": "PROFILE"},
+        UpdateExpression=expression,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=to_ddb_numbers(values),
+        ReturnValues="ALL_NEW",
+    )
+    return response.get("Attributes", {})
 
 
 # ---------------------------------------------------------------------------
