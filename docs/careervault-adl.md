@@ -52,6 +52,7 @@ Each ADR has:
 | ADR-017 | Bedrock API choice — Converse over InvokeModel                     | Accepted   |
 | ADR-018 | PDF rendering library — WeasyPrint                                 | Accepted   |
 | ADR-019 | Frontend hosting — S3 + CloudFront direct                          | Accepted   |
+| ADR-021 | Check-in fallback tiers — three tiers, structural budget guard      | Accepted   |
 | ADR-022 | Per-entry-type metadata schemas                                    | Accepted   |
 | ADR-023 | Lambda layer composition — two layers (shared + WeasyPrint)        | Accepted   |
 | ADR-024 | Embedding generation path — sync in write path                     | Accepted   |
@@ -69,6 +70,8 @@ Each ADR has:
 | ADR-036 | Resume agent — Sonnet via inference profile + bounded-loop cost controls | Accepted   |
 | ADR-037 | Resume generation is an asynchronous job (invoke + poll), not synchronous | Accepted   |
 | ADR-038 | Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any` | Accepted   |
+| ADR-039 | Check-in scheduling — daily UTC fire paced by `next_checkin_at`, due-users by Scan | Accepted   |
+| ADR-040 | Nested `settings` updates — dotted-path `SET`, one path per sub-field       | Accepted   |
 
 ---
 
@@ -1594,9 +1597,285 @@ varies is only whether the router is a forced tool call, a classifier model, or 
 
 ---
 
+## ADR-021: Check-in fallback tiers — three tiers, and a budget guard that is structural, not measured
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 8)
+
+### Context
+FR-4.5: *"If LLM personalization fails **or exceeds cost budget**, the system shall fall back to a
+generic reminder."* Architecture §3.3.6 answers only half of that. It defines a `mode` flag —
+`"personalized"` when the recent-entry query returns rows, `"generic"` when it returns none — and
+says the same `compose_checkin` tool schema serves both. That is a **content** decision: what to
+write about when there is nothing to write about.
+
+FR-4.5 is asking something else. "Personalization *fails*" is not "the user had a quiet week" — it
+is Bedrock throttling, returning malformed tool input twice, or timing out. In that state there is
+no LLM output *at all*, so switching the `mode` flag is meaningless: both modes call Haiku. §3.3.6's
+generic mode cannot be the fallback for a failure of the thing it depends on.
+
+And "exceeds cost budget" has no mechanism anywhere in the architecture. §3.3.7 lists cost *scaling
+levers* for a hypothetical multi-tenant future; nothing defines a budget that a single run could
+exceed, or what checking one would even mean at the moment of send.
+
+### Decision
+**Three tiers, keyed on two independent conditions**, rather than §3.3.6's single `mode` flag:
+
+| Tier | Trigger | Composition | LLM? |
+|---|---|---|---|
+| 1 — **personalized** | Recent-entry window returned rows | Haiku, entries in prompt | yes |
+| 2 — **generic** | Window empty, profile has an aspirational goal | Haiku, goal in prompt, no entries | yes |
+| 3 — **static** | Bedrock failed after retries, *or* the profile is too sparse for tier 2 to say anything | Jinja2 template only, no model call | **no** |
+
+Tiers 1 and 2 are §3.3.6's existing `mode` flag, unchanged. **Tier 3 is the FR-4.5 fallback proper**
+— the one that survives Bedrock being unavailable, because it never calls it. A static nudge in the
+inbox beats silence: the check-in's job is to prompt a habit, and a plain "anything worth logging
+this week?" still does that. **Failing to send is a worse outcome than sending something
+unpersonalized**, so tier 3 sends rather than aborts.
+
+**The budget guard is structural, not measured.** We do *not* meter spend at send time and branch on
+a dollar threshold. Two reasons that would be theatre: a Cost Explorer read is hours stale, and the
+per-run cost is known in advance to be ~$0.0002 — three orders of magnitude below anything worth
+guarding. Instead the prompt is **bounded by construction** so there is no runtime state in which a
+run *could* exceed budget:
+
+- The recent-entry window is capped at **15 entries**, most-recent-first, regardless of how many the
+  date window returns.
+- Each entry is truncated to a **fixed character budget** before it enters the prompt.
+- The Haiku call carries a small `max_tokens`, since the output is a short structured email.
+
+FR-4.5's "exceeds cost budget" is therefore satisfied by making the overrun **unreachable** rather
+than by detecting it. This is the same reasoning ADR-036 applied to the resume agent from the other
+end: there, per-run cost is genuinely material (~$0.31) and warrants a real measured token ceiling;
+here it is not, and a measured guard would be more moving parts than the risk justifies. *Cap the
+input, not the invoice.*
+
+**A missing field this forced.** §3.3.6 and the slice-8 plan both say tier 2 references "the
+profile's `aspirational_goal`". **That field does not exist** on the `Profile` model — the same
+class of gap as B-008, where `_contact_from_profile` read `name`/`location` that had never been
+added. Slice 8 adds `aspirational_goal` to `Profile` and `ProfileUpdate` and surfaces it on the
+settings form; without it, tier 2 degrades to tier 3 for every user, permanently and silently.
+
+### Alternatives considered
+- **Two tiers, treating §3.3.6's generic mode as the FR-4.5 fallback.** The literal reading of the
+  architecture doc. Rejected because it does not survive the failure it claims to handle: generic
+  mode calls Haiku, so a Bedrock outage takes out both tiers and the user gets nothing.
+- **Abort the send on LLM failure.** Defensible — an unpersonalized email is lower value, and a
+  missed one is invisible. Rejected because it makes the *habit loop* — the actual product — depend
+  on Bedrock availability, for a feature whose value is the reminder itself.
+- **Measured budget check before the call.** Read month-to-date spend, skip personalization above a
+  threshold. Rejected: Cost Explorer lags by hours, per-run cost is ~$0.0002, and it adds an IAM
+  grant and a failure mode to guard against a rounding error.
+- **Static template for everything (no LLM at all).** Cheapest, and honestly not far off in value
+  for a sparse profile. Rejected because ADR-011 already weighed this — personalization is what
+  makes check-ins motivating rather than nagging.
+
+### Consequences
+- ✅ FR-4.5 is satisfied against the failure it actually names, not a proxy for it.
+- ✅ Tier 3 needs no Bedrock, so the check-in path has no hard dependency on Bedrock availability.
+- ✅ No runtime budget logic to maintain, and no spend-metering IAM grant on `checkin_lambda`.
+- ✅ Tier 3 is trivially testable — no Bedrock mock required to exercise the fallback.
+- ⚠️ Tier 3 quality is materially lower. It is instrumented (`checkins.sent` carries the tier as a
+  metric dimension) so a silent slide into permanent tier 3 is visible rather than assumed away.
+- ⚠️ The 15-entry cap means a genuinely prolific fortnight is summarized from a subset. Acceptable:
+  the email is a nudge, not a report.
+
+### Cross-cloud parallel
+The portable idea is **graceful degradation across capability tiers**, with the lowest tier having
+no dependency on the thing that fails. Azure Functions with a Durable Functions fallback activity,
+or GCP Cloud Functions with a static Firestore-templated path, express the same shape. The broader
+principle is provider-independent: *the last tier of a fallback chain must not depend on any service
+that the tiers above it depend on* — otherwise it is not a fallback, it is a retry.
+
+---
+
+## ADR-039: Check-in scheduling — one daily UTC fire paced by `next_checkin_at`, due-users found by Scan
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 8)
+
+### Context
+FR-4.1 requires a configurable cadence (weekly / bi-weekly / monthly / quarterly) and FR-4.2 sets
+weekly as the default. Architecture §3.3.3 sketches the mechanism: one EventBridge Scheduler entry
+fires daily, and the Lambda "queries PROFILE items where `next_checkin_at <= now`" to decide who is
+due.
+
+Two things checked against the live account at slice start make that sketch not implementable as
+written:
+
+1. **There is no index that supports that query.** ADR-028 ships no GSIs. `next_checkin_at` is a
+   plain attribute, and PROFILE rows for different users live under different partition keys, so
+   there is no key expression that reaches "all PROFILEs, filtered by a timestamp." §3.3.3 says
+   "queries" and defers a GSI to multi-tenant — but the operation it describes is not a degraded
+   Query, it is a **Scan**. §3.3.3 is corrected in this slice.
+2. **`checkin_time_local` does not exist.** §3.3.3's multi-tenant note claims "PROFILE has
+   `checkin_cadence` and `checkin_time_local` attributes already." The `Settings` model has
+   `checkin_cadence`, `checkin_paused`, `preferred_template_id` — **no `checkin_time_local`**, and
+   the live dev PROFILE has no `settings` attribute at all.
+
+### Decision
+**Keep the daily-fire shape; make the lookup honest; ship no time-zone handling at MVP.**
+
+**Schedule.** A single EventBridge Scheduler entry fires **daily at 23:00 UTC**, with 3 retries,
+1-hour maximum event age, and an SQS DLQ (§4.5.2). The *fire* is daily; the *cadence* is paced
+entirely by `next_checkin_at` on the PROFILE. This is what lets all four FR-4.1 cadences work
+without ever touching infrastructure — a cadence change is a DynamoDB write, not a schedule update.
+Per ADR-030's reserved-concurrency posture, `checkin_lambda` gets a cap of 1: exactly one invocation
+should ever be in flight.
+
+**Send window: Friday ~4pm PT.** 23:00 UTC is 16:00 PDT. The check-in asks a looking-back question
+("what did you get done?"), so it belongs at the end of the week, while the week is still legible —
+not in Monday-morning planning mode.
+
+**Due-user discovery is a `Scan` with `FilterExpression SK = PROFILE`**, then an in-Python filter on
+`next_checkin_at <= now` and `checkin_paused is not True`. Measured at slice start: 48 items scanned
+to find 1 PROFILE, ~1 RCU, once a day. The Scan is isolated behind a single `ddb_helpers` function
+so the multi-tenant swap is a change of one implementation, not of the surrounding flow.
+
+**No per-user time zones, and the DST drift is accepted, not overlooked.** A fixed UTC hour means
+the send lands at 16:00 PDT in summer and **15:00 PST in winter** — the email silently moves an hour
+earlier each November. For a single user this is a non-event. It is recorded here because the
+failure mode of *not* recording it is someone rediscovering the drift in six months and treating a
+known trade-off as a bug. `checkin_time_local` is **not** added; a field that nothing reads is worse
+than an absent one, because it implies a capability that does not exist.
+
+**Absent state reads as due.** The live PROFILE has no `settings` block, no `next_checkin_at`, and
+no `last_checkin_sent_at` — so "fields missing" is not an edge case to defend against, it is the
+only state that currently exists. Missing settings default to weekly/unpaused; a missing
+`next_checkin_at` reads as **due now**, seeding the cycle on first run rather than requiring a
+migration.
+
+Idempotency is unchanged from §3.3.4: the conditional `UpdateItem` claiming the send slot with a
+6-hour buffer, which is what makes Scheduler's at-least-once delivery safe.
+
+### Alternatives considered
+- **A weekly cron matching the cadence directly** (`cron(0 23 ? * FRI *)`). Simpler — no
+  `next_checkin_at` arithmetic, no due-check. Rejected because it hard-codes *one* cadence into
+  infrastructure: honoring FR-4.1's other three would mean either four schedules or mutating the
+  schedule on every settings change, turning a DynamoDB write into a control-plane call that can
+  fail independently of it.
+- **Per-user Scheduler entries created at signup** (§3.3.3's own multi-tenant suggestion). Correct
+  at scale and avoids the Scan entirely. Rejected at MVP: it puts schedule lifecycle management —
+  create, update on cadence change, delete on account removal — into the app for one user, and every
+  settings write becomes a distributed transaction across DynamoDB and Scheduler.
+- **A GSI on `next_checkin_at`.** Makes §3.3.3's wording literally true. Rejected: reversing ADR-028
+  for a once-daily read of a single-digit item count, and paying GSI write amplification on every
+  PROFILE update, to avoid a ~1 RCU Scan.
+- **Hard-code the single user.** Cheapest. Rejected because it bakes single-tenancy into the flow
+  ADR-006/007 explicitly kept multi-tenant-ready — it would need rewriting, not extending.
+- **Store the user's IANA time zone and compute local send times.** The right long-term answer.
+  Deferred: it only pays off with users in more than one time zone, and it would need the per-user
+  schedule model above to be genuinely useful.
+
+### Consequences
+- ✅ All four FR-4.1 cadences work with one schedule; cadence changes are pure data writes.
+- ✅ The Scan→GSI-Query swap is a one-function change, behind a helper.
+- ✅ No migration needed for the existing PROFILE — absent fields seed themselves on first run.
+- ✅ The failure surface stays small: one schedule, one DLQ, one alarm.
+- ⚠️ Scan cost grows linearly with total item count — *all* items, not just PROFILEs, since the
+  filter applies after the read. Fine at 48 items; it is the first thing to revisit at multi-tenant,
+  and it is the trigger for the GSI that ADR-028 deferred.
+- ⚠️ Send time drifts one hour across DST boundaries. Accepted and documented above.
+- ⚠️ `next_checkin_at` is now load-bearing state with no UI. If it is ever written wrong, the symptom
+  is a silently missing email — hence the CHECKINLOG audit item and the `checkins.no_due_users`
+  metric, which distinguish "nothing to do" from "broken."
+
+### Cross-cloud parallel
+The pattern — **a frequent fixed trigger plus a due-timestamp in the datastore**, rather than a
+trigger per schedule — is how most job schedulers are built once cadence becomes user-configurable.
+Azure Functions Timer trigger + a due column, or GCP Cloud Scheduler + a Firestore `nextRunAt`, are
+the same design. The trade is identical everywhere: you exchange precise per-entity timing for a
+system where changing a schedule is a data write instead of a control-plane operation, and control
+plane operations are the ones that fail in ways your transaction cannot roll back.
+
+---
+
+## ADR-040: Nested `settings` updates — dotted-path `SET`, one path per sub-field
+
+**Status:** Accepted
+**Date:** 2026-07-28 (slice 8)
+
+### Context
+FR-4.6 requires cadence and pause to be changeable from settings. Both live inside the nested
+`settings` object on the PROFILE item (§2.8), and they must move **independently** — pausing must not
+reset the cadence, and changing the cadence must not un-pause.
+
+`PUT /settings` shipped early, with B-008. Its `ProfileUpdate` model **deliberately omits `settings`**
+and says why in a docstring: DynamoDB's partial-update semantics are per *top-level attribute*, and
+`update_profile` compiles one `SET #f<n> = :v<n>` clause per key it is handed. So
+`{"settings": {"checkin_paused": true}}` would compile to `SET settings = {"checkin_paused": true}` —
+**replacing the whole object and silently dropping `checkin_cadence`**. The field was withheld rather
+than shipped with that behavior, and logged as **B-014** for its first real consumer. This slice is
+that consumer.
+
+The trap deserves naming precisely, because it does not look like a bug at the call site: the write
+succeeds, returns 200, and the response body — read back from `ReturnValues: ALL_NEW` — accurately
+shows a `settings` object with one field in it. Nothing surfaces the loss except the *next* check-in
+running at the wrong cadence, days later.
+
+### Decision
+Accept `settings` on `ProfileUpdate` as a model with **all-optional sub-fields**, and compile it to
+**one dotted `SET settings.#sub = :val` path per supplied sub-field**:
+
+```
+SET settings.#s0 = :sv0, settings.#s1 = :sv1, #updated_at = :updated_at, ...
+```
+
+DynamoDB applies document-path updates surgically: sibling attributes inside `settings` are
+untouched, so cadence and pause are genuinely independent. Sub-fields absent from the request are
+never named in the expression and therefore cannot be affected.
+
+Two details that make it correct rather than merely working:
+
+- **`settings` must exist before a dotted path can be written into it.** `SET settings.checkin_paused
+  = :v` fails with `ValidationException: The document path provided in the update expression is
+  invalid` when `settings` is absent — which is precisely the state of the live PROFILE today. The
+  update therefore prefixes `SET settings = if_not_exists(settings, :empty_map)` before the
+  sub-field paths, in the same expression. This is not a hypothetical: **every** settings write
+  against the current dev item would fail without it.
+- **`exclude_unset` must be applied to the nested model too**, not just the top level. A plain
+  `model_dump()` on the nested model materializes Pydantic defaults, so a request touching only
+  `checkin_paused` would emit `checkin_cadence: "weekly"` and quietly overwrite a user's monthly
+  setting — the original bug, reintroduced one level down and harder to see.
+
+### Alternatives considered
+- **Read-modify-write** — `GetItem`, merge in Python, `PutItem` the whole item. Simple and obvious.
+  Rejected on two counts: it opens a lost-update race between concurrent writers (needing a version
+  attribute and a conditional write to close, which is more machinery than the dotted path), and a
+  full `PutItem` would clobber attributes the API layer does not model — exactly what
+  `update_profile`'s docstring already rejected for the top level.
+- **Flatten settings to top-level attributes** (`checkin_cadence` beside `name`, no nesting).
+  Sidesteps the problem entirely and is arguably the better original design. Rejected as a data
+  migration on a shipped item shape, for cosmetics — and §2.8 documents the nested shape as the
+  contract.
+- **Separate `PUT /settings/checkin` route.** Avoids nesting in the payload but not in storage — the
+  same dotted-path write is still required underneath, plus a route.
+- **Ship `settings` replace-whole-object and document it.** Rejected: FR-4.6 needs exactly the two
+  independent controls this would break, so the first feature to use it would be the one it breaks.
+
+### Consequences
+- ✅ Closes B-014 at the layer where the trap lives, not at the call site.
+- ✅ Cadence and pause move independently — tested per sub-field, which is the test that would have
+  caught the original behavior.
+- ✅ No read before write: still one round trip, still create-or-update, no lost-update race.
+- ✅ Generalizes to any future nested attribute on the PROFILE.
+- ⚠️ `update_profile` now has two code paths (top-level and nested) and is correspondingly harder to
+  read. The nesting is one level deep only; arbitrary-depth merging is explicitly not built.
+- ⚠️ An unknown sub-field in a request body is rejected by `extra="forbid"` on the nested model, not
+  silently stored. Intentional — same reasoning as the top-level model.
+
+### Cross-cloud parallel
+Document-path updates are near-universal in document stores: MongoDB's `$set: {"settings.paused":
+true}` and Firestore's `update({"settings.paused": true})` with dotted field paths are the same
+operation, including the same gotcha that a nested-object *assignment* replaces rather than merges
+(Firestore's `set(..., {merge: true})` exists precisely for this). The transferable instinct: **in
+document stores, "update" defaults to replace at whatever level you name** — merging is something you
+opt into, and the failure is silent data loss rather than an error.
+
+---
+
 ## Future ADRs (placeholders)
 
 These decisions are anticipated and will be added as work progresses:
 
 - **ADR-020** — Dashboard UX spec.
-- **ADR-021** — Notification fallback rules (when to use generic reminder vs personalized).

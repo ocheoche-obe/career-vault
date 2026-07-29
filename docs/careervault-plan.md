@@ -66,7 +66,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
-| 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
+| 8 | Check-in emails | FR-4 | 🔨 | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
@@ -786,7 +786,7 @@ B-008 (P1 résumé identity header — still the highest-value standalone fix).
 
 ---
 
-## Slice 8 — Check-in emails ⬜ ⚠
+## Slice 8 — Check-in emails 🔨
 
 **Goal:** The habit loop — periodic personalized emails nudge the user to log fresh
 accomplishments, with a working unsubscribe/pause and bounce handling.
@@ -797,24 +797,76 @@ accomplishments, with a working unsubscribe/pause and bounce handling.
 `checkin_lambda` (Haiku + RAG personalization per ADR-011; generic-reminder fallback on
 failure/budget, FR-4.5, using the profile's `aspirational_goal`); `ses_event_handler` + the
 *second* SNS topic (bounce/complaint — kept separate from the alarm topic per §4.5.5) + SQS DLQs
-(§4.5.2); **settings PUT** (cadence/pause, FR-4.6 — `UpdateItem` IAM already granted since
-slice 1) + minimal settings UI; CHECKINLOG audit items.
+(§4.5.2); **`settings` sub-object on `PUT /settings`** (cadence/pause, FR-4.6 — the route itself
+shipped early with B-008; this slice adds the nested field *and* the merge semantics B-014
+requires) + cadence/pause UI on the existing identity form; CHECKINLOG audit items.
 
-**Scope — out:** mobile push (v1.1).
+**Scope — out:** mobile push (v1.1); per-user time zones and DST-aware send times (see the
+scheduling decision below); SES production access.
 
 **Key refs:** arch §3.3 + §4.5, ADR-011, FR-4.
 
-**New infra:** SES identity/config set, Scheduler schedule, 2 Lambdas + routes/subscriptions,
-SNS topic, SQS DLQs.
+**New infra:** SES email identity + Configuration Set, EventBridge Scheduler schedule + its SQS
+DLQ, 2 Lambdas (`checkin_lambda`, `ses_event_handler`) + log groups + error alarms, the
+`careervault-ses-events` SNS topic, the `ses_event_handler` async DLQ.
 
-**⚠ Decisions:**
-- SES sandbox: with one verified recipient (Oche), sandbox is likely sufficient for MVP —
-  confirm and document rather than requesting production access.
-- Default cadence: weekly per FR-4.2; confirm send day/time.
+**Pulled in from the backlog:** **B-014** (nested-`settings` merge — a hard prerequisite, since
+FR-4.6 needs cadence and pause as independent controls) and **B-015** (fabricated placeholders in
+the settings form, plus clearing the invented `name`/`location` from the dev PROFILE).
 
-**Exit criteria:** scheduled run produces a real personalized email in the inbox; pause/cadence
-change via settings UI takes effect; a simulated bounce (SES mailbox simulator) lands in
-`ses_event_handler` and is visible in logs/audit.
+### Pre-flight findings (verified live at `/start-slice`, 2026-07-28)
+
+Four things the scope above assumed, checked against the deployed account rather than the doc:
+
+1. **SES is in sandbox with zero verified identities.** `ProductionAccessEnabled: false`,
+   200 sends/day, 1/sec. Sandbox is sufficient for one recipient, so this is documented rather
+   than escalated — but note `AWS::SES::EmailIdentity` only *triggers* the verification email;
+   **clicking the link is a manual step** between `sam deploy` and the first successful send.
+2. **Due-user lookup cannot be a Query.** See the scheduling decision below.
+3. **The live dev PROFILE has no `settings` attribute at all** — B-008's `PUT /settings` only ever
+   wrote `name`/`location`/`email`. So "settings block absent" is not an edge case to defend
+   against, it is the *only* state that exists today: absent settings must default to
+   weekly/unpaused, and an absent `next_checkin_at` must read as due-now.
+4. **B-014 confirmed as a blocker**, not a theoretical one — `update_profile` compiles one
+   `SET #f<n> = :v<n>` per *top-level* attribute, so a naive `settings` write replaces the object.
+5. **`aspirational_goal` does not exist.** Arch §3.3.6 and this slice's scope line both say the
+   generic fallback references "the profile's `aspirational_goal`" — the `Profile` model has no such
+   field. Exactly the B-008 failure again: a doc describing a field that was never added, where the
+   symptom is silent degradation rather than an error. Slice 8 adds it to `Profile`,
+   `ProfileUpdate` and the settings form (see ADR-021).
+
+### Decisions (resolved with Oche at slice start)
+
+- **SES sandbox is sufficient for MVP.** One verified recipient, ~4 sends/month against a
+  200/day quota. Documented, not escalated. *(Was a ⚠; resolved by the live check above.)*
+- **Send window: Friday 23:00 UTC (~4pm PT).** End-of-week, while the week's wins are still
+  fresh — the check-in asks a looking-back question, so it belongs at the end of the week rather
+  than in Monday planning mode. *(Was a ⚠.)*
+- **Scheduling shape: one daily UTC fire + `next_checkin_at`, no per-user time zone.**
+  Due-user discovery is a `Scan` with `FilterExpression SK = PROFILE`, not a Query.
+  → **ADR-039**.
+- **Three fallback tiers, and a budget guard that is structural rather than measured.** §3.3.6's
+  `mode` flag is a *content* decision (quiet week → talk about the goal instead); FR-4.5's real
+  requirement is surviving Bedrock being unavailable, which neither §3.3.6 mode does since both
+  call Haiku. Tier 3 is Jinja2-only, no model call. → **ADR-021** (the placeholder the ADL has
+  carried since Phase 1).
+- **Nested `settings` merge on `PUT /settings`** — dotted-path `SET settings.#f = :v` per
+  sub-field, so cadence and pause move independently. → **ADR-040** (closes B-014).
+- **Dev PROFILE `name`/`location` get cleared.** Both were invented by Claude during the B-008
+  smoke test and never confirmed; Oche will enter real values through the form during this
+  slice's UI smoke.
+
+**Doc corrections this slice owes:** arch §3.3.3 says the Lambda "queries PROFILE items where
+`next_checkin_at <= now`" — there is no index that supports that (ADR-028, no GSIs), so it is a
+Scan. The same paragraph claims "PROFILE has `checkin_cadence` and `checkin_time_local` attributes
+already"; `checkin_time_local` **does not exist** in the `Settings` model and, per ADR-039, is not
+being added at MVP.
+
+**Exit criteria:** scheduled run produces a real personalized email in the inbox; pause and
+cadence change independently via the settings UI and each takes effect (pause suppresses the next
+send; cadence moves `next_checkin_at`); the generic-reminder fallback (FR-4.5) is exercised, not
+just coded; a simulated bounce (SES mailbox simulator) lands in `ses_event_handler` and is visible
+in logs and on the PROFILE; a CHECKINLOG item is written per send.
 
 **Completion notes:** _(filled at wrap)_
 
