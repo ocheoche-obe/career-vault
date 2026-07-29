@@ -1,11 +1,17 @@
 ---
 name: wrap-slice
-description: End-of-slice checklist for CareerVault — verify tests and deployment, run a security review, bring all canonical docs current (CLAUDE.md phase marker is blocking), render the slice explainer, commit, push, open the PR, and hand off cleanly.
+description: End-of-slice checklist for CareerVault — verify tests and deployment, run BOTH reviews (`/security-review` AND `/code-review` — running each is a hard blocker, findings are triaged on judgement), bring all canonical docs current (CLAUDE.md phase marker is blocking), render the slice explainer, commit, push, open the PR, and hand off cleanly.
 ---
 
 # Wrap up a slice
 
-Run these steps in order. The docs step is blocking: a slice is not done until the next session can cold-start from `CLAUDE.md` alone.
+Run these steps in order. Three things are **blocking**: both reviews must be *run* (steps 2 and 3), and the docs must be current (step 4) — a slice is not done until the next session can cold-start from `CLAUDE.md` alone.
+
+> **Invoke this skill; do not reproduce it from memory.** Working through these steps by hand — even
+> with the file open — is how a step gets silently dropped, because nothing then enforces the order
+> or the gates. If the user says "wrap the slice" in any form, invoke `/wrap-slice` rather than
+> recalling what it contains. This is not a style preference: it has already cost a slice its code
+> review (slice 8, PR #31), which went unnoticed until the user asked two slices later.
 
 ## 1. Verify the work
 
@@ -37,7 +43,7 @@ CareerVault stores users' career history, so **every slice that touches code get
 - Focus areas for this codebase: per-user data isolation (PK from JWT `sub`, never the body — §4.2.4), authz on every route, input validation at the Pydantic gate, IAM least-privilege on any new actions, no secrets in code/logs, CORS origin scoping.
 - This is the *local* gate. The *remote* net is GitHub Actions on the PR — **CodeQL** SAST (`.github/workflows/codeql.yml`) and **Dependabot** (`.github/dependabot.yml`). Treat a CodeQL alert or a Dependabot security update on the PR the same way: triage before merge, don't just merge past it.
 
-## 3. Advisory code review (non-blocking)
+## 3. Code review — RUNNING IT IS BLOCKING (findings are advisory)
 
 Run a general code review on the slice diff — a different lens than the security review
 (correctness, reuse, simplification, efficiency, not vulnerabilities):
@@ -46,11 +52,28 @@ Run a general code review on the slice diff — a different lens than the securi
 /code-review
 ```
 
-- **Advisory, not a gate.** Fix the quick, clear wins in-slice. Anything that isn't a quick fix
-  does **not** block the PR and is **not** chased in this slice — append it to
-  [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md) instead (see step 4).
-- Timebox the triage so wrap doesn't turn into a second implementation pass.
-- Note the outcome in the PR body alongside the security-review result (step 7).
+**Separate the two things this step contains, because conflating them is how it gets skipped:**
+
+| | Status |
+|---|---|
+| **Running the review** | 🚫 **Blocking.** Not optional, not conditional on the slice "looking safe", not skippable because the diff is mostly tests or docs. If it has not run, the slice is not wrapped. |
+| **Acting on the findings** | ✅ **Advisory.** Triaged on judgement — see below. |
+
+- **Never skip the run.** "The slice was only tests and docs" is not a reason — slice 9 was almost
+  entirely tests and docs, and its review returned **15 findings, two of which could have caused
+  real side effects on live data**. The value of the review is not predictable from the shape of
+  the diff, which is precisely why the decision to run it is not yours to make.
+- **Triage the findings on judgement.** Fix the dire ones in-slice — anything that can corrupt or
+  destroy data, cause an unintended side effect on the deployed system, cost real money, or leave a
+  test that cannot fail. Everything else is **not** chased in this slice: append it to
+  [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md) with a reason (see step 4).
+- **A test that passes for the wrong reason counts as dire.** It is worse than no test, because it
+  reports coverage nobody has. When a finding claims a test is toothless, verify by breaking the
+  code deliberately and confirming the test notices.
+- Timebox the *triage* so wrap doesn't turn into a second implementation pass. Do not timebox the
+  run itself.
+- **Record the outcome in the PR body** (step 7), even when there is nothing to report — an empty
+  result stated explicitly is the only thing that distinguishes "reviewed, clean" from "never ran".
 
 ## 4. Bring the docs current (blocking)
 
@@ -105,7 +128,16 @@ delivered until Oche can follow how it works. Run the explainer skill on the sli
 gh pr create --base main
 ```
 
-PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), the security-review outcome (clean, or findings + how resolved), the advisory code-review outcome (fixed in-slice vs. logged to backlog), decisions/ADRs added, doc corrections made, and a link to the slice explainer from step 5. End with the "Generated with Claude Code" footer.
+PR body: what the slice delivers, exit criteria and how each was verified (including smoke-test evidence), decisions/ADRs added, doc corrections made, and a link to the slice explainer from step 5. End with the "Generated with Claude Code" footer.
+
+**A `## Reviews` section is mandatory, with both reviews named explicitly** — the security-review
+outcome (clean, or findings + how resolved) *and* the code-review outcome (findings, which were
+fixed in-slice, which were logged to the backlog and why). Use those exact words, so the section is
+greppable across PRs.
+
+Write both lines even when a review found nothing. A PR body that simply omits one is
+indistinguishable from a review that never ran — which is exactly how the slice-8 gap (PR #31) went
+unnoticed until the user spotted it two slices later.
 
 ## 8. Hand off
 
@@ -113,7 +145,9 @@ Tell the user, explicitly:
 
 - PR URL and what's in it.
 - The path to the slice explainer, so they can read it before merging.
-- The security-review result and any CodeQL/Dependabot alerts the PR will surface.
+- **Both review results, named separately** — security *and* code review — plus any CodeQL/Dependabot
+  alerts the PR will surface. If either review did not run, say so plainly rather than omitting it;
+  a silent omission is what makes a skipped gate invisible.
 - That after they merge, the next `/start-slice` will fast-forward local `main` (or they can `git checkout main && git pull` themselves).
 - Any threads deliberately left open, so they land in the next session's plan rather than being forgotten.
 
