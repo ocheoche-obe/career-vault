@@ -1,9 +1,17 @@
 import { useEffect, useState } from "react";
-import { getSettings, putSettings, type FieldError, type Profile } from "../lib/api";
+import {
+  CHECKIN_CADENCES,
+  getSettings,
+  putSettings,
+  type CheckinCadence,
+  type FieldError,
+  type Profile,
+} from "../lib/api";
 import "./settings.css";
 
 /**
- * Your details — the identity that goes on a generated résumé (backlog B-008).
+ * Your details — the identity that goes on a generated résumé (backlog B-008), plus check-in
+ * email preferences (FR-4.6, slice 8).
  *
  * This view exists because of a concrete failure: résumés rendered the literal word "Résumé"
  * where a name should be. The chain was that `resume.html.j2` reads `contact.name or
@@ -14,14 +22,47 @@ import "./settings.css";
  * `email` is intentionally read-only here. It comes from the Cognito JWT on every write, so the
  * identity printed on a résumé traces back to an authenticated claim rather than to a form field.
  * The backend rejects an `email` in the body outright rather than ignoring it.
- *
- * Slice 8 adds check-in cadence and pause to this same view and the same `PUT /settings` route.
  */
+
+const CADENCE_LABELS: Record<CheckinCadence, string> = {
+  weekly: "Every week",
+  biweekly: "Every two weeks",
+  monthly: "Every month",
+  quarterly: "Every three months",
+};
+
+/** Render a stored UTC timestamp in the reader's own zone, or null if it isn't usable. */
+function formatWhen(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? null
+    : parsed.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
+
+/**
+ * Describe the next send.
+ *
+ * `next_checkin_at` is written *only* by the check-in run, never by this form — it is server-owned
+ * scheduling state, so the API rejects it in a request body. That means it is legitimately absent
+ * until the first check-in goes out, and an earlier version of this component rendered that as
+ * "Next check-in: —" immediately after a save. Technically accurate, and it reads exactly like the
+ * save silently failed. Say what absent actually means instead.
+ */
+function nextCheckinLabel(next: string | null | undefined): string {
+  const when = formatWhen(next);
+  return when ? `Next check-in: ${when}` : "Next check-in: with the next daily run";
+}
+
 export function Settings({ idToken }: { idToken: string }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [phone, setPhone] = useState("");
+  const [goal, setGoal] = useState("");
+  // Absent settings mean the defaults, not an error: no PROFILE written before slice 8 has them.
+  const [cadence, setCadence] = useState<CheckinCadence>("weekly");
+  const [paused, setPaused] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -37,6 +78,9 @@ export function Settings({ idToken }: { idToken: string }) {
         setName(p.name ?? "");
         setLocation(p.location ?? "");
         setPhone(p.phone ?? "");
+        setGoal(p.aspirational_goal ?? "");
+        setCadence(p.settings?.checkin_cadence ?? "weekly");
+        setPaused(p.settings?.checkin_paused ?? false);
       })
       .catch(() => !cancelled && setLoadError("Couldn't load your details."));
     return () => {
@@ -55,6 +99,8 @@ export function Settings({ idToken }: { idToken: string }) {
       name: name.trim() || null,
       location: location.trim() || null,
       phone: phone.trim() || null,
+      aspirational_goal: goal.trim() || null,
+      settings: { checkin_cadence: cadence, checkin_paused: paused },
     });
     setSaving(false);
     if (result.status === "saved") {
@@ -88,7 +134,7 @@ export function Settings({ idToken }: { idToken: string }) {
 
       <label>
         <span>Full name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Oche Obe" maxLength={120} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ada Lovelace" maxLength={120} />
       </label>
 
       <label>
@@ -102,7 +148,7 @@ export function Settings({ idToken }: { idToken: string }) {
         <input
           value={location}
           onChange={(e) => setLocation(e.target.value)}
-          placeholder="Seattle, WA"
+          placeholder="e.g. City, State"
           maxLength={120}
         />
       </label>
@@ -111,6 +157,61 @@ export function Settings({ idToken }: { idToken: string }) {
         <span>Phone</span>
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Optional" maxLength={40} />
       </label>
+
+      <h2 className="settings-section">Check-in emails</h2>
+      <p className="settings-intro">
+        A short nudge to log what you've been working on, while it's still fresh.
+      </p>
+
+      <label>
+        <span>Career goal</span>
+        <input
+          value={goal}
+          onChange={(e) => setGoal(e.target.value)}
+          placeholder="e.g. Solutions Architect"
+          maxLength={300}
+        />
+        <small>
+          Used to tailor your check-ins when you haven't logged anything recently. Leave blank to
+          skip that.
+        </small>
+      </label>
+
+      <label>
+        <span>How often</span>
+        <select
+          value={cadence}
+          onChange={(e) => setCadence(e.target.value as CheckinCadence)}
+          disabled={paused}
+        >
+          {CHECKIN_CADENCES.map((option) => (
+            <option key={option} value={option}>
+              {CADENCE_LABELS[option]}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="settings-check">
+        <input type="checkbox" checked={paused} onChange={(e) => setPaused(e.target.checked)} />
+        <span>Pause check-in emails</span>
+        <small>
+          Pausing keeps your schedule — unpausing picks up where it left off rather than sending
+          straight away.
+        </small>
+      </label>
+
+      <p className="settings-meta">
+        {paused ? "Paused — no check-ins will be sent." : nextCheckinLabel(profile.next_checkin_at)}
+        {formatWhen(profile.last_checkin_sent_at) &&
+          ` · Last sent: ${formatWhen(profile.last_checkin_sent_at)}`}
+      </p>
+      {!paused && (
+        <p className="settings-meta">
+          Changing how often takes effect from the next check-in onward — it doesn't reschedule one
+          that's already due.
+        </p>
+      )}
 
       {errors.length > 0 && (
         <ul className="settings-error">

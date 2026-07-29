@@ -7,6 +7,9 @@ Two routes:
   what creates the item).
 - ``PUT /settings`` — partial update of the user-editable fields. Added for backlog **B-008**: the
   résumé identity header needs a `name`, and neither DynamoDB nor Cognito had anywhere to put one.
+  Slice 8 widened it to carry the nested ``settings`` object, so FR-4.6's check-in cadence and
+  pause are editable — see ADR-040 for why that field was withheld until the write path underneath
+  it could merge rather than replace.
 
 ``user_id`` and ``email`` both come from the Cognito-validated JWT claims at handler entry, never
 from the body (§4.2.4). That is why :class:`ProfileUpdate` forbids `email` outright rather than
@@ -99,7 +102,22 @@ def _put(user_id: str, event: dict) -> dict:
 
     # Only fields the caller actually sent. `exclude_unset` is what makes this a *partial* update:
     # an omitted field keeps its stored value, while an explicit `null` clears it.
+    #
+    # It propagates *into* `settings` too, which is the property FR-4.6 rests on (ADR-040): a body
+    # of `{"settings": {"checkin_paused": true}}` dumps to exactly that, with no `checkin_cadence`
+    # key materialised from the model default. Were it to appear here, `update_profile` would
+    # faithfully write it and silently reset a user's monthly cadence to weekly.
     attributes = update.model_dump(mode="json", exclude_unset=True)
+
+    # `{"settings": null}` parses fine but means nothing coherent — clearing the whole settings
+    # object would drop cadence and pause together, which is the replace-semantics failure this
+    # route exists to avoid. Rejected explicitly rather than reaching `update_profile`, where it
+    # would raise and surface as a 500.
+    if "settings" in attributes and attributes["settings"] is None:
+        return _response(
+            400,
+            {"message": "`settings` cannot be null; send the sub-fields you want to change"},
+        )
 
     # The JWT is the sole source of `email`. Stamped on every write so a PROFILE created by this
     # route is never missing the identity the résumé header falls back to.

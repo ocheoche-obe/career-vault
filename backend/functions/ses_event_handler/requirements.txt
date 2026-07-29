@@ -1,0 +1,3 @@
+# ses_event_handler has no function-specific dependencies — Powertools and the DDB helpers come
+# from the careervault-shared layer (ADR-023 / Section 5.3); boto3 is provided by the Lambda
+# runtime. The smallest dependency surface in the system, matching its role (§4.5.4).

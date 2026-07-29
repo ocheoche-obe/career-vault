@@ -9,9 +9,11 @@ version = 0.1
 #
 # Reserved concurrency (arch §4.7.4, ADR-030) is switched on here rather than in the template so
 # the -1 "off" default still works on accounts whose Lambda concurrency limit has not been raised.
-# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 + 2 + 2 reserved
-# leaves 981 unreserved, well above Lambda's 100-unreserved floor. (resume_agent = 2 per ADR-037:
-# it self-invokes asynchronously, so it needs room for an in-flight worker plus a fresh POST/GET.)
+# This account's limit was restored to 1000, so the caps are live: 5 + 5 + 5 + 2 + 2 + 1 + 2 = 22
+# reserved leaves 978 unreserved, well above Lambda's 100-unreserved floor. (resume_agent = 2 per
+# ADR-037: it self-invokes asynchronously, so it needs room for an in-flight worker plus a fresh
+# POST/GET. checkin = 1 per ADR-039: one scheduled fire a day, and concurrency here would only ever
+# be a retry racing the original, which the conditional slot claim already handles.)
 
 [default.deploy.parameters]
 stack_name = "careervault-dev"
@@ -29,6 +31,10 @@ parameter_overrides = [
     "CareerCrudReservedConcurrency=5",
     "ResumeParserReservedConcurrency=2",
     "ResumeAgentReservedConcurrency=2",
+    # One scheduled invocation a day; a second concurrent run could only be a Scheduler retry
+    # racing the first, which the conditional slot claim already resolves (ADR-039).
+    "CheckinReservedConcurrency=1",
+    "SesEventHandlerReservedConcurrency=2",
     # Sonnet 5 is not grantable on this account (ADR-036 live-access correction); run on the newest
     # accessible Sonnet. Pinned explicitly — CloudFormation reuses a stack's previous param value for
     # anything not listed here, so a template-default change alone wouldn't take effect.
@@ -59,6 +65,10 @@ parameter_overrides = [
     "CareerCrudReservedConcurrency=5",
     "ResumeParserReservedConcurrency=2",
     "ResumeAgentReservedConcurrency=2",
+    # One scheduled invocation a day; a second concurrent run could only be a Scheduler retry
+    # racing the first, which the conditional slot claim already resolves (ADR-039).
+    "CheckinReservedConcurrency=1",
+    "SesEventHandlerReservedConcurrency=2",
     # Sonnet 5 is not grantable on this account (ADR-036 live-access correction); run on the newest
     # accessible Sonnet. Pinned explicitly — CloudFormation reuses a stack's previous param value for
     # anything not listed here, so a template-default change alone wouldn't take effect.

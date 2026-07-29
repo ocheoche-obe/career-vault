@@ -66,7 +66,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
-| 8 | Check-in emails | FR-4 | ⬜ ⚠ | — |
+| 8 | Check-in emails | FR-4 | ✅ | — |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ⬜ ⚠ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
@@ -786,7 +786,7 @@ B-008 (P1 résumé identity header — still the highest-value standalone fix).
 
 ---
 
-## Slice 8 — Check-in emails ⬜ ⚠
+## Slice 8 — Check-in emails ✅
 
 **Goal:** The habit loop — periodic personalized emails nudge the user to log fresh
 accomplishments, with a working unsubscribe/pause and bounce handling.
@@ -797,26 +797,156 @@ accomplishments, with a working unsubscribe/pause and bounce handling.
 `checkin_lambda` (Haiku + RAG personalization per ADR-011; generic-reminder fallback on
 failure/budget, FR-4.5, using the profile's `aspirational_goal`); `ses_event_handler` + the
 *second* SNS topic (bounce/complaint — kept separate from the alarm topic per §4.5.5) + SQS DLQs
-(§4.5.2); **settings PUT** (cadence/pause, FR-4.6 — `UpdateItem` IAM already granted since
-slice 1) + minimal settings UI; CHECKINLOG audit items.
+(§4.5.2); **`settings` sub-object on `PUT /settings`** (cadence/pause, FR-4.6 — the route itself
+shipped early with B-008; this slice adds the nested field *and* the merge semantics B-014
+requires) + cadence/pause UI on the existing identity form; CHECKINLOG audit items.
 
-**Scope — out:** mobile push (v1.1).
+**Scope — out:** mobile push (v1.1); per-user time zones and DST-aware send times (see the
+scheduling decision below); SES production access.
 
 **Key refs:** arch §3.3 + §4.5, ADR-011, FR-4.
 
-**New infra:** SES identity/config set, Scheduler schedule, 2 Lambdas + routes/subscriptions,
-SNS topic, SQS DLQs.
+**New infra:** SES email identity + Configuration Set, EventBridge Scheduler schedule + its SQS
+DLQ, 2 Lambdas (`checkin_lambda`, `ses_event_handler`) + log groups + error alarms, the
+`careervault-ses-events` SNS topic, the `ses_event_handler` async DLQ.
 
-**⚠ Decisions:**
-- SES sandbox: with one verified recipient (Oche), sandbox is likely sufficient for MVP —
-  confirm and document rather than requesting production access.
-- Default cadence: weekly per FR-4.2; confirm send day/time.
+**Pulled in from the backlog:** **B-014** (nested-`settings` merge — a hard prerequisite, since
+FR-4.6 needs cadence and pause as independent controls) and **B-015** (fabricated placeholders in
+the settings form, plus clearing the invented `name`/`location` from the dev PROFILE).
 
-**Exit criteria:** scheduled run produces a real personalized email in the inbox; pause/cadence
-change via settings UI takes effect; a simulated bounce (SES mailbox simulator) lands in
-`ses_event_handler` and is visible in logs/audit.
+### Pre-flight findings (verified live at `/start-slice`, 2026-07-28)
 
-**Completion notes:** _(filled at wrap)_
+Four things the scope above assumed, checked against the deployed account rather than the doc:
+
+1. **SES is in sandbox with zero verified identities.** `ProductionAccessEnabled: false`,
+   200 sends/day, 1/sec. Sandbox is sufficient for one recipient, so this is documented rather
+   than escalated — but note `AWS::SES::EmailIdentity` only *triggers* the verification email;
+   **clicking the link is a manual step** between `sam deploy` and the first successful send.
+2. **Due-user lookup cannot be a Query.** See the scheduling decision below.
+3. **The live dev PROFILE has no `settings` attribute at all** — B-008's `PUT /settings` only ever
+   wrote `name`/`location`/`email`. So "settings block absent" is not an edge case to defend
+   against, it is the *only* state that exists today: absent settings must default to
+   weekly/unpaused, and an absent `next_checkin_at` must read as due-now.
+4. **B-014 confirmed as a blocker**, not a theoretical one — `update_profile` compiles one
+   `SET #f<n> = :v<n>` per *top-level* attribute, so a naive `settings` write replaces the object.
+5. **`aspirational_goal` does not exist.** Arch §3.3.6 and this slice's scope line both say the
+   generic fallback references "the profile's `aspirational_goal`" — the `Profile` model has no such
+   field. Exactly the B-008 failure again: a doc describing a field that was never added, where the
+   symptom is silent degradation rather than an error. Slice 8 adds it to `Profile`,
+   `ProfileUpdate` and the settings form (see ADR-021).
+
+### Decisions (resolved with Oche at slice start)
+
+- **SES sandbox is sufficient for MVP.** One verified recipient, ~4 sends/month against a
+  200/day quota. Documented, not escalated. *(Was a ⚠; resolved by the live check above.)*
+- **Send window: Friday 23:00 UTC (~4pm PT).** End-of-week, while the week's wins are still
+  fresh — the check-in asks a looking-back question, so it belongs at the end of the week rather
+  than in Monday planning mode. *(Was a ⚠.)*
+- **Scheduling shape: one daily UTC fire + `next_checkin_at`, no per-user time zone.**
+  Due-user discovery is a `Scan` with `FilterExpression SK = PROFILE`, not a Query.
+  → **ADR-039**.
+- **Three fallback tiers, and a budget guard that is structural rather than measured.** §3.3.6's
+  `mode` flag is a *content* decision (quiet week → talk about the goal instead); FR-4.5's real
+  requirement is surviving Bedrock being unavailable, which neither §3.3.6 mode does since both
+  call Haiku. Tier 3 is Jinja2-only, no model call. → **ADR-021** (the placeholder the ADL has
+  carried since Phase 1).
+- **Nested `settings` merge on `PUT /settings`** — dotted-path `SET settings.#f = :v` per
+  sub-field, so cadence and pause move independently. → **ADR-040** (closes B-014).
+- **Dev PROFILE `name`/`location` get cleared.** Both were invented by Claude during the B-008
+  smoke test and never confirmed; Oche will enter real values through the form during this
+  slice's UI smoke.
+
+**Doc corrections this slice owes:** arch §3.3.3 says the Lambda "queries PROFILE items where
+`next_checkin_at <= now`" — there is no index that supports that (ADR-028, no GSIs), so it is a
+Scan. The same paragraph claims "PROFILE has `checkin_cadence` and `checkin_time_local` attributes
+already"; `checkin_time_local` **does not exist** in the `Settings` model and, per ADR-039, is not
+being added at MVP.
+
+**Exit criteria:** scheduled run produces a real personalized email in the inbox; pause and
+cadence change independently via the settings UI and each takes effect (pause suppresses the next
+send; cadence moves `next_checkin_at`); the generic-reminder fallback (FR-4.5) is exercised, not
+just coded; a simulated bounce (SES mailbox simulator) lands in `ses_event_handler` and is visible
+in logs and on the PROFILE; a CHECKINLOG item is written per send.
+
+**Completion notes:**
+
+Deployed to dev and verified end to end. **All three ADR-021 tiers were exercised live, not just
+coded** — each one produced a real email and a CHECKINLOG row:
+
+| Tier | Subject it produced | Entries referenced |
+|---|---|---|
+| `generic` | "What have you shipped lately?" | 0 |
+| `static` | "Anything worth logging this week?" | 1 (fallback fired) |
+| `personalized` | "Nice work on the AZ-900" | 1 |
+
+Also verified live: **both** idempotency layers (the due-ness gate, and separately the conditional
+slot claim under the real Scheduler-retry shape — due, but sent minutes ago → `skipped_idempotent`,
+no second email); pause suppressing a send while leaving `next_checkin_at` untouched; a
+weekly→monthly change pacing the next cycle at 30 days rather than 7; and the full bounce pipeline
+(SES mailbox simulator → Configuration Set → SNS → `ses_event_handler` → `bounce_count: 1`,
+`bounceType: Permanent` on the PROFILE). Both DLQs empty. Test data restored afterwards; the cycle
+is anchored to Friday 2026-07-31T23:00Z so the first *unassisted* run is the final confirmation.
+
+Measured **~$0.0026 per check-in** (~1.3K in / ~220 out tokens on Haiku), so ~**$0.01/month** at
+weekly cadence — matching §3.3.7's estimate and immaterial against the $5 ceiling.
+
+**Three things worth carrying out of this slice:**
+
+**(1) `required` in a Converse tool schema is a hint, not a constraint.** The first personalized
+send returned a complete, well-written email that omitted `sign_off` — a `required` field — and
+Pydantic rejected it, dropping a good email to the static tier. The generic send a minute earlier
+had included it; same prompt, same temperature 0. The fix was not a looser schema but a split:
+`subject` and `prompts` stay strict (without them it is not a check-in), `greeting` and `sign_off`
+default. **Validate what makes the output useful; default what merely makes it polished** — a schema
+strict about cosmetics converts recoverable model variance into a visible downgrade, and because the
+email still *arrives*, that downgrade is invisible without the `CheckinsStaticFallback` metric.
+
+**(2) The docs described two fields that had never existed** — `checkin_time_local` (§3.3.3) and
+`aspirational_goal` (§3.3.6). Exactly B-008's failure mode, twice, in the same feature. One was
+added (the generic fallback is inert without it) and one deliberately was not (nothing reads it;
+a field that implies a capability it does not have is worse than an absent one). The pattern is
+worth naming: **prose describing a data model drifts silently, because nothing fails when a field
+in a sentence never becomes a field in a schema.**
+
+**(3) The idempotency ordering has a price, and it is the right one here.** Claiming the send slot
+before calling SES means a failed send still consumes the cycle. Claiming after would mean a
+Scheduler retry delivers a duplicate. Idempotency buys "at most once" by giving up "at least once";
+no ordering yields both. Correct for a nudge, wrong for anything transactional → B-016.
+
+**Security review:** one **LOW** finding, fixed in-slice — the check-in prompt builder had none of
+the ADR-038 containment `chat/qa.py` established for the *same* threat: no delimited data region,
+no delimiter defanging, and `title` (200 chars, attacker-authorable via an uploaded résumé) not
+newline-normalised, so it could forge extra lines in a line-oriented prompt. Bounded by the same
+architectural controls as slice 7 — the compose call's only tool returns text fields, output is
+validated into fixed Pydantic fields, and the email template autoescapes with both `href`s coming
+from an environment variable rather than the model — so the realistic worst case was attacker-chosen
+*prose* in an email from a trusted sender, not markup or a tool call. Fixed by lifting the defanging
+into `careervault/prompt_safety.py` and pointing both prompt builders at it. **The finding is really
+about drift:** the control existed, was documented, and was simply absent in the second place it was
+needed, because it lived as a private helper in the first. *A defense that is one module's private
+function is a defense the next module will not have.* Reviewed clean otherwise — notably the dotted
+document paths use generated placeholders with names passed via `ExpressionAttributeNames` (no
+injection path), no server-owned state is writable through `PUT /settings`, and the SNS topic policy
+scopes publish to `ses.amazonaws.com` with a `SourceAccount` condition.
+
+**Pulled in and closed:** B-014 (nested-`settings` merge — ADR-040, with all four DynamoDB premises
+probed against the live table first; the single-expression seed form was in the ADR's first draft as
+fact and was wrong), B-015 (fabricated placeholders, plus clearing the invented dev PROFILE values).
+
+**Also fixed in-slice:** a test-harness bug this slice exposed — `checkin/rendering.py` shadowed
+`resume_agent/rendering.py` because sibling modules resolved off a shared `sys.path`, breaking the
+agent's tests with a misleading error. `load_handler` now isolates each load; the residual case
+(tests importing siblings directly) is B-017.
+
+**Deferred:** B-016 (failed send consumes the cycle), B-017 (remaining test-harness `sys.path`
+fragility), B-018 (no integration test for the scheduled flow — slice 9 owns it, and it is the
+highest-value flow to cover since a scheduled job cannot be smoke-tested by clicking around),
+B-019 (bounce state has no UI and no automated response). **Not pulled in:** B-003, B-004, B-005,
+B-006/B-007, B-009, B-011, B-012, B-013.
+
+**Docs:** architecture **v2.1** (three corrections — §3.3.3 and §4.5.4 both said "Query" for what
+is necessarily a `Scan`; §4.5.4's IAM row gains `dynamodb:Scan`; the `checkin_time_local` claim
+retracted). New ADRs **-039**, **-040**, and **-021** promoted from placeholder to accepted.
 
 ---
 

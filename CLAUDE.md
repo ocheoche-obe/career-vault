@@ -130,8 +130,37 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current build phase
 
-**Phase 2 — Implementation (in progress). Next slice: 8 — check-in emails (FR-4: SES identity + Configuration Set, EventBridge Scheduler → `checkin_lambda` with Haiku/RAG personalization per ADR-011, `ses_event_handler` + bounce/complaint SNS topic + SQS DLQs, cadence/pause on the *existing* `PUT /settings`, CHECKINLOG audit items). ⚠ open decisions: whether SES sandbox suffices for MVP (one verified recipient — likely yes, document rather than request production access), and the default send day/time for the weekly cadence. Note two things already done for it: `PUT /settings` **exists** (shipped with B-008), and **B-014** is a prerequisite — `ProfileUpdate` deliberately omits `settings` because a nested object would be *replaced*, not merged, silently dropping `checkin_cadence`; slice 8 must add it with real nested-merge semantics.**
+**Phase 2 — Implementation (in progress). Next slice: 9 — hardening & MVP close (integration test suite against deployed dev + DynamoDB Local for conditional-write semantics; frontend unit tests wired into CI — the current frontend job is typecheck+build+lint only, so green CI does not prove the app renders; README refresh; FR/NFR coverage audit; MVP evaluation scorecard against requirements §7; cost review with real Bedrock numbers). ⚠ open decisions: deploy a prod stack vs declare dev-as-MVP for a single-user app, and which parking-lot items graduate to v1.1. Highest-value backlog item to fold in: **B-018** — no integration test covers the check-in flow, which slice 8 verified entirely by hand; a scheduled job is the one thing that cannot be smoke-tested by clicking around the app.**
 
+- Last completed: slice 8 — check-in emails (FR-4). EventBridge Scheduler fires `checkin_lambda`
+  daily at 23:00 UTC; **`next_checkin_at` on the PROFILE paces the cadence**, so all four FR-4.1
+  cadences run off one schedule and a cadence change is a data write, not a control-plane call
+  (**ADR-039**). Three things worth carrying. **(1) `required` in a Converse tool schema is a hint,
+  not a constraint.** The first personalized send returned a complete email that omitted `sign_off`
+  — a `required` field — and validation rejected it, dropping a good email to the static fallback;
+  the generic send a minute earlier had included it, same prompt, temperature 0. Fix was a split,
+  not a looser schema: `subject`/`prompts` strict, `greeting`/`sign_off` defaulted. *Validate what
+  makes output useful; default what merely makes it polished* — and note the downgrade is
+  **invisible** without a metric, because the email still arrives (**ADR-021** addendum).
+  **(2) The docs described two fields that never existed** — `checkin_time_local` and
+  `aspirational_goal` — which is B-008's failure mode repeating twice in one feature. One was added
+  (the generic fallback is inert without it), one deliberately not. *Prose describing a data model
+  drifts silently, because nothing fails when a field in a sentence never becomes a field in a
+  schema.* **(3) Idempotency has a price:** claiming the send slot before calling SES means a failed
+  send consumes the cycle; claiming after would duplicate on a Scheduler retry. *At most once is
+  bought by giving up at least once* — right for a nudge, wrong for anything transactional (B-016).
+  **ADR-040** closed **B-014**: nested `settings` merges via one dotted `SET settings.#f` path per
+  sub-field, plus a *separate* idempotent seeding `UpdateItem` — a dotted path cannot be written
+  into an absent attribute, and the seed cannot ride along in the same expression (DynamoDB rejects
+  naming both a path and its descendant). All four premises were probed against the live table
+  before the ADR was settled; the single-expression form was in the first draft as fact and was
+  wrong. **Arch v2.1 corrections:** §3.3.3 and §4.5.4 both said "Query" for what is necessarily a
+  `Scan` (different partition keys per user + no GSIs per ADR-028 — a GSI is what would *make* it a
+  Query, not what would make it faster); §4.5.4's IAM row gains `dynamodb:Scan`. All three tiers,
+  both idempotency layers, pause, cadence pacing, and the full SES→SNS→handler bounce path verified
+  live. Measured **~$0.0026/check-in** (~$0.01/mo weekly). SES stays in **sandbox** — sufficient for
+  one verified recipient, and note identity verification is a **manual link click** CloudFormation
+  cannot complete. Deferred: B-016..B-019.
 - Interlude after slice 7: **B-008 closed** (PR #30) — generated résumés had no identity header.
   The backlog's proposed fix ("take identity from the JWT") turned out **insufficient**: Cognito
   holds only `email`/`email_verified`/`sub` — no name — and the `Profile` model had neither `name`
@@ -144,7 +173,7 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
   called the route. `tests/conftest.py` now uses the *deployed* wildcard so that class of bug fails
   a test. Verified live: header renders **"Oche Obe"** with email + location beneath.
 
-- Last completed: slice 7 — chat over your data (FR-6.1). `chat_lambda` now routes a message to
+- Before that: slice 7 — chat over your data (FR-6.1). `chat_lambda` now routes a message to
   entry-parsing **or** grounded Q&A via a third *control-flow* tool, `answer_question`, with
   `toolChoice=any` **retained** (**ADR-038**). A Q&A turn is route (Haiku) → Titan embed →
   `rank_by_similarity` top-k **in-Lambda** → synthesis (Haiku, **no tools**); ingestion is
