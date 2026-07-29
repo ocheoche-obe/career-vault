@@ -130,11 +130,18 @@ def test_both_email_bodies_are_sent(rig):
 
 
 def test_the_email_links_back_to_the_app(rig):
-    """FR-4.4."""
+    """FR-4.4.
+
+    Asserts the *exact* rendered link rather than that the base URL appears somewhere. A bare
+    substring check would pass on a link that merely mentioned the host — and it is also the shape
+    CodeQL's `py/incomplete-url-substring-sanitization` rule flags, since in production code
+    `"host" in url` is the classic broken origin check. Nothing unsafe was happening here, but the
+    precise assertion is the stronger test regardless.
+    """
     run(rig)
 
-    assert "https://example.cloudfront.net" in rig["sends"][0]["html"]
-    assert "https://example.cloudfront.net" in rig["sends"][0]["text"]
+    assert 'href="https://example.cloudfront.net"' in rig["sends"][0]["html"]
+    assert "Log an update: https://example.cloudfront.net\n" in rig["sends"][0]["text"]
 
 
 # --- idempotency (§3.3.4) -------------------------------------------------------------------
