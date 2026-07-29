@@ -59,6 +59,20 @@ class ProfileUpdate(BaseModel):
 
     Every field is optional: the route is a partial update, and omitting a field leaves the
     stored value alone. Sending an explicit ``null`` is how a field gets cleared.
+
+    **Only the three fields the identity form actually writes are here**, and that restraint is
+    deliberate rather than laziness. An earlier draft also accepted ``summary``, ``skills``,
+    ``portfolio_links`` and ``settings``. Two reasons they were removed:
+
+    - Nothing writes them yet, so they would ship untested, with no UI to exercise them.
+    - ``settings`` in particular carried a trap. Partial-update semantics are per *top-level
+      attribute*: DynamoDB would ``SET settings = <what was sent>``, replacing the whole nested
+      object. So ``{"settings": {"checkin_paused": true}}`` would silently drop
+      ``checkin_cadence``. Slice 8 needs both fields independently (FR-4.6), so it should add
+      ``settings`` together with real nested-merge semantics and tests — not inherit a field whose
+      behaviour is quietly wrong.
+
+    Add a field here when something writes it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -66,10 +80,6 @@ class ProfileUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
     phone: str | None = Field(default=None, max_length=40)
-    summary: str | None = Field(default=None, max_length=2000)
-    skills: list[str] | None = Field(default=None, max_length=100)
-    portfolio_links: dict[str, str] | None = None
-    settings: Settings | None = None
 
 
 def default_profile(user_id: str, email: str) -> Profile:
