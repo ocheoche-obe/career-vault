@@ -45,6 +45,16 @@ updates:
       interval: monthly
     open-pull-requests-limit: 5
     labels: [dependencies, security]
+    # TypeScript majors are held back by typescript-eslint's peer range, not by us (PR #38 closed
+    # 2026-08-07). typescript-eslint 8.65 peers on `typescript >=4.8.4 <6.1.0`, so a TS 7 bump fails
+    # `npm ci` at resolution — and because the lint-toolchain group is atomic *by design*, that one
+    # unresolvable major blocks the eslint/globals/typescript-eslint bumps riding alongside it.
+    # Ignoring the major lets the rest ship monthly. `ignore` is an update-entry key, not a group
+    # key, but only lint-toolchain contains typescript so the effect is scoped in practice.
+    # LIFT THIS when typescript-eslint publishes a release whose peer range admits TypeScript 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
     groups:
       react:                          # all update types: React + its type stubs move together
         patterns:

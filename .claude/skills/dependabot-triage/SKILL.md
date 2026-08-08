@@ -82,11 +82,23 @@ After the batch lands, pull main and re-verify every ecosystem locally:
 - **IaC:** synth/plan (`cdk synth`, `terraform plan`) — no deploy needed to catch
   breakage from a lib bump
 
-**Audit the test gates while you're here.** A frontend job green on
-`vitest run --passWithNoTests` with zero test files proves typecheck+build only —
-runtime is unverified until the next deploy. If you find a hollow gate, record a
-minimum smoke test (render the app root, assert the landing state) as a near-term task,
-and treat "auto-merge green Dependabot PRs" as off the table until the gate is real.
+**Audit the test gates while you're here — don't assume, check what green proves.** A frontend
+job green on `vitest run --passWithNoTests` with zero test files proves typecheck+build only;
+runtime is unverified until the next deploy. If you find a hollow gate, record a minimum smoke
+test (render the app root, assert the landing state) as a near-term task, and treat "auto-merge
+green Dependabot PRs" as off the table until the gate is real.
+
+**Corrected 2026-08-07 for this repo — CareerVault's gates are no longer hollow.** Slice 9 added
+28 Vitest + RTL component tests, so the "Frontend tests + typecheck + build + lint" check does
+exercise runtime. Green on the frontend is now worth more than this section assumed, and it should
+not be under-trusted on that basis.
+
+The useful habit is narrower than "distrust green": **ask whether the tests touch the API surface
+the bump actually changes.** The same sweep bumped python-ulid 3.x → 4.x, whose entire surface here
+is `ULID()` and `ULID.from_str()` in `ddb_helpers.py`. The one plausible break — v4 raising a
+non-`ValueError` from `from_str`, which would make `is_valid_ulid` propagate instead of returning
+`False` — turned out to be covered by a parametrized negative test. That is what made green
+meaningful, not the test count.
 
 ## 7. Prevent the next wave from hurting
 
