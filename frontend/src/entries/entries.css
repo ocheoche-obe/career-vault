@@ -1,133 +1,256 @@
-/* Entries dashboard — theme-aware via the CSS custom properties in index.css.
-   Reuses .entry-fields, .card-actions, .field-error, .badge from chat.css (bundled globally). */
+/**
+ * Timeline — the vault: record list plus a sticky detail panel (v1.1 redesign).
+ * Tokens only, no raw hex (ADR-044).
+ */
 
-.dashboard {
-  width: min(720px, 100%);
+.timeline {
+  max-width: var(--w-wide);
+}
+
+.timeline-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+/* ---- Filters ------------------------------------------------------------------------------- */
+
+.filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter {
+  padding: 9px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.filter:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.filter.active {
+  border-color: var(--border-active);
+  background: var(--accent-wash-soft);
+  color: var(--accent-text);
+}
+
+/* ---- Record list --------------------------------------------------------------------------- */
+
+.record-list {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.list-empty {
+  padding: 22px;
+}
+
+.year-divider {
+  padding: 12px 22px;
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-subtle);
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+}
+
+.record-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
   text-align: left;
+  width: 100%;
+  padding: 16px 22px;
+  border: none;
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+}
+
+.record-row:hover {
+  background: var(--surface-raised);
+}
+
+.record-row.selected {
+  border-left-color: var(--accent);
+  background: var(--surface-raised);
+}
+
+.record-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.record-date {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.record-title {
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.record-org {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* ---- Detail panel -------------------------------------------------------------------------- */
+
+.detail-column {
+  position: sticky;
+  /* Clears the 66px sticky header with a little air. */
+  top: 90px;
+  min-width: 0;
+}
+
+.detail-panel {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.detail-strip {
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  letter-spacing: 0.16em;
+  color: var(--text-faint);
+}
+
+.detail-strip .kind {
+  color: var(--accent-text);
+}
+
+.detail-body {
+  padding: 26px 22px;
   display: flex;
   flex-direction: column;
   gap: 20px;
 }
 
-.dashboard-hint {
-  color: var(--text);
-  max-width: 52ch;
-  line-height: 1.5;
-}
-.dashboard-error {
-  color: crimson;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.detail-body h2 {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
-.dashboard-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.dashboard-count {
-  color: var(--text);
-  font-size: 14px;
-}
-.dashboard-head button,
-.dashboard-error button {
-  font: inherit;
-  font-size: 13px;
-  padding: 4px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-h);
-  cursor: pointer;
+.detail-sub {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  /* Pulled up under the title: the 20px body gap is right between blocks, too much inside one. */
+  margin-top: -14px;
+  overflow-wrap: anywhere;
 }
 
-.entry-group {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.entry-group h2 {
-  margin: 0 0 2px;
+.detail-content {
   font-size: 15px;
-  font-weight: 600;
-  color: var(--text);
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.group-count {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text);
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 1px 8px;
-  letter-spacing: 0;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.entry-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.fact-rows {
+  border-top: 1px solid var(--border-subtle);
 }
-.entry-card.editing {
-  border-color: var(--accent-border);
-}
-.entry-head {
+
+.fact-rows > div {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 12px;
-}
-.entry-title {
-  color: var(--text-h);
-  font-size: 15px;
-}
-.entry-date {
-  color: var(--text);
-  font-size: 13px;
-  white-space: nowrap;
-}
-.entry-summary {
-  margin: 0;
-  font-size: 13px;
-  color: var(--accent);
-}
-.entry-content {
-  margin: 0;
-  color: var(--text-h);
-  font-size: 14px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-/* Nav between Chat and Dashboard */
-.view-nav {
-  width: min(720px, 100%);
-  display: flex;
-  gap: 8px;
+.fact-rows dt {
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
 }
-.view-nav button {
-  font: inherit;
+
+.fact-rows dd {
   font-size: 14px;
-  padding: 6px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-h);
-  cursor: pointer;
+  color: var(--text-body);
+  text-align: right;
 }
-.view-nav button.active {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
+
+.detail-actions {
+  display: flex;
+  gap: 9px;
+}
+
+.detail-actions .btn-quiet {
+  flex: 1;
+  padding: 12px 0;
+  text-align: center;
+}
+
+/* ---- Responsive ---------------------------------------------------------------------------- */
+
+@media (max-width: 1024px) {
+  .timeline-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Sticky is meaningless once the panel is below the list rather than beside it, and it would
+     pin the panel over the list while scrolling back up. */
+  .detail-column {
+    position: static;
+  }
+}
+
+@media (max-width: 768px) {
+  .year-divider,
+  .record-row {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .detail-strip,
+  .detail-body {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .detail-body h2 {
+    font-size: 22px;
+  }
+
+  .fact-rows > div {
+    /* At 360px a long value and its key stop fitting on one line and the value wraps mid-word. */
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .fact-rows dd {
+    text-align: left;
+  }
 }

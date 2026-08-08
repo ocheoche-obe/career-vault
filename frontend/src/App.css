@@ -203,6 +203,257 @@ main:focus {
   outline: none;
 }
 
+/* ---- Shared view primitives -----------------------------------------------------------------
+   Extracted from `home.css` in v1.1 slice 2. These were Home-only when Home was the only redesigned
+   view; four more views now build on the same card, eyebrow and chip vocabulary, and leaving them in
+   a feature stylesheet would mean either importing Home's CSS from Timeline (a dependency that says
+   something untrue about the relationship) or duplicating the values (which is how two cards drift
+   apart). App.css is the natural home: it always loads, and it already owns the shell.
+
+   Anything genuinely specific to one view stays in that view's stylesheet. */
+
+.view {
+  margin: 0 auto;
+  padding: 34px 32px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.view-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.view-head h1 {
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.card {
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card h2 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: normal;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.muted {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+/* The uppercase mono micro-label used for badges, filters and panel chrome throughout the handoff.
+   Named for what it is rather than where it first appeared, since five views now use it. */
+.micro {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--accent-wash);
+  border-radius: 5px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.badge.small {
+  font-size: 9px;
+  padding: 3px 6px;
+}
+
+/* ---- Shared entry-field grid (propose, edit and import-review flows) ------------------------- */
+
+.entry-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.entry-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.entry-fields .field-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.entry-fields input,
+.entry-fields textarea {
+  font: inherit;
+  font-size: 15px;
+  color: var(--text-body);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 11px 13px;
+  resize: vertical;
+}
+
+.entry-fields input:focus,
+.entry-fields textarea:focus {
+  border-color: var(--border-active);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.card-actions {
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chips-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
+.chip {
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--accent-text);
+}
+
+.chip:hover {
+  border-color: var(--border-active);
+  background: var(--surface-raised);
+}
+
+.link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 14px;
+}
+
+.link-btn:hover {
+  color: var(--accent-hover);
+}
+
+/* Quiet bordered action, used for every secondary button across the four rebuilt views. */
+.btn-quiet {
+  font-size: 14px;
+  padding: 11px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-primary);
+}
+
+.btn-quiet:hover {
+  border-color: var(--border-active);
+}
+
+.btn-quiet.subtle {
+  color: var(--text-secondary);
+}
+
+.btn-quiet.danger {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.btn-quiet.danger:hover {
+  border-color: var(--danger-border-hover);
+  background: var(--danger-wash);
+}
+
+.btn-primary:disabled,
+.btn-quiet:disabled,
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Padding lives on `.view` alone, at every breakpoint. Views layer `max-width` and their own
+   internals on top; padding is the shell's, so the six views cannot drift apart by a few pixels.
+   (App.css is imported first in App.tsx — see the note there — so a view stylesheet that genuinely
+   needs to override a shared primitive can simply say so and win on source order.) */
+@media (max-width: 1024px) {
+  .view {
+    padding: 28px 20px 48px;
+  }
+}
+
+@media (max-width: 768px) {
+  .view {
+    padding: 24px 16px 40px;
+    gap: 18px;
+  }
+
+  .view-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .view-head h1 {
+    font-size: 26px;
+  }
+}
+
 /* TEMPORARY — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
    The five un-redesigned views set a width (`.dashboard` is `width: min(720px, 100%)`) but no
    margin or padding of their own: they were centred by the old `main`'s `align-items: center` and
@@ -251,7 +502,7 @@ main:focus {
   border-radius: 12px;
   border: none;
   background: var(--grad-primary);
-  color: #fff;
+  color: var(--on-accent);
   font-size: 15px;
   font-weight: 500;
 }

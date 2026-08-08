@@ -15,7 +15,68 @@
  *   focus ring     uses --accent, not --border-active, and is a real ring rather than a border swap
  */
 
-@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
+/**
+ * Fonts are self-hosted (B-032), replacing the handoff's Google Fonts `@import`. Three reasons, in
+ * the order they matter here:
+ *
+ *   1. `@import` admits no SRI and the app sets no CSP (there is no `ResponseHeadersPolicy` in the
+ *      SAM template), so a compromised font CDN could serve arbitrary CSS. That cannot execute
+ *      script, but attribute-selector background URLs can exfiltrate — and this app holds a career
+ *      history. Raised as a below-threshold note by the slice-1 security review.
+ *   2. Google Fonts logs viewer IPs.
+ *   3. It is a render-blocking third-party round trip on a cold path that already misses NFR-2.3
+ *      (3686ms against a 2s budget). A small win, not a fix — `GET /entries` is 3639ms of that.
+ *
+ * Both families are **variable** fonts, so one file per subset covers every weight the design uses
+ * (Figtree 400-700, JetBrains Mono 400-700) — hence `font-weight` ranges below rather than one
+ * `@font-face` per weight. Only latin and latin-ext are vendored; the four other JetBrains Mono
+ * subsets (cyrillic, cyrillic-ext, greek, vietnamese) are omitted as unused weight on the wire.
+ * 73 KB total.
+ *
+ * `font-display: swap` matches what the Google CSS specified: text paints immediately in the
+ * fallback and re-renders when the file lands, rather than a flash of invisible text.
+ */
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/figtree-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/figtree-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/jetbrains-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("./assets/fonts/jetbrains-mono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
+    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
+    U+2C60-2C7F, U+A720-A7FF;
+}
 
 :root {
   /* ---- Surfaces (dark — the approved design) ------------------------------------------------ */
@@ -56,6 +117,14 @@
   --accent-wash-soft: rgba(124, 108, 255, 0.14);
   --accent-wash-faint: rgba(124, 108, 255, 0.12);
   --accent-wash-note: rgba(124, 108, 255, 0.08);
+
+  /* Foreground on an accent-filled surface — gradient buttons, the send pill, the switch knob, a
+     checked checkbox. White in both themes deliberately: those fills are the same saturated purple
+     in light and dark, so the contrast pair does not change. It is a token rather than a literal
+     `#fff` in five stylesheets because the criterion is "index.css is the only file that defines a
+     colour" — a theme-invariant value is still a colour decision, and one place to revisit beats
+     grepping for it later. */
+  --on-accent: #ffffff;
 
   /* ---- Status ------------------------------------------------------------------------------ */
   --success: #8ad6b0;
@@ -171,25 +240,30 @@
 }
 
 /**
- * TEMPORARY compatibility aliases — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
+ * TEMPORARY compatibility aliases — DELETE AS EACH VIEW IS REDESIGNED.
  *
- * This slice replaces the token layer but only redesigns the shell and Home. The five remaining
- * feature stylesheets (chat, entries, resume, settings, upload) still reference the old Vite-era
- * names, and unset custom properties resolve to nothing rather than to a fallback — so without
- * these five lines those views would render with no colour at all, in both themes.
+ * Slice 1 replaced the token layer while five feature stylesheets still referenced the old Vite-era
+ * names. Unset custom properties resolve to nothing rather than to a fallback, so without these
+ * lines those views would have rendered with no colour at all, in both themes.
  *
- * Each alias dies with the stylesheet that uses it. When this block is empty, slice 2 is done.
+ * **Slice 2 emptied four of the five.** `resume.css` is the only remaining consumer, and the Résumés
+ * view is blocked on B-028 (no résumé list endpoint; `RESUMERUN` TTL'd at 30 days), so it is rebuilt
+ * in slice 3 — at which point this whole block and the `.legacy-view` wrapper in App.css are deleted
+ * together. `--code-bg` went with the chat/entries/upload/settings rebuilds and has no consumers.
+ *
+ * Verify before deleting, rather than assuming:
+ *     grep -rnoE 'var\(--(text-h|text|accent-border|accent-bg)\)' src --include='*.css' \
+ *       | grep -v src/index.css
  *
  * (Note: `--surface`, `--scroll-thumb`, `--border-strong` and `--text-primary` were already
- * referenced by feature CSS *before* this slice despite never being defined — those usages were
- * silently resolving to nothing and start working now.)
+ * referenced by feature CSS *before* slice 1 despite never being defined — those usages were
+ * silently resolving to nothing and started working then.)
  */
 :root {
   --text-h: var(--text-primary);
   --text: var(--text-secondary);
   --accent-border: var(--border-active);
   --accent-bg: var(--accent-wash-soft);
-  --code-bg: var(--surface-sunken);
 }
 
 * {

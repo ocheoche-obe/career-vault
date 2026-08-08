@@ -1,118 +1,236 @@
-/* Your details (B-008) — a short form, so it stays a single readable column rather than a grid. */
-.settings {
-  max-width: 32rem;
+/**
+ * Details — profile, cadence, reminders, data control (v1.1 redesign).
+ * Tokens only, no raw hex (ADR-044).
+ */
+
+.details {
+  max-width: var(--w-narrow);
+}
+
+/* ---- Fields -------------------------------------------------------------------------------- */
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.field {
   display: flex;
   flex-direction: column;
-  gap: 0.9rem;
+  gap: 5px;
+  min-width: 0;
 }
-.settings h2 {
-  margin: 0;
+
+.field > .micro {
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
 }
-.settings-intro {
-  margin: 0;
-  color: var(--muted, #666);
-  font-size: 0.9em;
+
+.field input {
+  font: inherit;
+  font-size: 15px;
+  padding: 13px 15px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-body);
+  min-width: 0;
 }
-.settings-warning {
-  margin: 0;
-  padding: 0.6rem 0.8rem;
-  border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  font-size: 0.9em;
+
+.field input::placeholder {
+  color: var(--text-faint);
 }
-.settings label {
+
+.field input:focus {
+  border-color: var(--border-active);
+}
+
+.field input:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.field small {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.45;
+}
+
+.notice {
+  font-size: 13px;
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-raised);
+  background: var(--accent-wash-note);
+  color: var(--accent-text);
+}
+
+/* ---- Cadence ------------------------------------------------------------------------------- */
+
+/* `auto-fit` rather than the handoff's fixed `repeat(3, 1fr)`: the data model has four cadences
+   (CADENCE_DAYS), and a three-column grid would leave the fourth alone on a second row. */
+.cadence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.cadence-option {
   display: flex;
   flex-direction: column;
-  gap: 0.3rem;
-}
-.settings label > span {
-  font-size: 0.85em;
-  color: var(--text-h);
-}
-.settings input {
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 12px;
   border: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  font: inherit;
+  background: var(--surface-sunken);
+  text-align: left;
 }
-.settings input:disabled {
-  opacity: 0.6;
+
+.cadence-option:hover:not([aria-disabled="true"]) {
+  border-color: var(--border-active);
 }
-.settings label > small {
-  color: var(--muted, #666);
-  font-size: 0.78em;
+
+.cadence-option.selected {
+  background: var(--accent-wash-faint);
+  border-color: var(--border-active);
 }
-.settings-error {
-  margin: 0;
-  padding-left: 1.1rem;
-  color: crimson;
-  font-size: 0.9em;
-}
-.settings-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-}
-.settings-actions button {
-  padding: 0.5rem 1.1rem;
-  border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
-}
-.settings-actions button:disabled {
+
+/* `aria-disabled`, not `:disabled` — the control stays focusable so a keyboard user can still find
+   and read it while check-ins are paused (see the note in Settings.tsx). */
+.cadence-option[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
 }
-.settings-saved {
-  font-size: 0.9em;
-  color: var(--accent);
+
+.cadence-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-/* --- Check-in emails (slice 8, FR-4.6) --- */
+.cadence-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
 
-/* A visible break between the two groups — the form now covers two unrelated concerns
-   (résumé identity, check-in preferences) and reads as one long list without it. */
-.settings-section {
-  margin-top: 0.8rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--border);
-}
-.settings select {
-  padding: 0.5rem 0.6rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-}
-.settings select:disabled {
-  opacity: 0.5;
-}
-/* The checkbox sits inline with its label, so this row breaks the column layout the other
-   fields use: a two-column grid with the hint spanning underneath both. */
-.settings-check {
-  display: grid;
-  grid-template-columns: auto 1fr;
+/* ---- Reminders ----------------------------------------------------------------------------- */
+
+.toggle-row {
+  display: flex;
   align-items: center;
-  gap: 0.2rem 0.5rem;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
 }
-.settings-check input[type="checkbox"] {
-  width: 1rem;
-  height: 1rem;
-  margin: 0;
-  justify-self: start;
+
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
-.settings-check > small {
-  grid-column: 2;
+
+.toggle-label {
+  font-size: 15px;
+  color: var(--text-primary);
 }
-.settings-meta {
-  margin: 0;
-  color: var(--muted, #666);
-  font-size: 0.85em;
+
+.toggle-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.switch {
+  flex-shrink: 0;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 3px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  /* The off state is a border-contrast case, not a text one: 3.0 is the bar, and `--bar-miss`
+     clears it against both surfaces where `--border` did not (audit §B4). */
+  background: var(--bar-miss);
+  justify-content: flex-start;
+  transition: background 0.18s ease;
+}
+
+.switch[aria-checked="true"] {
+  background: var(--accent);
+  justify-content: flex-end;
+}
+
+.switch .knob {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--on-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch {
+    transition: none;
+  }
+}
+
+/* ---- Save + data --------------------------------------------------------------------------- */
+
+.save-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.save-flag {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--success);
+}
+
+.data-card {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-color: var(--border-strong);
+  background: var(--surface-sunken);
+}
+
+.data-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.data-text h2 {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* ---- Responsive ---------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cadence-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .data-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }

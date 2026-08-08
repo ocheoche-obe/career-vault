@@ -1,216 +1,301 @@
-/* Resume upload + review — theme-aware via the CSS custom properties in index.css.
-   Reuses .entry-fields and .field-error from chat.css (bundled globally). */
+/**
+ * Import — dropzone plus the select-all review list (v1.1 redesign).
+ * Tokens only, no raw hex (ADR-044).
+ */
 
-.upload,
-.review {
-  width: min(720px, 100%);
-  text-align: left;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.import {
+  max-width: var(--w-narrow);
 }
 
-/* ---- Upload drop / picker ---- */
-.upload-drop {
-  border: 1px dashed var(--border);
+.import-lead {
+  max-width: 60ch;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  /* Pulls up under the h1: the `.view` gap is right between blocks, too much under a title. */
+  margin-top: -14px;
+}
+
+/* ---- Dropzone ------------------------------------------------------------------------------ */
+
+.dropzone {
+  padding: 44px;
+  border-radius: 16px;
+  border: 1px dashed var(--border-dashed);
+  background: var(--surface-sunken);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.dropzone:hover,
+.dropzone.dragging {
+  border-color: var(--border-active);
+  background: var(--surface-raised);
+}
+
+/* The input is visually hidden, so the ring has to come from the label or focus is unindicated —
+   which is the exact failure ADR-043 was written about. */
+.dropzone:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.dropzone.working {
+  cursor: progress;
+  opacity: 0.75;
+}
+
+.drop-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
   border-radius: 12px;
-  padding: 24px;
+  background: var(--accent-wash);
+  color: var(--accent-text);
+  font-size: 18px;
+}
+
+.drop-primary {
+  font-size: 16px;
+  color: var(--text-body);
+}
+
+.drop-status {
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+.import-note {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ---- Review list --------------------------------------------------------------------------- */
+
+.review-count {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.review-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-row {
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-.upload-drop h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--text-h);
-}
-.upload-lead {
-  margin: 0;
-  color: var(--text);
-  line-height: 1.5;
-  max-width: 56ch;
-}
-.upload-drop input[type="file"] {
-  font: inherit;
-  font-size: 14px;
-  color: var(--text-h);
-}
-.upload-status {
-  margin: 0;
-  color: var(--accent);
-  font-size: 14px;
-}
-.upload-note {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--text-h);
-}
-.upload-note.error p {
-  color: crimson;
+
+.review-row.selected {
+  background: var(--surface-raised);
+  border-color: var(--border-selected);
 }
 
-/* ---- Review summary + toolbar ---- */
-.review-summary p {
-  margin: 0 0 4px;
-  color: var(--text-h);
-  line-height: 1.5;
-}
-.review-hint {
-  color: var(--text);
-  font-size: 14px;
-}
-.review-dropped {
-  color: var(--text);
-}
-.review-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  position: sticky;
-  top: 0;
-  padding: 8px 0;
-  background: var(--bg);
-  z-index: 1;
-}
-.review-selectall {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: var(--text-h);
+.review-row:hover {
+  border-color: var(--border-active);
 }
 
-/* ---- Rows ---- */
-.review-rows {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.review-row {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
 .review-row.saved {
-  opacity: 0.6;
+  opacity: 0.7;
 }
+
 .review-row-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-.review-row-title {
-  font: inherit;
-  font-size: 15px;
-  color: var(--text-h);
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.review-row-title:hover {
-  color: var(--accent);
-}
-.review-row-edit {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
+  gap: 13px;
 }
 
-/* Badges (base .badge.small sizing comes from chat.css) */
-.review .badge,
-.review-dup .badge {
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
-}
-
-/* ---- Status pills ---- */
-.pill {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 999px;
-  white-space: nowrap;
-  border: 1px solid var(--border);
-  color: var(--text);
-}
-.pill.ok {
-  border-color: var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
-}
-.pill.warn {
-  border-color: #d98a00;
-  color: #b06f00;
-}
-.pill.err {
-  border-color: crimson;
-  color: crimson;
-}
-
-/* ---- Per-row duplicate warning ---- */
-.review-dup {
+.row-select {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid var(--border);
-  padding-top: 8px;
+  align-items: center;
+  gap: 13px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
 }
-.dup-lead {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text);
+
+/* The real control stays in the tree for semantics and keyboard; the square below is its skin. */
+.row-select input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
-.dup-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+
+.row-select .checkbox {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-dashed);
+  background: transparent;
+}
+
+.row-select input:checked + .checkbox {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.row-select input:checked + .checkbox::after {
+  content: "✓";
+  font-size: 12px;
+  color: var(--on-accent);
+}
+
+.row-select input:focus-visible + .checkbox {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.row-select input:disabled + .checkbox {
+  opacity: 0.45;
+}
+
+.row-text {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
-  color: var(--text-h);
-}
-.dup-score {
-  color: var(--text);
+  text-align: left;
+  min-width: 0;
 }
 
-/* ---- Buttons (match the accent primary / neutral secondary elsewhere) ---- */
-.review button,
-.upload-note button,
-.review-dup button {
-  font: inherit;
-  font-size: 14px;
-  padding: 7px 16px;
+.row-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.row-edit {
+  flex-shrink: 0;
+  padding: 7px 12px;
   border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  letter-spacing: 0.14em;
+}
+
+.row-edit:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.row-edit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.review-row-edit {
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.review-dup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.review-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.review-selectall {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
   cursor: pointer;
 }
-.review button.secondary,
-.upload-note button.secondary {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--text-h);
+
+.review-selectall input {
+  accent-color: var(--accent);
+  width: 16px;
+  height: 16px;
 }
-.review button:disabled {
-  opacity: 0.5;
-  cursor: default;
+
+/* ---- Status pills -------------------------------------------------------------------------- */
+
+.pill {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pill.ok {
+  color: var(--success);
+}
+
+.pill.warn {
+  color: var(--accent-text);
+  background: var(--accent-wash);
+}
+
+.pill.err {
+  color: var(--danger);
+  background: var(--danger-wash);
+}
+
+/* ---- Responsive ---------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  .dropzone {
+    padding: 32px 20px;
+  }
+
+  .review-row-head {
+    flex-wrap: wrap;
+  }
+
+  .row-select {
+    /* Below ~420px the title, pill and Edit button stop coexisting on one line; the selection
+       label takes the full width and the controls wrap beneath it. */
+    flex-basis: 100%;
+  }
+
+  .import-note {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
