@@ -1,0 +1,398 @@
+/**
+ * Home (v1.1 redesign). Tokens only — no raw hex (ADR-044).
+ *
+ * The year grid is the one component that cannot simply reflow: at the handoff's 13px cells and 4px
+ * gaps it is 26 × 13 + 25 × 4 = 438px wide, which overflows a 375px viewport by ~95px (audit §C1).
+ * It scrolls inside its own container rather than shrinking, so the same 130 buckets mean the same
+ * thing at every viewport — everything on Home reads from one derived source, and a grid that
+ * changed its bucket size on mobile would quietly break that.
+ */
+
+.home {
+  max-width: var(--w-wide);
+  margin: 0 auto;
+  padding: 34px 32px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.card {
+  padding: 20px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.card h2 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: normal;
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.muted {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* ---- Greeting ------------------------------------------------------------------------------ */
+
+.greeting-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 30px;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.greeting-row h1 {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.next-checkin {
+  font-size: 14px;
+  color: var(--text-muted);
+  text-align: right;
+  line-height: 1.5;
+}
+
+.next-checkin span {
+  color: var(--accent-text);
+  text-transform: capitalize;
+}
+
+/* ---- Composer ------------------------------------------------------------------------------ */
+
+.composer-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.composer-row input {
+  flex: 1;
+  min-width: 0;
+  font-size: 16px;
+  padding: 15px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-body);
+}
+
+.composer-row input::placeholder {
+  color: var(--text-faint);
+}
+
+.composer-row input:focus {
+  border-color: var(--border-active);
+}
+
+.chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chips-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-right: 4px;
+}
+
+.chip {
+  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--accent-text);
+}
+
+.chip:hover {
+  border-color: var(--border-active);
+  background: var(--surface-raised);
+}
+
+/* ---- Stat trio ----------------------------------------------------------------------------- */
+
+.stat-trio {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.stat {
+  padding: 18px;
+  border-radius: 14px;
+  gap: 6px;
+}
+
+.stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Figtree, not the handoff's JetBrains Mono. Mono earns its place on small data-chrome — dates,
+   record numbers, uppercase micro-labels — but this is the largest type on the page, and a heavy
+   coding face at 30px against a soft grotesque reads as a second display typeface. That is the very
+   thing the handoff set out to avoid when it dropped 1d's serif accent for "one sans across the
+   entire UI". `tabular-nums` keeps the three stat cards on a shared numeric rhythm, which was the
+   only functional argument for mono here. */
+.stat-value {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stat-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---- Year grid ----------------------------------------------------------------------------- */
+
+.year-grid {
+  padding: 22px;
+  gap: 16px;
+}
+
+.range {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* One cell per day, columns are weeks, rows are day-of-week — the GitHub contribution-graph form.
+   The handoff's 26×5 fortnight blocks rendered as a small dense square in a mostly empty card;
+   this fills the width at any size and makes a weekly check-in habit visible as a horizontal band.
+   `1fr` columns are what spread the cells evenly rather than clustering them at a fixed 13px. */
+.grid-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.grid-inner {
+  width: 100%;
+  /* Below this the cells stop being legible, so the container scrolls instead of shrinking. */
+  min-width: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.grid-cells {
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 3px;
+}
+
+.cell {
+  aspect-ratio: 1;
+  border-radius: 2px;
+  background: var(--heat-0);
+}
+
+/* Days after today in the current, partial week: present for alignment, invisible like GitHub's. */
+.cell[data-future] {
+  background: transparent;
+}
+
+.cell[data-step='1'] {
+  background: var(--heat-1);
+}
+.cell[data-step='2'] {
+  background: var(--heat-2);
+}
+.cell[data-step='3'] {
+  background: var(--heat-3);
+}
+.cell[data-step='4'] {
+  background: var(--heat-4);
+}
+
+/* Same column track as the cells, so a label lands above the week its month begins in rather than
+   at an evenly-spaced approximation. */
+.grid-axis {
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  gap: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-faint);
+}
+
+.grid-axis span {
+  grid-row: 1;
+  white-space: nowrap;
+}
+
+/* ---- Two-column row ------------------------------------------------------------------------ */
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.latest-list,
+.weight-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.latest-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.latest-title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-body);
+}
+
+.latest-date {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+.latest-meta {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.link-btn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 14px;
+}
+
+.link-btn:hover {
+  color: var(--accent-hover);
+}
+
+.weight-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.weight-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.weight-count {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+
+.track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--border-subtle);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--grad-bar-fill);
+}
+
+/* ---- Responsive ---------------------------------------------------------------------------- */
+
+@media (max-width: 1024px) {
+  .home {
+    padding: 28px 20px 48px;
+  }
+
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .home {
+    padding: 24px 16px 40px;
+    gap: 18px;
+  }
+
+  .greeting-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .greeting-row h1 {
+    font-size: 26px;
+  }
+
+  .next-checkin {
+    text-align: left;
+  }
+
+  .composer-row {
+    flex-direction: column;
+  }
+
+  .stat-trio {
+    grid-template-columns: 1fr;
+  }
+
+  .stat-value {
+    font-size: 26px;
+  }
+}

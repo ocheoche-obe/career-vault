@@ -68,7 +68,7 @@ The six criteria the MVP was defined against.
 | 1.4 | DynamoDB on-demand | ✅ | `PAY_PER_REQUEST`. |
 | 2.1 | Ingestion ≤ 5s | ❓ **Unverified** | Never systematically measured. Cost per turn is known (~$0.006); latency is not. → **B-023** |
 | 2.2 | Résumé generation ≤ 4 min, async | ✅ | Corrected in v0.6 from an unmeetable 30s. Measured 72s / ~176s. |
-| 2.3 | Dashboard load ≤ 2s | ❓ **Unverified** | Same gap as 2.1. Note B-013: every Q&A turn reads the full corpus *including embeddings*, which scales badly on the interactive path. → **B-023** |
+| 2.3 | Dashboard load ≤ 2s | ⚠️ **Met warm, failed cold** | **Measured 2026-08-07** (v1.1 slice 1, 13-entry corpus, deployed dev API) — see [pre-redesign audit §D1](design/v1.1-redesign/pre-redesign-audit.md). Cold **3686 ms**; warm 721–1133 ms (mean ~940 ms). Nearly all of it is `GET /entries` (3639 ms cold, ~460 ms warm), not rendering. **The cold path is the typical path for this app**: FR-4's check-in email brings the user back weekly-to-monthly, so the Lambda is reliably cold when they arrive — a warm average would be the wrong number to report. Note B-013: the read carries full embeddings. Closes the NFR-2.3 half of **B-023**; 2.1 remains open. |
 | 3.1 | 99% availability | ➖ **Not measurable** | No synthetic monitoring, no SLA, single user. Honest answer: unknown, and appropriately so at MVP. |
 | 3.2 | Writes acknowledged before confirmation | ✅ | Conditional writes complete before the API responds. |
 | 3.3 | Bedrock retries, exponential backoff, max 3 | ✅ | Verified in `bedrock_client`: botocore's own retries are disabled (`max_attempts: 1`) so the two layers cannot multiply "max 3" into 9+. |
@@ -82,10 +82,16 @@ The six criteria the MVP was defined against.
 | 5.2 | `CLAUDE.md` present | ✅ | |
 | 5.3 | Powertools logging / tracing / validation | ✅ | All seven Lambdas. |
 | 6.1 | Chat primary, minimal navigation | ✅ | Chat is the landing view; five nav items. |
-| 6.2 | Usable on desktop **and mobile web** | ❓ **Unverified** | Never tested at mobile viewport. Related to B-001 (UI is functional but basic). → folded into **B-001** |
+| 6.2 | Usable on desktop **and mobile web** | ⚠️ **Overflow fixed; full pass pending** | **Measured, then fixed, 2026-08-07** (v1.1 slice 1) — see [pre-redesign audit §D2](design/v1.1-redesign/pre-redesign-audit.md). **Before:** all five views overflowed horizontally by **82px** at 360px — cause entirely shell-local (`.app-header` at `width: min(720px, 100%)` carrying a 241px email string that could not compress, and a `.view-nav` that neither wrapped nor scrolled). **After the slice-1 shell rebuild: 0px overflow on all six views at 375px**, verified in-browser. Caveated rather than ✅ deliberately: overflow is one measurable property of "usable on mobile", and the five views behind the shell still carry their pre-redesign internal layouts until v1.1 slice 2. Re-score to ✅ when those land. → **B-001** |
 | 6.3 | Emails render in Gmail, Outlook, Apple Mail | ⚠️ **Gmail only** | Verified in Gmail during slice 8. Outlook is the risk — its rendering engine is the one that breaks HTML email. → **B-024** |
 
-**16 met · 4 caveated · 3 unverified · 1 not measurable.**
+**16 met · 5 caveated · 1 unverified · 1 failed · 1 not measurable.**
+
+> **Revised 2026-08-07 (v1.1 slice 1).** Was *16 met · 4 caveated · 3 unverified · 1 not measurable*.
+> Two of the three unverified NFRs were measured during the pre-redesign enumeration: **2.3** moved
+> to ⚠️ caveated (met warm, failed cold) and **6.2** moved to ❌ failed (82px overflow at 360px).
+> Only **2.1** (ingestion ≤5s) remains unverified. The tally got worse because it got *honest* —
+> "unverified" was never a neutral state, and one of the two was hiding a real failure.
 
 ---
 

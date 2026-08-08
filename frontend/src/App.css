@@ -1,44 +1,305 @@
+/**
+ * App shell — sticky header, six-tab nav, streak pill, account menu (v1.1 redesign).
+ *
+ * Colour comes only from tokens in `index.css` (ADR-044): a raw hex here would be a light-mode bug
+ * that dark-mode review cannot see.
+ *
+ * The old shell failed NFR-6.2 on every view — 82px of horizontal overflow at 360px, caused by a
+ * 241px email string that could not compress and a nav that neither wrapped nor scrolled (audit
+ * §D2). Both are fixed here: the email moved into a fixed-width account disclosure, and the nav
+ * scrolls horizontally exactly as the handoff specifies.
+ */
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--header-fill);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.app-header-inner {
+  max-width: var(--w-wide);
+  margin: 0 auto;
+  padding: 0 32px;
+  height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+/* ---- Brand ------------------------------------------------------------------------------- */
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* Deliberately a <span>, not a heading: the wordmark used to be the page's only <h1>, which left
+   every view without one and would have produced two <h1>s once the redesign gave views their own
+   titles (audit §A10). */
+.wordmark {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+/* ---- Nav --------------------------------------------------------------------------------- */
+
+.view-nav {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  flex-shrink: 1;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.view-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.view-nav button {
+  font-size: 15px;
+  font-weight: 400;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.view-nav button:hover {
+  color: var(--text-primary);
+}
+
+.view-nav button.active {
+  background: var(--accent-wash-soft);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+/* ---- Header end: streak pill + account ----------------------------------------------------- */
+
+.header-end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.streak-pill {
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--border-raised);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.sparkline {
+  display: flex;
+  gap: 2px;
+  align-items: flex-end;
+}
+
+.sparkline .bar {
+  width: 3px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--bar-miss);
+}
+
+.sparkline .bar.hit {
+  height: 13px;
+  background: var(--accent-light);
+}
+
+.streak-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+
+/* The design shows a bare avatar with no sign-out anywhere. Sign-out is not optional, so the avatar
+   becomes a disclosure holding it — keeping the design's visual weight without losing the control. */
+.account {
+  position: relative;
+}
+
+.account summary {
+  list-style: none;
+  cursor: pointer;
+  border-radius: 999px;
+}
+
+.account summary::-webkit-details-marker {
+  display: none;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.account-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  min-width: 220px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 30;
+}
+
+.account-email {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.account-menu button {
+  padding: 9px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.account-menu button:hover {
+  border-color: var(--border-active);
+}
+
+/* ---- Main + unauthenticated states --------------------------------------------------------- */
+
 main {
-  flex: 1;
+  display: block;
+}
+
+main:focus {
+  outline: none;
+}
+
+/* TEMPORARY — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
+   The five un-redesigned views set a width (`.dashboard` is `width: min(720px, 100%)`) but no
+   margin or padding of their own: they were centred by the old `main`'s `align-items: center` and
+   padded by its `24px 20px`. The redesign replaced that with a plain block `main`, so without this
+   wrapper they render flush against the left edge, touching the sticky header. */
+.legacy-view {
+  max-width: var(--w-wide);
+  margin: 0 auto;
+  padding: 28px 32px 60px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  padding: 24px 20px;
-  box-sizing: border-box;
 }
 
-.app-header {
-  width: min(720px, 100%);
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-
-  h1 {
-    margin: 0;
-    font-size: 28px;
+@media (max-width: 768px) {
+  .legacy-view {
+    padding: 24px 16px 40px;
   }
 }
 
-.app-header-user {
+.app-state {
+  max-width: var(--w-narrow);
+  margin: 0 auto;
+  padding: 80px 32px;
   display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 14px;
-  color: var(--text);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  color: var(--text-secondary);
+}
 
-  button {
-    font: inherit;
-    padding: 4px 12px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-h);
-    cursor: pointer;
+.app-signin h1 {
+  font-size: 32px;
+  letter-spacing: -0.02em;
+}
 
-    &:hover {
-      border-color: var(--accent-border);
-    }
+.app-signin p {
+  font-size: 16px;
+  max-width: 46ch;
+  line-height: 1.55;
+}
+
+.btn-primary {
+  padding: 13px 26px;
+  border-radius: 12px;
+  border: none;
+  background: var(--grad-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+/* ---- Responsive -----------------------------------------------------------------------------
+   Breakpoints derived from the handoff's own fixed widths rather than from current-app breakage
+   (audit §C). Below 768px the header compresses: the streak pill's label is the first thing to go,
+   since the sparkline still carries the signal. */
+
+@media (max-width: 1024px) {
+  .app-header-inner {
+    padding: 0 20px;
+    gap: 14px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-header-inner {
+    padding: 0 16px;
+    gap: 10px;
+  }
+
+  /* The wordmark now stays at every width. It used to be hidden here to make room for the gradient
+     square beside it; with that gone there is space, and it is the only branding left — dropping it
+     would leave the header with none at all on mobile. */
+  .streak-label {
+    display: none;
+  }
+
+  .streak-pill {
+    padding: 7px 9px;
+  }
+
+  .view-nav button {
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+
+  .app-state {
+    padding: 48px 20px;
+  }
+}
+
+/* Below this the wordmark, a scrollable nav, the streak pill and the avatar stop coexisting. The
+   pill goes first: it is the only one that is purely decorative here, and the same streak is stated
+   in full on Home. */
+@media (max-width: 600px) {
+  .streak-pill {
+    display: none;
   }
 }

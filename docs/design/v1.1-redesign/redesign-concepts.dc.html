@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Space+Grotesk:wght@400;500;600;700&family=Archivo:wght@400;500;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; background: #131318; }
+  a { color: #b98cff; text-decoration: none; }
+  a:hover { color: #d6bcff; }
+</style>
+</helmet>
+
+<section style="display: flex; flex-direction: column; gap: 40px; padding: 56px; font-family: 'DM Sans', system-ui, sans-serif; background: #131318; color: #e8e6f2;">
+  <div style="display: flex; flex-direction: column; gap: 12px; max-width: 760px;">
+    <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Turn 1 · four directions</span>
+    <h1 style="margin: 0; font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 40px; letter-spacing: -0.02em; color: #f5f3ff;">CareerVault, four ways</h1>
+    <p style="margin: 0; font-size: 17px; line-height: 1.55; color: #a8a4c0; text-wrap: pretty;">Each concept keeps everything the app does today — log by chat, import a résumé, browse entries, generate a tailored résumé, set your check-in cadence — and changes the shape it arrives in. <a href="#1a">1a</a> is a written record. <a href="#1b">1b</a> is a momentum dashboard. <a href="#1c">1c</a> is a permanent archive. <a href="#1d">1d</a> is a companion you talk to. Items marked <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #b98cff; border: 1px solid rgba(185,140,255,0.4); border-radius: 4px; padding: 1px 5px;">NEW</span> don't exist in the code yet.</p>
+  </div>
+
+  <div style="display: flex; flex-wrap: wrap; gap: 64px; align-items: flex-start;">
+
+    <!-- ============ 1a — THE LEDGER ============ -->
+    <div id="1a" style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 14px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #131318; background: #b98cff; border-radius: 5px; padding: 3px 9px;">1a</span>
+        <h2 style="margin: 0; font-family: 'Archivo', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #f5f3ff;">The Ledger</h2>
+        <span style="font-size: 15px; color: #8b88a8;">Quiet, personal, light. Your career as something you write.</span>
+      </div>
+      <p style="margin: 0; max-width: 640px; font-size: 15px; line-height: 1.6; color: #a8a4c0;">Editorial and unhurried — a bound journal rather than an app. Entries live on one continuous dated column, so scrolling is literally reading your own history back. Momentum is present but whispered: a thin year spine in the margin, not a scoreboard.</p>
+
+      <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <!-- Ledger home -->
+        <div style="width: 900px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #f7f4ee; color: #17130d; font-family: 'Newsreader', Georgia, serif; display: flex; flex-direction: column;">
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 22px 40px; border-bottom: 1px solid #ddd6c9;">
+            <div style="display: flex; align-items: baseline; gap: 28px;">
+              <span style="font-size: 21px; font-weight: 500; letter-spacing: -0.01em;">CareerVault</span>
+              <div style="display: flex; gap: 22px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #7a7267;">
+                <span style="color: #17130d; border-bottom: 1px solid #7b5aa6; padding-bottom: 3px;">The Ledger</span>
+                <span>Import</span>
+                <span>Résumé</span>
+                <span>Details</span>
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267;">oche.ocheobe@gmail.com</span>
+              <span style="width: 28px; height: 28px; border-radius: 50%; background: #e7e0d2; border: 1px solid #ddd6c9; display: inline-flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267;">OO</span>
+            </div>
+          </div>
+
+          <div style="flex: 1; overflow: hidden; display: grid; grid-template-columns: 1fr 236px;">
+            <div style="padding: 40px 44px; display: flex; flex-direction: column; gap: 30px;">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7b5aa6;">Wednesday, 29 July</span>
+                <h3 style="margin: 0; font-size: 34px; font-weight: 400; line-height: 1.15; letter-spacing: -0.015em;">Thirteen entries, four years, one page.</h3>
+                <p style="margin: 0; font-size: 17px; line-height: 1.55; color: #57503f; max-width: 46ch; font-style: italic;">You last wrote nine days ago, about the GenAI trainings. Anything since?</p>
+              </div>
+
+              <div style="display: flex; align-items: stretch; gap: 0; border: 1px solid #ddd6c9; border-radius: 10px; background: #fffdf8; overflow: hidden;">
+                <input placeholder="Write today's entry…" style="flex: 1; font-family: 'Newsreader', Georgia, serif; font-size: 17px; padding: 15px 18px; border: none; background: transparent; color: #17130d; outline: none;" />
+                <button style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 0 22px; border: none; border-left: 1px solid #ddd6c9; background: #f2ecdf; color: #17130d; cursor: pointer;">Enter</button>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 0;">
+                <div style="display: flex; align-items: baseline; justify-content: space-between; padding-bottom: 12px; border-bottom: 1px solid #ddd6c9;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7a7267;">2025</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267;">6 entries</span>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 84px 1fr; gap: 0 24px; padding: 22px 0; border-bottom: 1px solid #e8e1d4;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267; padding-top: 5px;">OCT 01</span>
+                  <div style="display: flex; flex-direction: column; gap: 7px;">
+                    <div style="display: flex; align-items: baseline; gap: 10px;">
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #7b5aa6; border: 1px solid rgba(123,90,166,0.35); border-radius: 3px; padding: 1px 5px;">ROLE</span>
+                      <span style="font-size: 19px; font-weight: 500;">Manager, Asset Management Technology — AI Solutions</span>
+                    </div>
+                    <span style="font-size: 15px; color: #7a7267; font-style: italic;">KPMG US</span>
+                    <p style="margin: 0; font-size: 16px; line-height: 1.55; color: #37311f; max-width: 58ch;">Promoted following the initial Senior Associate, Tax — AI Solutions role that began in May 2025.</p>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 84px 1fr; gap: 0 24px; padding: 22px 0; border-bottom: 1px solid #e8e1d4;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267; padding-top: 5px;">OCT 01</span>
+                  <div style="display: flex; flex-direction: column; gap: 7px;">
+                    <div style="display: flex; align-items: baseline; gap: 10px;">
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #7b5aa6; border: 1px solid rgba(123,90,166,0.35); border-radius: 3px; padding: 1px 5px;">PROJECT</span>
+                      <span style="font-size: 19px; font-weight: 500;">AI pipeline for asset management tax forms</span>
+                    </div>
+                    <span style="font-size: 15px; color: #7a7267; font-style: italic;">KPMG US · team of 4</span>
+                    <p style="margin: 0; font-size: 16px; line-height: 1.55; color: #37311f; max-width: 58ch;">Extracted and analyzed 500+ tax forms in under 30 minutes, replacing manual workflows for accounting and compliance. Drove the move from a Python desktop executable to cloud-native Azure.</p>
+                    <div style="display: flex; gap: 8px; padding-top: 4px;">
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #57503f; background: #f0eade; border-radius: 3px; padding: 3px 7px;">Azure</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #57503f; background: #f0eade; border-radius: 3px; padding: 3px 7px;">Python</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #57503f; background: #f0eade; border-radius: 3px; padding: 3px 7px;">Leadership</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.06em; color: #7b5aa6; border: 1px dashed rgba(123,90,166,0.5); border-radius: 3px; padding: 3px 7px;">NEW · skill tags</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 84px 1fr; gap: 0 24px; padding: 22px 0;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7a7267; padding-top: 5px;">MAY 19</span>
+                  <div style="display: flex; flex-direction: column; gap: 7px;">
+                    <div style="display: flex; align-items: baseline; gap: 10px;">
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #7b5aa6; border: 1px solid rgba(123,90,166,0.35); border-radius: 3px; padding: 1px 5px;">ROLE</span>
+                      <span style="font-size: 19px; font-weight: 500;">Senior Associate, AI Solutions</span>
+                    </div>
+                    <span style="font-size: 15px; color: #7a7267; font-style: italic;">KPMG US</span>
+                    <p style="margin: 0; font-size: 16px; line-height: 1.55; color: #37311f; max-width: 58ch;">Contributed to AI solutions delivery and cloud platform engineering for asset management tax operations.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="border-left: 1px solid #ddd6c9; padding: 40px 26px; display: flex; flex-direction: column; gap: 32px; background: #f4f0e7;">
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #7a7267;">The spine <span style="color: #7b5aa6;">· NEW</span></span>
+                <sc-for list="{{ spine }}" as="year" hint-placeholder-count="4">
+                  <div style="display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 10px;">
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #7a7267;">{{ year.label }}</span>
+                    <div style="display: flex; gap: 3px;">
+                      <sc-for list="{{ year.months }}" as="m" hint-placeholder-count="12">
+                        <span style="{{ m.style }}"></span>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+                <p style="margin: 4px 0 0; font-size: 14px; line-height: 1.5; color: #7a7267; font-style: italic;">One mark per month you wrote something. Nine of the last twelve.</p>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 14px; padding-top: 26px; border-top: 1px solid #ddd6c9;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #7a7267;">Contents</span>
+                <div style="display: flex; flex-direction: column; gap: 9px; font-size: 15px;">
+                  <span style="display: flex; justify-content: space-between;">Roles <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7a7267;">7</span></span>
+                  <span style="display: flex; justify-content: space-between;">Projects <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7a7267;">3</span></span>
+                  <span style="display: flex; justify-content: space-between;">Certifications <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7a7267;">2</span></span>
+                  <span style="display: flex; justify-content: space-between;">Awards <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #7a7267;">1</span></span>
+                </div>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 10px; padding-top: 26px; border-top: 1px solid #ddd6c9;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #7a7267;">Next check-in</span>
+                <span style="font-size: 17px;">Friday, Jul 31</span>
+                <span style="font-size: 14px; color: #7a7267; font-style: italic;">Weekly, by email.</span>
+              </div>
+
+              <button style="margin-top: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 12px 0; border: 1px solid #7b5aa6; border-radius: 7px; background: transparent; color: #7b5aa6; cursor: pointer;">Set a résumé</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ledger: entry being written -->
+        <div style="width: 440px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #fffdf8; color: #17130d; font-family: 'Newsreader', Georgia, serif; display: flex; flex-direction: column;">
+          <div style="padding: 20px 28px; border-bottom: 1px solid #ddd6c9; display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #7a7267;">New entry · in review</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #7b5aa6;">not saved yet</span>
+          </div>
+          <div style="flex: 1; padding: 28px; display: flex; flex-direction: column; gap: 22px;">
+            <p style="margin: 0; font-size: 17px; line-height: 1.6; color: #37311f; font-style: italic; border-left: 2px solid #ddd6c9; padding-left: 16px;">“Ran the firmwide GenAI training this week — about 120 people from tax and finance, second one this quarter.”</p>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: #7a7267;">Read as</span>
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #7a7267;">Type</span>
+                <div style="display: flex; gap: 6px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; padding: 5px 9px; border-radius: 4px; background: rgba(123,90,166,0.12); border: 1px solid rgba(123,90,166,0.45); color: #7b5aa6;">MILESTONE</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; padding: 5px 9px; border-radius: 4px; border: 1px solid #ddd6c9; color: #7a7267;">PROJECT</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; padding: 5px 9px; border-radius: 4px; border: 1px solid #ddd6c9; color: #7a7267;">AWARD</span>
+                </div>
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #7a7267;">Title</span>
+                <input value="Led firmwide GenAI training, Q3" style="font-family: 'Newsreader', Georgia, serif; font-size: 17px; padding: 10px 12px; border: 1px solid #ddd6c9; border-radius: 7px; background: #f7f4ee; color: #17130d;" />
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #7a7267;">Employer</span>
+                <input value="KPMG US" style="font-family: 'Newsreader', Georgia, serif; font-size: 17px; padding: 10px 12px; border: 1px solid #ddd6c9; border-radius: 7px; background: #f7f4ee; color: #17130d;" />
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 5px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #7a7267;">What happened</span>
+                <textarea rows="4" style="font-family: 'Newsreader', Georgia, serif; font-size: 16px; line-height: 1.5; padding: 10px 12px; border: 1px solid #ddd6c9; border-radius: 7px; background: #f7f4ee; color: #17130d; resize: none;">Delivered a firmwide GenAI training for ~120 tax and finance professionals — the second session this quarter.</textarea>
+              </label>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px dashed rgba(123,90,166,0.5); border-radius: 8px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #7b5aa6;">NEW</span>
+              <span style="font-size: 15px; color: #57503f; font-style: italic;">Looks related to “5+ firmwide GenAI trainings” — merge instead?</span>
+            </div>
+          </div>
+          <div style="padding: 20px 28px; border-top: 1px solid #ddd6c9; display: flex; gap: 10px; justify-content: flex-end;">
+            <button style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 11px 16px; border: 1px solid #ddd6c9; border-radius: 7px; background: transparent; color: #7a7267; cursor: pointer;">Discard</button>
+            <button style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 11px 20px; border: 1px solid #7b5aa6; border-radius: 7px; background: #7b5aa6; color: #fffdf8; cursor: pointer;">Write it in</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 1b — MOMENTUM ============ -->
+    <div id="1b" style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 14px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #131318; background: #b98cff; border-radius: 5px; padding: 3px 9px;">1b</span>
+        <h2 style="margin: 0; font-family: 'Archivo', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #f5f3ff;">Momentum</h2>
+        <span style="font-size: 15px; color: #8b88a8;">Dark, kinetic, dashboard-first. Proof you're moving.</span>
+      </div>
+      <p style="margin: 0; max-width: 640px; font-size: 15px; line-height: 1.6; color: #a8a4c0;">The home screen answers “am I building anything?” before you click anything: a logging streak, a year of activity, and where the recent weight landed. The five tabs collapse into a rail; logging is a always-present composer rather than a destination.</p>
+
+      <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <div style="width: 1120px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #0b0b12; color: #e8e6f2; font-family: 'Space Grotesk', system-ui, sans-serif; display: grid; grid-template-columns: 232px 1fr;">
+          <div style="border-right: 1px solid #1c1c2c; padding: 26px 20px; display: flex; flex-direction: column; gap: 30px; background: #0e0e17;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(145deg, #7c6cff, #b98cff); display: inline-block;"></span>
+              <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.01em;">CareerVault</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <span style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; background: rgba(124,108,255,0.14); color: #cbbcff; font-size: 15px; font-weight: 500;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #b98cff;"></span>Momentum</span>
+              <span style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; color: #8b88a8; font-size: 15px;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #2c2c44;"></span>Timeline</span>
+              <span style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; color: #8b88a8; font-size: 15px;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #2c2c44;"></span>Résumés</span>
+              <span style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; color: #8b88a8; font-size: 15px;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #2c2c44;"></span>Import</span>
+              <span style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; color: #8b88a8; font-size: 15px;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #2c2c44;"></span>Details</span>
+            </div>
+
+            <div style="padding: 16px; border-radius: 12px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 10px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Streak <span style="color: #b98cff;">· NEW</span></span>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">6</span>
+                <span style="font-size: 14px; color: #8b88a8;">weeks logging</span>
+              </div>
+              <div style="display: flex; gap: 4px;">
+                <sc-for list="{{ streakWeeks }}" as="w" hint-placeholder-count="8">
+                  <span style="{{ w.style }}"></span>
+                </sc-for>
+              </div>
+              <span style="font-size: 13px; color: #8b88a8; line-height: 1.45;">Best run yet. One entry keeps it alive.</span>
+            </div>
+
+            <div style="margin-top: auto; display: flex; align-items: center; gap: 10px; padding-top: 20px; border-top: 1px solid #1c1c2c;">
+              <span style="width: 28px; height: 28px; border-radius: 50%; background: #22223a; display: inline-flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a8a4c0;">OO</span>
+              <span style="font-size: 13px; color: #8b88a8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">oche.ocheobe@gmail.com</span>
+            </div>
+          </div>
+
+          <div style="padding: 30px 34px; display: flex; flex-direction: column; gap: 24px; overflow: hidden;">
+            <div style="display: flex; align-items: flex-end; justify-content: space-between;">
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Wed 29 Jul · week 31</span>
+                <h3 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Good evening, Oche.</h3>
+              </div>
+              <span style="font-size: 14px; color: #8b88a8; text-align: right; max-width: 30ch; line-height: 1.45;">Next check-in <span style="color: #cbbcff;">Friday</span> — weekly.</span>
+            </div>
+
+            <div style="display: flex; align-items: stretch; gap: 10px;">
+              <input placeholder="What did you accomplish? — a line is enough" style="flex: 1; font-family: 'Space Grotesk', sans-serif; font-size: 16px; padding: 15px 18px; border-radius: 12px; border: 1px solid #2b2b46; background: #12121c; color: #e8e6f2; outline: none;" />
+              <button style="font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 500; padding: 0 26px; border-radius: 12px; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; cursor: pointer;">Log it</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+              <div style="padding: 18px; border-radius: 12px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">In the vault</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">13</span>
+                <span style="font-size: 13px; color: #8b88a8;">entries since 2022</span>
+              </div>
+              <div style="padding: 18px; border-radius: 12px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">This quarter</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">4</span>
+                <span style="font-size: 13px; color: #8b88a8;">up from 2 in Q2</span>
+              </div>
+              <div style="padding: 18px; border-radius: 12px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Résumés built</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">3</span>
+                <span style="font-size: 13px; color: #8b88a8;">last: Solutions Architect</span>
+              </div>
+            </div>
+
+            <div style="padding: 22px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 16px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between;">
+                <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Your year in wins <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #b98cff; letter-spacing: 0.1em;">NEW</span></span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8b88a8;">Aug 2025 — Jul 2026</span>
+              </div>
+              <div style="display: grid; grid-auto-flow: column; grid-template-rows: repeat(5, 12px); gap: 4px;">
+                <sc-for list="{{ cells }}" as="c" hint-placeholder-count="130">
+                  <span style="{{ c.style }}"></span>
+                </sc-for>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #6f6c88;">
+                <span>AUG</span><span>OCT</span><span>DEC</span><span>FEB</span><span>APR</span><span>JUN</span>
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; flex: 1; min-height: 0;">
+              <div style="padding: 20px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px; overflow: hidden;">
+                <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Latest in the vault</span>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding-bottom: 10px; border-bottom: 1px solid #1c1c2c;">
+                    <span style="font-size: 15px; color: #e8e6f2; font-weight: 500;">Manager, Asset Management Technology</span>
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">OCT 25</span>
+                    <span style="font-size: 13px; color: #8b88a8;">KPMG US · promotion</span>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding-bottom: 10px; border-bottom: 1px solid #1c1c2c;">
+                    <span style="font-size: 15px; color: #e8e6f2; font-weight: 500;">AI pipeline for 500+ tax forms</span>
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">OCT 25</span>
+                    <span style="font-size: 13px; color: #8b88a8;">KPMG US · led team of 4</span>
+                  </div>
+                  <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding-bottom: 10px; border-bottom: 1px solid #1c1c2c;">
+                    <span style="font-size: 15px; color: #e8e6f2; font-weight: 500;">Senior Associate, AI Solutions</span>
+                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">MAY 25</span>
+                    <span style="font-size: 13px; color: #8b88a8;">KPMG US</span>
+                  </div>
+                  <span style="font-size: 14px; color: #cbbcff;">Open the full timeline →</span>
+                </div>
+              </div>
+
+              <div style="padding: 20px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+                <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Where the weight is <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #b98cff; letter-spacing: 0.1em;">NEW</span></span>
+                <sc-for list="{{ bars }}" as="b" hint-placeholder-count="4">
+                  <div style="display: flex; flex-direction: column; gap: 6px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 13px; color: #a8a4c0;">
+                      <span>{{ b.label }}</span>
+                      <span style="font-family: 'JetBrains Mono', monospace; color: #6f6c88;">{{ b.count }}</span>
+                    </div>
+                    <div style="height: 6px; border-radius: 999px; background: #1c1c2c; overflow: hidden;">
+                      <div style="{{ b.style }}"></div>
+                    </div>
+                  </div>
+                </sc-for>
+                <span style="font-size: 13px; color: #8b88a8; line-height: 1.5; margin-top: auto;">Light on certifications — three of your last four résumé targets asked for one.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 1c — THE VAULT ============ -->
+    <div id="1c" style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 14px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #131318; background: #b98cff; border-radius: 5px; padding: 3px 9px;">1c</span>
+        <h2 style="margin: 0; font-family: 'Archivo', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #f5f3ff;">The Vault</h2>
+        <span style="font-size: 15px; color: #8b88a8;">Weighty and permanent. The name, taken literally.</span>
+      </div>
+      <p style="margin: 0; max-width: 640px; font-size: 15px; line-height: 1.6; color: #a8a4c0;">Treats your history as an institution's record, not a feed: numbered records, hairline rules, a title page you'd be proud to open. Big type does the emotional work; the accent is used once per screen. Best if you want it to feel consequential to add something.</p>
+
+      <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <div style="width: 940px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #08070c; color: #f2f0f7; font-family: 'Archivo', system-ui, sans-serif; display: flex; flex-direction: column;">
+          <div style="padding: 20px 34px; border-bottom: 1px solid #1d1b26; display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #8a8698;">Career&nbsp;Vault</span>
+            <div style="display: flex; gap: 26px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8a8698;">
+              <span style="color: #f2f0f7;">Record</span>
+              <span>Deposit</span>
+              <span>Withdraw</span>
+              <span>Account</span>
+            </div>
+          </div>
+
+          <div style="padding: 46px 44px 34px; border-bottom: 1px solid #1d1b26; display: flex; flex-direction: column; gap: 26px;">
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 30px;">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: #a78bfa;">Holder · Oche Oche-Obe</span>
+                <h3 style="margin: 0; font-size: 62px; font-weight: 800; line-height: 0.95; letter-spacing: -0.035em; color: #f2f0f7;">Thirteen<br />records<br />on deposit.</h3>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 18px; text-align: right;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a8698;">Opened</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 19px; color: #f2f0f7;">2022</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a8698;">Last deposit</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 19px; color: #f2f0f7;">20 JUL 2026</span>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a8698;">Withdrawals</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 19px; color: #f2f0f7;">3 RÉSUMÉS</span>
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button style="font-family: 'Archivo', sans-serif; font-size: 15px; font-weight: 600; padding: 13px 24px; border-radius: 4px; border: none; background: #f2f0f7; color: #08070c; cursor: pointer;">Deposit a record</button>
+              <button style="font-family: 'Archivo', sans-serif; font-size: 15px; font-weight: 500; padding: 13px 24px; border-radius: 4px; border: 1px solid #2b2836; background: transparent; color: #f2f0f7; cursor: pointer;">Draw a résumé</button>
+            </div>
+          </div>
+
+          <div style="flex: 1; overflow: hidden; display: flex; flex-direction: column;">
+            <div style="display: grid; grid-template-columns: 62px 1fr 150px 108px; gap: 16px; padding: 14px 44px; border-bottom: 1px solid #1d1b26; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #6d697c;">
+              <span>No.</span><span>Record</span><span>Class</span><span>Date</span>
+            </div>
+            <sc-for list="{{ records }}" as="r" hint-placeholder-count="5">
+              <div style="display: grid; grid-template-columns: 62px 1fr 150px 108px; gap: 16px; padding: 17px 44px; border-bottom: 1px solid #14131c; align-items: baseline;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #6d697c;">{{ r.no }}</span>
+                <div style="display: flex; flex-direction: column; gap: 3px;">
+                  <span style="font-size: 17px; font-weight: 500; color: #f2f0f7; letter-spacing: -0.01em;">{{ r.title }}</span>
+                  <span style="font-size: 14px; color: #8a8698;">{{ r.org }}</span>
+                </div>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; color: #a78bfa;">{{ r.cls }}</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6d697c;">{{ r.date }}</span>
+              </div>
+            </sc-for>
+            <div style="padding: 18px 44px; display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6d697c;">
+              <span>Showing 1—5 of 13</span>
+              <span style="color: #a78bfa;">View all →</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="width: 440px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #0e0d14; color: #f2f0f7; font-family: 'Archivo', system-ui, sans-serif; display: flex; flex-direction: column;">
+          <div style="padding: 20px 28px; border-bottom: 1px solid #1d1b26; display: flex; align-items: center; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #8a8698;">
+            <span>Record 002</span>
+            <span style="color: #a78bfa;">Sealed</span>
+          </div>
+          <div style="flex: 1; padding: 30px 28px; display: flex; flex-direction: column; gap: 24px;">
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #a78bfa;">Project · KPMG US</span>
+              <h4 style="margin: 0; font-size: 30px; font-weight: 700; line-height: 1.08; letter-spacing: -0.025em;">AI pipeline for asset management tax forms</h4>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6d697c;">01 OCT 2025 · deposited 04 OCT 2025</span>
+            </div>
+            <p style="margin: 0; font-size: 16px; line-height: 1.6; color: #c9c6d6;">Led a team of 4 designing and deploying an AI pipeline to extract and analyze 500+ asset management tax forms in under 30 minutes, automating manual workflows for accounting and compliance teams.</p>
+            <div style="display: flex; flex-direction: column; gap: 0; border-top: 1px solid #1d1b26;">
+              <div style="display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #14131c;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6d697c;">Scale</span>
+                <span style="font-size: 15px;">500+ forms · &lt;30 min</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #14131c;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6d697c;">Team</span>
+                <span style="font-size: 15px;">4 engineers, led</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid #14131c;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #6d697c;">Drawn on</span>
+                <span style="font-size: 15px; color: #a78bfa;">3 résumés</span>
+              </div>
+            </div>
+            <div style="padding: 16px; border: 1px solid #2b2836; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #a78bfa;">NEW · provenance</span>
+              <span style="font-size: 15px; line-height: 1.55; color: #c9c6d6;">Deposited from chat on 4 Oct 2025, edited once. Original wording kept.</span>
+            </div>
+          </div>
+          <div style="padding: 20px 28px; border-top: 1px solid #1d1b26; display: flex; gap: 10px;">
+            <button style="flex: 1; font-family: 'Archivo', sans-serif; font-size: 14px; font-weight: 500; padding: 12px 0; border-radius: 4px; border: 1px solid #2b2836; background: transparent; color: #f2f0f7; cursor: pointer;">Amend</button>
+            <button style="flex: 1; font-family: 'Archivo', sans-serif; font-size: 14px; font-weight: 500; padding: 12px 0; border-radius: 4px; border: 1px solid #2b2836; background: transparent; color: #8a8698; cursor: pointer;">Remove</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 1d — COMPANION ============ -->
+    <div id="1d" style="display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: baseline; gap: 14px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700; color: #131318; background: #b98cff; border-radius: 5px; padding: 3px 9px;">1d</span>
+        <h2 style="margin: 0; font-family: 'Archivo', sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.01em; color: #f5f3ff;">Companion</h2>
+        <span style="font-size: 15px; color: #8b88a8;">Light, warm, conversation-first — and it works on a phone.</span>
+      </div>
+      <p style="margin: 0; max-width: 640px; font-size: 15px; line-height: 1.6; color: #a8a4c0;">Leans into what already exists: the chat is the product. One soft column, a prompt that changes with your cadence, and your history surfacing inside the conversation instead of behind a tab. Logging a win takes one sentence and two taps — which is the only way weekly logging actually survives.</p>
+
+      <div style="display: flex; gap: 20px; align-items: flex-start;">
+        <div style="width: 860px; height: 880px; overflow: hidden; border-radius: 14px; border: 1px solid #2a2836; background: #f3f1fb; color: #1b1730; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column;">
+          <div style="padding: 18px 30px; display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.6); border-bottom: 1px solid #e3dff5;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="width: 24px; height: 24px; border-radius: 8px; background: #6c5ce7; display: inline-block;"></span>
+              <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.01em;">CareerVault</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 14px; padding: 7px 14px; border-radius: 999px; background: #fff; border: 1px solid #e3dff5; color: #6f6a8c;">Your history</span>
+              <span style="font-size: 14px; padding: 7px 14px; border-radius: 999px; background: #fff; border: 1px solid #e3dff5; color: #6f6a8c;">Résumé</span>
+              <span style="width: 30px; height: 30px; border-radius: 50%; background: #ded8f8; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #4a3fa8;">OO</span>
+            </div>
+          </div>
+
+          <div style="flex: 1; overflow: hidden; padding: 30px 30px 0; display: flex; flex-direction: column; gap: 18px;">
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 22px 24px; border-radius: 20px 20px 20px 6px; background: #fff; border: 1px solid #e9e5f8; max-width: 78%; box-shadow: 0 1px 2px rgba(27,23,48,0.04);">
+              <span style="font-family: 'Newsreader', Georgia, serif; font-size: 22px; line-height: 1.35; font-style: italic; color: #1b1730;">It's been a week since you logged the GenAI trainings — what have you been working on?</span>
+              <span style="font-size: 14px; color: #6f6a8c;">Your weekly check-in · Friday</span>
+            </div>
+
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <span style="font-size: 14px; padding: 9px 15px; border-radius: 999px; background: #fff; border: 1px solid #ded8f8; color: #4a3fa8;">Shipped something</span>
+              <span style="font-size: 14px; padding: 9px 15px; border-radius: 999px; background: #fff; border: 1px solid #ded8f8; color: #4a3fa8;">Got recognized</span>
+              <span style="font-size: 14px; padding: 9px 15px; border-radius: 999px; background: #fff; border: 1px solid #ded8f8; color: #4a3fa8;">Learned a skill</span>
+              <span style="font-size: 14px; padding: 9px 15px; border-radius: 999px; background: #fff; border: 1px solid #ded8f8; color: #4a3fa8;">Quiet week</span>
+              <span style="font-size: 13px; padding: 9px 15px; border-radius: 999px; border: 1px dashed #b8aef0; color: #6c5ce7;">NEW · prompt chips</span>
+            </div>
+
+            <div style="align-self: flex-end; max-width: 72%; padding: 16px 20px; border-radius: 20px 20px 6px 20px; background: #6c5ce7; color: #fff; font-size: 16px; line-height: 1.5;">Ran the firmwide GenAI training again — about 120 people from tax and finance. Second one this quarter.</div>
+
+            <div style="padding: 20px 22px; border-radius: 20px 20px 20px 6px; background: #fff; border: 1px solid #e9e5f8; max-width: 82%; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 1px 2px rgba(27,23,48,0.04);">
+              <span style="font-size: 15px; color: #6f6a8c;">Saving this as a milestone — edit anything before it lands:</span>
+              <div style="display: flex; flex-direction: column; gap: 8px; padding: 16px; border-radius: 14px; background: #f7f5fe; border: 1px solid #e9e5f8;">
+                <div style="display: flex; align-items: center; gap: 9px;">
+                  <span style="font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #6c5ce7; background: #ece8fd; border-radius: 5px; padding: 3px 8px;">Milestone</span>
+                  <span style="font-size: 14px; color: #6f6a8c;">Jul 2026 · KPMG US</span>
+                </div>
+                <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.01em;">Led firmwide GenAI training for ~120 professionals</span>
+                <span style="font-size: 15px; line-height: 1.5; color: #4b466b;">Second session this quarter, spanning tax and finance delivery teams.</span>
+              </div>
+              <div style="display: flex; gap: 9px;">
+                <button style="font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 500; padding: 11px 20px; border-radius: 999px; border: none; background: #6c5ce7; color: #fff; cursor: pointer;">Save to vault</button>
+                <button style="font-family: 'DM Sans', sans-serif; font-size: 15px; padding: 11px 20px; border-radius: 999px; border: 1px solid #ded8f8; background: #fff; color: #4b466b; cursor: pointer;">Edit</button>
+              </div>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 14px; background: rgba(108,92,231,0.07); border: 1px solid #e0daf8;">
+              <span style="font-family: 'Newsreader', Georgia, serif; font-size: 17px; font-style: italic; color: #4b466b;">That's 5 trainings on record now — enough to make a line on your résumé.</span>
+            </div>
+          </div>
+
+          <div style="padding: 18px 30px 24px; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 20px; border-radius: 999px; background: #fff; border: 1px solid #e3dff5; box-shadow: 0 2px 8px rgba(27,23,48,0.05);">
+              <input placeholder="Tell me what happened…" style="flex: 1; font-family: 'DM Sans', sans-serif; font-size: 16px; border: none; background: transparent; color: #1b1730; outline: none;" />
+              <button style="width: 40px; height: 40px; border-radius: 50%; border: none; background: #6c5ce7; color: #fff; font-size: 17px; cursor: pointer;">↑</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; color: #8b86a8;">
+              <span>13 entries · 7 roles · 3 projects</span>
+              <span>Streak: 6 weeks</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- phone -->
+        <div style="width: 400px; display: flex; flex-direction: column; gap: 14px; align-items: center;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Logging on a phone</span>
+          <div style="width: 372px; height: 760px; border-radius: 44px; background: #16141f; padding: 12px; box-shadow: 0 24px 60px rgba(0,0,0,0.5);">
+            <div style="width: 100%; height: 100%; border-radius: 34px; overflow: hidden; background: #f3f1fb; color: #1b1730; font-family: 'DM Sans', system-ui, sans-serif; display: flex; flex-direction: column;">
+              <div style="padding: 16px 22px 10px; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; color: #1b1730;">
+                <span>9:41</span>
+                <span style="color: #6f6a8c;">▂▄▆ ⏻</span>
+              </div>
+              <div style="padding: 8px 22px 0; display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-size: 17px; font-weight: 700;">This week</span>
+                <span style="font-size: 13px; padding: 6px 12px; border-radius: 999px; background: #ece8fd; color: #4a3fa8; font-weight: 500;">6-week streak</span>
+              </div>
+              <div style="flex: 1; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; overflow: hidden;">
+                <div style="padding: 20px; border-radius: 20px; background: #fff; border: 1px solid #e9e5f8; display: flex; flex-direction: column; gap: 12px;">
+                  <span style="font-family: 'Newsreader', Georgia, serif; font-size: 20px; line-height: 1.35; font-style: italic;">What went well this week?</span>
+                  <textarea rows="3" placeholder="One sentence is enough." style="font-family: 'DM Sans', sans-serif; font-size: 15px; line-height: 1.5; border: 1px solid #e3dff5; border-radius: 14px; padding: 12px; background: #f7f5fe; color: #1b1730; resize: none;"></textarea>
+                  <button style="font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 500; padding: 13px 0; border-radius: 999px; border: none; background: #6c5ce7; color: #fff; cursor: pointer;">Log it</button>
+                </div>
+                <span style="font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #8b86a8;">Recently</span>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <div style="padding: 14px 16px; border-radius: 16px; background: #fff; border: 1px solid #e9e5f8; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.01em;">Manager, AM Technology</span>
+                    <span style="font-size: 13px; color: #6f6a8c;">KPMG US · Oct 2025</span>
+                  </div>
+                  <div style="padding: 14px 16px; border-radius: 16px; background: #fff; border: 1px solid #e9e5f8; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.01em;">AI pipeline, 500+ tax forms</span>
+                    <span style="font-size: 13px; color: #6f6a8c;">KPMG US · Oct 2025</span>
+                  </div>
+                  <div style="padding: 14px 16px; border-radius: 16px; background: #fff; border: 1px solid #e9e5f8; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.01em;">Senior Associate, AI Solutions</span>
+                    <span style="font-size: 13px; color: #6f6a8c;">KPMG US · May 2025</span>
+                  </div>
+                </div>
+              </div>
+              <div style="padding: 14px 22px 22px; display: flex; justify-content: space-between; border-top: 1px solid #e3dff5; background: rgba(255,255,255,0.7);">
+                <span style="font-size: 12px; font-weight: 700; color: #6c5ce7;">Log</span>
+                <span style="font-size: 12px; color: #8b86a8;">Timeline</span>
+                <span style="font-size: 12px; color: #8b86a8;">Résumé</span>
+                <span style="font-size: 12px; color: #8b86a8;">You</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1600, &quot;height&quot;: 1100}}">
+class Component extends DCLogic {
+  renderVals() {
+    const purple = ['#1a1a2c', '#3b2f7a', '#5a45c4', '#7c6cff', '#a58cff'];
+    const rand = (seed) => {
+      let x = Math.sin(seed * 12.9898) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    const cells = [];
+    for (let i = 0; i < 130; i++) {
+      const r = rand(i + 3);
+      const recency = i / 130;
+      const level = r < 0.42 - recency * 0.22 ? 0 : Math.min(4, 1 + Math.floor(r * 3.2 + recency * 1.4));
+      cells.push({ style: `width: 12px; height: 12px; border-radius: 3px; background: ${purple[level]};` });
+    }
+
+    const streakWeeks = [0, 1, 1, 1, 1, 1, 1, 1].map((on) => ({
+      style: `flex: 1; height: 20px; border-radius: 4px; background: ${on ? 'linear-gradient(180deg, #7c6cff, #5a45c4)' : '#1c1c2c'};`,
+    }));
+
+    const bars = [
+      { label: 'Roles', count: 7, pct: 100 },
+      { label: 'Projects', count: 3, pct: 43 },
+      { label: 'Certifications', count: 2, pct: 29 },
+      { label: 'Awards', count: 1, pct: 14 },
+    ].map((b) => ({
+      ...b,
+      style: `height: 100%; width: ${b.pct}%; border-radius: 999px; background: linear-gradient(90deg, #5a45c4, #a58cff);`,
+    }));
+
+    const spine = [
+      { label: '2026', on: [1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0] },
+      { label: '2025', on: [0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1] },
+      { label: '2024', on: [0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0] },
+      { label: '2023', on: [0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0] },
+    ].map((y) => ({
+      label: y.label,
+      months: y.on.map((on) => ({
+        style: `flex: 1; height: 14px; border-radius: 2px; background: ${on ? '#7b5aa6' : '#e2dbcc'};`,
+      })),
+    }));
+
+    const records = [
+      { no: '013', title: 'Led firmwide GenAI training, Q3', org: 'KPMG US · ~120 attendees', cls: 'MILESTONE', date: '20 JUL 26' },
+      { no: '012', title: 'AWS Solutions Architect – Associate', org: 'Amazon Web Services', cls: 'CERTIFICATION', date: '11 MAR 26' },
+      { no: '011', title: 'CareerVault — serverless MVP shipped', org: 'Personal · AWS, Bedrock', cls: 'PROJECT', date: '29 JAN 26' },
+      { no: '010', title: 'Manager, Asset Management Technology — AI Solutions', org: 'KPMG US', cls: 'ROLE', date: '01 OCT 25' },
+      { no: '009', title: 'AI pipeline for asset management tax forms', org: 'KPMG US · led team of 4', cls: 'PROJECT', date: '01 OCT 25' },
+    ];
+
+    return { cells, streakWeeks, bars, spine, records };
+  }
+}
+</script>
+</body>
+</html>

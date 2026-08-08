@@ -1,111 +1,314 @@
+/**
+ * Design tokens for the v1.1 redesign (ADR-043, ADR-044).
+ *
+ * This is the ONLY file in the app that defines a colour. Every feature stylesheet references a
+ * token by name — a raw hex anywhere else is a light-mode bug that dark-mode review cannot see.
+ *
+ * Dark is declared on bare `:root` and light overrides it in a media query, which inverts the usual
+ * convention deliberately (ADR-044): the dark palette IS the approved design artifact, so its values
+ * sit unqualified where they can be diffed line-by-line against the handoff's token table, and a
+ * browser that cannot resolve `prefers-color-scheme` falls back to the design as approved rather
+ * than to our derivation.
+ *
+ * Exactly two values deviate from the handoff, both measured, both documented in ADR-043:
+ *   --text-faint   #6f6c88 -> #817e99   (failed WCAG AA on all four surfaces at 10-11px)
+ *   focus ring     uses --accent, not --border-active, and is a real ring rather than a border swap
+ */
+
+@import url("https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
+
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* ---- Surfaces (dark — the approved design) ------------------------------------------------ */
+  --bg: #0b0b12;
+  --surface: #12121c;
+  --surface-sunken: #0e0e17;
+  --surface-raised: #16162a;
 
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
+  /* ---- Borders ----------------------------------------------------------------------------- */
+  --border: #22223a;
+  --border-strong: #2b2b46;
+  --border-subtle: #1c1c2c;
+  --border-dashed: #33335a;
+  --border-active: #4b3fa8;
+  --border-selected: #3a3468;
+  /* Used throughout the handoff's per-view specs (streak pill, chat bubbles, inner record preview)
+     but absent from its token table — named here so no feature stylesheet needs a raw hex. */
+  --border-raised: #26263c;
+  --bar-miss: #2c2c44;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
+  /* ---- Text -------------------------------------------------------------------------------- */
+  --text-primary: #f5f3ff;
+  --text-body: #e8e6f2;
+  --text-secondary: #a8a4c0;
+  --text-muted: #8b88a8;
+  /* ADR-043: handoff value #6f6c88 measured 3.53-3.90 against a 4.5 requirement, at 10-11px where
+     no large-text exemption applies. Hue (246.4deg) and saturation (11.5%) held exactly; lightness
+     raised 47.8% -> 54.6%, the minimum lift that clears AA on all four surfaces. */
+  --text-faint: #817e99;
+
+  /* ---- Accent ------------------------------------------------------------------------------ */
+  --accent: #7c6cff;
+  --accent-light: #9d7bff;
+  --accent-lighter: #b98cff;
+  --accent-text: #cbbcff;
+  --accent-hover: #e3d9ff;
+  --accent-wash: rgba(124, 108, 255, 0.16);
+  --accent-wash-soft: rgba(124, 108, 255, 0.14);
+  --accent-wash-faint: rgba(124, 108, 255, 0.12);
+  --accent-wash-note: rgba(124, 108, 255, 0.08);
+
+  /* ---- Status ------------------------------------------------------------------------------ */
+  --success: #8ad6b0;
+  --danger: #ff9d9d;
+  --danger-border: #3a2430;
+  --danger-border-hover: #4a2b3a;
+  --danger-wash: #1c1017;
+
+  /* ---- Gradients --------------------------------------------------------------------------- */
+  --grad-primary: linear-gradient(145deg, #7c6cff, #9d7bff);
+  /* Reserved. The handoff's gradient logo square was a placeholder for a mark that does not exist,
+     and was removed rather than shipped as decoration (B-031). Kept so this block still diffs
+     cleanly against the handoff's token table, per ADR-044. */
+  --grad-logo: linear-gradient(145deg, #7c6cff, #b98cff);
+  --grad-user-bubble: linear-gradient(145deg, #6b5cf0, #8d74ff);
+  --grad-bar-fill: linear-gradient(90deg, #5a45c4, #a58cff);
+  --grad-streak-bar: linear-gradient(180deg, #7c6cff, #5a45c4);
+
+  /* ---- Heatmap ramp (none -> most) --------------------------------------------------------- */
+  --heat-0: #1a1a2c;
+  --heat-1: #3b2f7a;
+  --heat-2: #5a45c4;
+  --heat-3: #7c6cff;
+  --heat-4: #a58cff;
+
+  /* ---- Header scrim (88%-opaque fill under a 14px blur) ------------------------------------- */
+  --header-fill: rgba(11, 11, 18, 0.88);
+  --scroll-thumb: #22223a;
+
+  /* ---- Typography -------------------------------------------------------------------------- */
+  --sans: Figtree, system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  /* ---- Layout widths (handoff "Widths") ---------------------------------------------------- */
+  --w-wide: 1280px;
+  --w-resumes: 1100px;
+  --w-focused: 1080px;
+  --w-narrow: 860px;
+  --w-sidebar: 320px;
+
+  color-scheme: dark light;
+  font: 400 16px/1.5 var(--sans);
+  color: var(--text-body);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
-@media (prefers-color-scheme: dark) {
+/**
+ * Light theme (ADR-044). Derived, not supplied by the handoff — every pair validated at >= 4.5 for
+ * text and >= 3.0 for the focus ring. Structure transfers cleanly (elevated is lighter than the
+ * page, sunken is darker than its card); the accent washes and the heatmap ramp do not, and are
+ * re-derived rather than re-tinted.
+ */
+@media (prefers-color-scheme: light) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
+    --bg: #f7f6fb;
+    --surface: #ffffff;
+    --surface-sunken: #f1f0f7;
+    --surface-raised: #f4f2fd;
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --border: #e4e2ee;
+    --border-strong: #d3d0e0;
+    --border-subtle: #edecf3;
+    --border-dashed: #c5c1d8;
+    --border-active: #7c6cff;
+    --border-selected: #b9aef0;
+    --border-raised: #ded9f0;
+    --bar-miss: #ddd9ea;
+
+    --text-primary: #14121f;
+    --text-body: #2a2740;
+    --text-secondary: #55516e;
+    --text-muted: #615d7c;
+    --text-faint: #6a6682;
+
+    --accent: #5b48d6;
+    --accent-light: #7057e6;
+    --accent-lighter: #8a6ef0;
+    --accent-text: #5b3fd4;
+    --accent-hover: #3f2ba8;
+    /* Alphas are lower than dark's: the same wash that whispers over near-black shouts over white. */
+    --accent-wash: rgba(91, 72, 214, 0.1);
+    --accent-wash-soft: rgba(91, 72, 214, 0.09);
+    --accent-wash-faint: rgba(91, 72, 214, 0.08);
+    --accent-wash-note: rgba(91, 72, 214, 0.06);
+
+    --success: #1d7a4f;
+    --danger: #c2354a;
+    --danger-border: #f0cdd4;
+    --danger-border-hover: #e0a9b5;
+    --danger-wash: #fdf2f4;
+
+    --grad-primary: linear-gradient(145deg, #6a57e0, #8a6ef0);
+    --grad-logo: linear-gradient(145deg, #6a57e0, #a17cf5);
+    --grad-user-bubble: linear-gradient(145deg, #6a57e0, #8264f0);
+    --grad-bar-fill: linear-gradient(90deg, #7c6cff, #5b45c4);
+    --grad-streak-bar: linear-gradient(180deg, #7c6cff, #5b45c4);
+
+    /* Inverted: intensity reads as "brighter" in dark and must read as "deeper" in light, or an
+       empty period becomes the loudest cell on Home. */
+    --heat-0: #eae7f6;
+    --heat-1: #c9bff0;
+    --heat-2: #a08fe4;
+    --heat-3: #7c6cff;
+    --heat-4: #5b45c4;
+
+    --header-fill: rgba(247, 246, 251, 0.88);
+    --scroll-thumb: #d3d0e0;
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
+/**
+ * TEMPORARY compatibility aliases — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
+ *
+ * This slice replaces the token layer but only redesigns the shell and Home. The five remaining
+ * feature stylesheets (chat, entries, resume, settings, upload) still reference the old Vite-era
+ * names, and unset custom properties resolve to nothing rather than to a fallback — so without
+ * these five lines those views would render with no colour at all, in both themes.
+ *
+ * Each alias dies with the stylesheet that uses it. When this block is empty, slice 2 is done.
+ *
+ * (Note: `--surface`, `--scroll-thumb`, `--border-strong` and `--text-primary` were already
+ * referenced by feature CSS *before* this slice despite never being defined — those usages were
+ * silently resolving to nothing and start working now.)
+ */
+:root {
+  --text-h: var(--text-primary);
+  --text: var(--text-secondary);
+  --accent-border: var(--border-active);
+  --accent-bg: var(--accent-wash-soft);
+  --code-bg: var(--surface-sunken);
+}
+
+* {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--text-body);
 }
 
 h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
+h2,
+h3 {
+  color: var(--text-primary);
+  margin: 0;
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
+
 h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
 }
+
 p {
   margin: 0;
 }
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
+button {
+  font: inherit;
+  cursor: pointer;
 }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/**
+ * Focus (ADR-043). The handoff specifies `outline: none` with focus signalled only by a border
+ * swap measuring 1.68 — which fails WCAG 2.4.7 outright and leaves the ring at 2.35 against its
+ * own input, below 1.4.11's 3.0. Using --accent instead of --border-active gives a minimum of 4.61
+ * across all four surfaces, and a real ring covers buttons, chips and nav items that a border swap
+ * on inputs never could.
+ */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* A visible ring is the point; never let a component opt out of it. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/** Screen-reader-only text — used for the accessible names the design's visual language omits. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/** Skip link — the app had no landmark structure at all before this slice (audit §A1). */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: top 0.16s ease;
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

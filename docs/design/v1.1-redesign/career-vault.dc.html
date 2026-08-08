@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #0b0b12; font-family: 'Figtree', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  a { color: #cbbcff; text-decoration: none; }
+  a:hover { color: #e3d9ff; }
+  input::placeholder, textarea::placeholder { color: #6f6c88; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #22223a; border-radius: 999px; border: 3px solid #0b0b12; }
+  nav::-webkit-scrollbar { display: none; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+</style>
+</helmet>
+
+<div style="min-height: 100vh; background: #0b0b12; color: #e8e6f2; display: flex; flex-direction: column; font-family: {{ uiFont }};">
+
+  <header style="position: sticky; top: 0; z-index: 20; background: rgba(11,11,18,0.88); backdrop-filter: blur(14px); border-bottom: 1px solid #1c1c2c;">
+    <div style="max-width: 1280px; margin: 0 auto; padding: 0 32px; height: 66px; display: flex; align-items: center; gap: 20px;">
+      <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+        <span style="width: 26px; height: 26px; border-radius: 7px; background: linear-gradient(145deg, #7c6cff, #b98cff); display: inline-block;"></span>
+        <span style="font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: #f5f3ff;">CareerVault</span>
+      </div>
+
+      <nav style="display: flex; align-items: center; gap: 2px; min-width: 0; overflow-x: auto; flex-shrink: 1; scrollbar-width: none; -ms-overflow-style: none;">
+        <sc-for list="{{ navItems }}" as="n" hint-placeholder-count="6">
+          <button onClick="{{ n.onClick }}" style="{{ n.style }}" style-hover="color: #f5f3ff;">{{ n.label }}</button>
+        </sc-for>
+      </nav>
+
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 14px; flex-shrink: 0;">
+        <div style="display: flex; align-items: center; gap: 9px; padding: 7px 13px; border-radius: 999px; border: 1px solid #26263c; background: #12121c;">
+          <span style="display: flex; gap: 2px; align-items: flex-end;">
+            <sc-for list="{{ streakWeeks }}" as="w" hint-placeholder-count="8">
+              <span style="{{ w.style }}"></span>
+            </sc-for>
+          </span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: #cbbcff; white-space: nowrap;">{{ streakLabel }}</span>
+        </div>
+        <span style="width: 30px; height: 30px; border-radius: 50%; background: #22223a; display: inline-flex; align-items: center; justify-content: center; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #a8a4c0;">OO</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════ HOME ══════════ -->
+  <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+    <main style="max-width: 1280px; width: 100%; margin: 0 auto; padding: 34px 32px 60px; display: flex; flex-direction: column; gap: 22px;">
+
+      <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 30px;">
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">{{ dateLine }}</span>
+          <h1 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Good evening, Oche.</h1>
+        </div>
+        <span style="font-size: 14px; color: #8b88a8; text-align: right; line-height: 1.5;">Next check-in <span style="color: #cbbcff;">{{ nextCheckIn }}</span><br />{{ cadenceWord }} cadence</span>
+      </div>
+
+      <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; align-items: stretch; gap: 10px;">
+          <input value="{{ draft }}" onChange="{{ setDraft }}" onKeyDown="{{ onDraftKey }}" placeholder="What did you accomplish? — a line is enough" style="flex: 1; font-family: inherit; font-size: 16px; padding: 15px 18px; border-radius: 12px; border: 1px solid #2b2b46; background: #0e0e17; color: #e8e6f2; outline: none;" style-focus="border-color: #4b3fa8;" />
+          <button onClick="{{ submitDraft }}" style="font-family: inherit; font-size: 15px; font-weight: 500; padding: 0 26px; border-radius: 12px; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; cursor: pointer;">Start logging</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88; margin-right: 4px;">Not sure where to start</span>
+          <button onClick="{{ chipShipped }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Shipped something</button>
+          <button onClick="{{ chipRecognized }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Got recognized</button>
+          <button onClick="{{ chipTaught }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Presented or taught</button>
+          <button onClick="{{ chipLearned }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Learned a skill</button>
+          <button onClick="{{ chipQuiet }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #8b88a8; cursor: pointer;" style-hover="border-color: #4b3fa8; color: #cbbcff;">Quiet week</button>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+        <div style="padding: 18px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">In the vault</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">{{ total }}</span>
+          <span style="font-size: 13px; color: #8b88a8;">entries since 2022</span>
+        </div>
+        <div style="padding: 18px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">This quarter</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">{{ quarter }}</span>
+          <span style="font-size: 13px; color: #8b88a8;">up from 2 in Q2</span>
+        </div>
+        <div style="padding: 18px; border-radius: 14px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 6px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Résumés built</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">{{ resumeCount }}</span>
+          <span style="font-size: 13px; color: #8b88a8;">{{ lastResume }}</span>
+        </div>
+      </div>
+
+      <sc-if value="{{ showYearGrid }}" hint-placeholder-val="{{ true }}">
+        <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 16px;">
+          <div style="display: flex; align-items: baseline; justify-content: space-between;">
+            <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Your year in wins</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8b88a8;">Aug 2025 — Jul 2026</span>
+          </div>
+          <div style="display: grid; grid-auto-flow: column; grid-template-rows: repeat(5, 13px); gap: 4px; overflow: hidden;">
+            <sc-for list="{{ cells }}" as="c" hint-placeholder-count="130">
+              <span style="{{ c.style }}"></span>
+            </sc-for>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; color: #6f6c88;">
+            <span>AUG</span><span>OCT</span><span>DEC</span><span>FEB</span><span>APR</span><span>JUN</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="display: grid; grid-template-columns: 1.35fr 1fr; gap: 12px; align-items: start;">
+        <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Latest in the vault</span>
+          <div style="display: flex; flex-direction: column; gap: 11px;">
+            <sc-for list="{{ latest }}" as="e" hint-placeholder-count="4">
+              <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding-bottom: 11px; border-bottom: 1px solid #1c1c2c;">
+                <span style="font-size: 15px; color: #e8e6f2; font-weight: 500;">{{ e.title }}</span>
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">{{ e.short }}</span>
+                <span style="font-size: 13px; color: #8b88a8;">{{ e.meta }}</span>
+              </div>
+            </sc-for>
+            <button onClick="{{ goTimeline }}" style="align-self: flex-start; font-family: inherit; font-size: 14px; padding: 0; border: none; background: transparent; color: #cbbcff; cursor: pointer;">Open the full timeline →</button>
+          </div>
+        </div>
+
+        <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+          <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Where the weight is</span>
+          <sc-for list="{{ bars }}" as="b" hint-placeholder-count="4">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; font-size: 13px; color: #a8a4c0;">
+                <span>{{ b.label }}</span>
+                <span style="font-family: 'JetBrains Mono', monospace; color: #6f6c88;">{{ b.count }}</span>
+              </div>
+              <div style="height: 6px; border-radius: 999px; background: #1c1c2c; overflow: hidden;">
+                <div style="{{ b.style }}"></div>
+              </div>
+            </div>
+          </sc-for>
+          <span style="font-size: 13px; color: #8b88a8; line-height: 1.5; padding-top: 4px;">Light on certifications — three of your last four résumé targets asked for one.</span>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ══════════ LOG (chat) ══════════ -->
+  <sc-if value="{{ isLog }}" hint-placeholder-val="{{ false }}">
+    <main style="{{ logShellStyle }}">
+      <div style="display: grid; gap: 16px; align-items: start; grid-template-columns: {{ logGridCols }};">
+
+        <div style="border-radius: 18px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; overflow: hidden;">
+          <div style="padding: 16px 22px; border-bottom: 1px solid #1c1c2c; display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; flex-direction: column; gap: 3px;">
+              <span style="font-size: 15px; font-weight: 600; color: #f5f3ff;">{{ cadenceWord }} check-in</span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88;">{{ dateLine }}</span>
+            </div>
+            <button onClick="{{ toggleExpand }}" style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; padding: 9px 14px; border-radius: 8px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">{{ expandLabel }}</button>
+          </div>
+
+          <div ref="{{ scrollRef }}" style="{{ msgAreaStyle }}">
+            <sc-for list="{{ messages }}" as="m" hint-placeholder-count="1">
+              <div style="{{ m.rowStyle }}">
+                <sc-if value="{{ m.isPrompt }}" hint-placeholder-val="{{ true }}">
+                  <div style="padding: 22px 24px; border-radius: 20px 20px 20px 6px; background: #16162a; border: 1px solid #26263c; max-width: 80%; display: flex; flex-direction: column; gap: 9px;">
+                    <span style="font-size: 21px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.35; color: #f5f3ff;">{{ m.text }}</span>
+                    <span style="font-size: 13px; color: #8b88a8;">{{ m.sub }}</span>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+                  <div style="align-self: flex-end; max-width: 74%; padding: 15px 20px; border-radius: 20px 20px 6px 20px; background: linear-gradient(145deg, #6b5cf0, #8d74ff); color: #fff; font-size: 16px; line-height: 1.5;">{{ m.text }}</div>
+                </sc-if>
+                <sc-if value="{{ m.isNote }}" hint-placeholder-val="{{ false }}">
+                  <div style="display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-radius: 14px; background: rgba(124,108,255,0.08); border: 1px solid #26263c; max-width: 82%;">
+                    <span style="font-size: 15px; font-weight: 500; color: #cbbcff;">{{ m.text }}</span>
+                  </div>
+                </sc-if>
+                <sc-if value="{{ m.isProposal }}" hint-placeholder-val="{{ false }}">
+                  <div style="padding: 20px 22px; border-radius: 20px 20px 20px 6px; background: #16162a; border: 1px solid #26263c; max-width: 84%; display: flex; flex-direction: column; gap: 14px;">
+                    <span style="font-size: 15px; color: #a8a4c0;">{{ m.lead }}</span>
+                    <div style="padding: 16px; border-radius: 14px; background: #0e0e17; border: 1px solid #26263c; display: flex; flex-direction: column; gap: 8px;">
+                      <div style="display: flex; align-items: center; gap: 9px;">
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #cbbcff; background: rgba(124,108,255,0.16); border-radius: 5px; padding: 4px 8px;">{{ m.kind }}</span>
+                        <span style="font-size: 13px; color: #8b88a8;">{{ m.when }}</span>
+                      </div>
+                      <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: #f5f3ff;">{{ m.title }}</span>
+                      <span style="font-size: 15px; line-height: 1.5; color: #a8a4c0;">{{ m.body }}</span>
+                    </div>
+                    <sc-if value="{{ m.saved }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #8ad6b0;">✓ Saved to vault · record {{ m.no }}</span>
+                    </sc-if>
+                    <sc-if value="{{ m.unsaved }}" hint-placeholder-val="{{ true }}">
+                      <div style="display: flex; gap: 9px;">
+                        <button onClick="{{ m.save }}" style="font-family: inherit; font-size: 15px; font-weight: 500; padding: 11px 20px; border-radius: 999px; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; cursor: pointer;">Save to vault</button>
+                        <button style="font-family: inherit; font-size: 15px; padding: 11px 20px; border-radius: 999px; border: 1px solid #2b2b46; background: transparent; color: #a8a4c0; cursor: pointer;" style-hover="color: #f5f3ff; border-color: #4b3fa8;">Edit</button>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="padding: 16px 22px 20px; border-top: 1px solid #1c1c2c; display: flex; flex-direction: column; gap: 12px;">
+            <sc-if value="{{ showChips }}" hint-placeholder-val="{{ true }}">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button onClick="{{ chipShipped }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Shipped something</button>
+                <button onClick="{{ chipRecognized }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Got recognized</button>
+                <button onClick="{{ chipTaught }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Presented or taught</button>
+                <button onClick="{{ chipLearned }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #cbbcff; cursor: pointer;" style-hover="border-color: #4b3fa8; background: #16162a;">Learned a skill</button>
+                <button onClick="{{ chipQuiet }}" style="font-family: inherit; font-size: 14px; padding: 8px 14px; border-radius: 999px; border: 1px solid #2b2b46; background: #0e0e17; color: #8b88a8; cursor: pointer;" style-hover="border-color: #4b3fa8; color: #cbbcff;">Quiet week</button>
+              </div>
+            </sc-if>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 7px 7px 7px 20px; border-radius: 999px; background: #0e0e17; border: 1px solid #2b2b46;">
+              <input value="{{ draft }}" onChange="{{ setDraft }}" onKeyDown="{{ onDraftKey }}" placeholder="Tell me what happened…" style="flex: 1; font-family: inherit; font-size: 16px; border: none; background: transparent; color: #e8e6f2; outline: none;" />
+              <button onClick="{{ submitDraft }}" style="width: 40px; height: 40px; border-radius: 50%; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; font-size: 17px; cursor: pointer;">↑</button>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 13px; color: #6f6c88;">
+              <span>{{ total }} entries · 7 roles · {{ projectCount }} projects</span>
+              <span>{{ streakLabel }}</span>
+            </div>
+          </div>
+        </div>
+
+        <sc-if value="{{ showSidebar }}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 12px;">
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Streak</span>
+              <div style="display: flex; align-items: baseline; gap: 7px;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; color: #f5f3ff; letter-spacing: -0.03em;">6</span>
+                <span style="font-size: 14px; color: #8b88a8;">weeks logging</span>
+              </div>
+              <div style="display: flex; gap: 4px;">
+                <sc-for list="{{ streakWeeks }}" as="w" hint-placeholder-count="8">
+                  <span style="{{ w.tallStyle }}"></span>
+                </sc-for>
+              </div>
+              <span style="font-size: 13px; color: #8b88a8; line-height: 1.45;">Best run yet. One entry keeps it alive.</span>
+            </div>
+            <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 12px;">
+              <span style="font-size: 15px; font-weight: 600; color: #f5f3ff;">Logged since Friday</span>
+              <sc-for list="{{ latest }}" as="e" hint-placeholder-count="3">
+                <div style="display: flex; flex-direction: column; gap: 3px; padding-bottom: 10px; border-bottom: 1px solid #1c1c2c;">
+                  <span style="font-size: 14px; color: #e8e6f2;">{{ e.title }}</span>
+                  <span style="font-size: 12px; color: #6f6c88;">{{ e.meta }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ══════════ TIMELINE ══════════ -->
+  <sc-if value="{{ isTimeline }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width: 1280px; width: 100%; margin: 0 auto; padding: 34px 32px 60px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;">
+        <div style="display: flex; flex-direction: column; gap: 7px;">
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">{{ total }} records · 2022 — 2026</span>
+          <h1 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Timeline</h1>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <sc-for list="{{ filters }}" as="f" hint-placeholder-count="5">
+            <button onClick="{{ f.onClick }}" style="{{ f.style }}">{{ f.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1.25fr 1fr; gap: 16px; align-items: start;">
+        <div style="border-radius: 16px; border: 1px solid #22223a; background: #12121c; overflow: hidden;">
+          <sc-for list="{{ timelineItems }}" as="t" hint-placeholder-count="10">
+            <div>
+              <sc-if value="{{ t.showYear }}" hint-placeholder-val="{{ false }}">
+                <div style="padding: 12px 22px; background: #0e0e17; border-bottom: 1px solid #1c1c2c; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; color: #6f6c88;">{{ t.year }}</div>
+              </sc-if>
+              <button onClick="{{ t.onClick }}" style="{{ t.style }}" style-hover="background: #16162a;">
+                <span style="display: flex; align-items: center; gap: 10px;">
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #cbbcff; background: rgba(124,108,255,0.16); border-radius: 5px; padding: 4px 8px;">{{ t.kind }}</span>
+                  <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">{{ t.date }}</span>
+                </span>
+                <span style="font-size: 16px; font-weight: 500; letter-spacing: -0.01em; color: #f5f3ff;">{{ t.title }}</span>
+                <span style="font-size: 13px; color: #8b88a8;">{{ t.org }}</span>
+              </button>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="position: sticky; top: 90px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column;">
+          <div style="padding: 16px 22px; border-bottom: 1px solid #1c1c2c; display: flex; align-items: center; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: #6f6c88;">
+            <span>Record {{ sel.no }}</span>
+            <span style="color: #cbbcff;">{{ sel.kind }}</span>
+          </div>
+          <div style="padding: 26px 22px; display: flex; flex-direction: column; gap: 20px;">
+            <div style="display: flex; flex-direction: column; gap: 9px;">
+              <h2 style="margin: 0; font-size: 26px; font-weight: 700; line-height: 1.12; letter-spacing: -0.02em; color: #f5f3ff;">{{ sel.title }}</h2>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #6f6c88;">{{ sel.org }} · {{ sel.date }}</span>
+            </div>
+            <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #a8a4c0;">{{ sel.body }}</p>
+            <div style="display: flex; flex-direction: column; border-top: 1px solid #1c1c2c;">
+              <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #1c1c2c;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88;">Logged</span>
+                <span style="font-size: 14px; color: #e8e6f2;">{{ sel.logged }}</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #1c1c2c;">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88;">Used in</span>
+                <span style="font-size: 14px; color: #cbbcff;">{{ sel.used }}</span>
+              </div>
+            </div>
+            <div style="display: flex; gap: 9px;">
+              <button style="flex: 1; font-family: inherit; font-size: 14px; padding: 12px 0; border-radius: 10px; border: 1px solid #2b2b46; background: transparent; color: #f5f3ff; cursor: pointer;" style-hover="border-color: #4b3fa8;">Edit</button>
+              <button style="flex: 1; font-family: inherit; font-size: 14px; padding: 12px 0; border-radius: 10px; border: 1px solid #2b2b46; background: transparent; color: #8b88a8; cursor: pointer;" style-hover="color: #ff9d9d; border-color: #4a2b3a;">Delete</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ══════════ RÉSUMÉS ══════════ -->
+  <sc-if value="{{ isResumes }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width: 1100px; width: 100%; margin: 0 auto; padding: 34px 32px 60px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Drawn from your vault</span>
+        <h1 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Résumés</h1>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 16px;">
+        <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Draw a new one</span>
+        <div style="display: flex; gap: 10px;">
+          <input value="{{ target }}" onChange="{{ setTarget }}" placeholder="Target role — e.g. Senior AI Solutions Manager" style="flex: 1; font-family: inherit; font-size: 16px; padding: 14px 18px; border-radius: 12px; border: 1px solid #2b2b46; background: #0e0e17; color: #e8e6f2; outline: none;" style-focus="border-color: #4b3fa8;" />
+          <button onClick="{{ generate }}" style="font-family: inherit; font-size: 15px; font-weight: 500; padding: 0 24px; border-radius: 12px; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; cursor: pointer;">Generate</button>
+        </div>
+        <span style="font-size: 13px; color: #8b88a8;">Pulls the {{ total }} records in your vault and ranks them against the target.</span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+        <sc-for list="{{ resumes }}" as="r" hint-placeholder-count="3">
+          <div style="padding: 20px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+              <span style="font-size: 17px; font-weight: 600; letter-spacing: -0.01em; color: #f5f3ff;">{{ r.title }}</span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #cbbcff; background: rgba(124,108,255,0.16); border-radius: 5px; padding: 4px 8px; white-space: nowrap;">{{ r.tag }}</span>
+            </div>
+            <span style="font-size: 13px; color: #8b88a8;">{{ r.meta }}</span>
+            <div style="display: flex; gap: 8px; padding-top: 4px;">
+              <button style="font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 10px; border: 1px solid #2b2b46; background: transparent; color: #f5f3ff; cursor: pointer;" style-hover="border-color: #4b3fa8;">View</button>
+              <button style="font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 10px; border: 1px solid #2b2b46; background: transparent; color: #a8a4c0; cursor: pointer;" style-hover="color: #f5f3ff; border-color: #4b3fa8;">Download</button>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ══════════ IMPORT ══════════ -->
+  <sc-if value="{{ isImport }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width: 860px; width: 100%; margin: 0 auto; padding: 34px 32px 60px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">One-time backfill</span>
+        <h1 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Import a résumé</h1>
+        <p style="margin: 4px 0 0; max-width: 60ch; font-size: 15px; line-height: 1.6; color: #8b88a8;">Start the vault with what you already have. We read the file, split it into records, and let you keep the ones worth keeping.</p>
+      </div>
+
+      <div style="padding: 44px; border-radius: 16px; border: 1px dashed #33335a; background: #0e0e17; display: flex; flex-direction: column; align-items: center; gap: 12px;">
+        <span style="width: 40px; height: 40px; border-radius: 12px; background: rgba(124,108,255,0.16); display: inline-flex; align-items: center; justify-content: center; font-size: 18px; color: #cbbcff;">↑</span>
+        <span style="font-size: 16px; color: #e8e6f2;">Drop a PDF or DOCX here</span>
+        <span style="font-size: 13px; color: #6f6c88;">Oche_Obe_Resume_2026.pdf · parsed 12 seconds ago</span>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; align-items: baseline; justify-content: space-between;">
+          <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">6 records found</span>
+          <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #8b88a8;">{{ importSelected }} selected</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <sc-for list="{{ importRows }}" as="i" hint-placeholder-count="6">
+            <button onClick="{{ i.toggle }}" style="{{ i.style }}" style-hover="border-color: #4b3fa8;">
+              <span style="{{ i.boxStyle }}">{{ i.check }}</span>
+              <span style="display: flex; flex-direction: column; gap: 3px; text-align: left;">
+                <span style="font-size: 15px; color: #f5f3ff; font-weight: 500;">{{ i.title }}</span>
+                <span style="font-size: 13px; color: #8b88a8;">{{ i.meta }}</span>
+              </span>
+            </button>
+          </sc-for>
+        </div>
+        <button onClick="{{ commitImport }}" style="align-self: flex-start; font-family: inherit; font-size: 15px; font-weight: 500; padding: 13px 22px; border-radius: 12px; border: none; background: linear-gradient(145deg, #7c6cff, #9d7bff); color: #fff; cursor: pointer;">Save {{ importSelected }} to vault</button>
+      </div>
+    </main>
+  </sc-if>
+
+  <!-- ══════════ DETAILS ══════════ -->
+  <sc-if value="{{ isDetails }}" hint-placeholder-val="{{ false }}">
+    <main style="max-width: 860px; width: 100%; margin: 0 auto; padding: 34px 32px 60px; display: flex; flex-direction: column; gap: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 7px;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #8b88a8;">Account</span>
+        <h1 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: #f5f3ff;">Details</h1>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 16px;">
+        <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">You</span>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88;">Name</span>
+            <input value="Oche Oche-Obe" style="font-family: inherit; font-size: 15px; padding: 13px 15px; border-radius: 10px; border: 1px solid #2b2b46; background: #0e0e17; color: #e8e6f2; outline: none;" style-focus="border-color: #4b3fa8;" />
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: #6f6c88;">Email</span>
+            <input value="oche.ocheobe@gmail.com" style="font-family: inherit; font-size: 15px; padding: 13px 15px; border-radius: 10px; border: 1px solid #2b2b46; background: #0e0e17; color: #8b88a8; outline: none;" />
+          </div>
+        </div>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display: flex; flex-direction: column; gap: 5px;">
+          <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Check-in cadence</span>
+          <span style="font-size: 13px; color: #8b88a8;">How often we ask what you've been working on. The streak counts one entry per period.</span>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+          <sc-for list="{{ cadenceOptions }}" as="c" hint-placeholder-count="3">
+            <button onClick="{{ c.onClick }}" style="{{ c.style }}" style-hover="border-color: #4b3fa8;">
+              <span style="font-size: 15px; font-weight: 600; color: #f5f3ff;">{{ c.label }}</span>
+              <span style="font-size: 13px; color: #8b88a8; text-align: left; line-height: 1.45;">{{ c.desc }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #22223a; background: #12121c; display: flex; flex-direction: column; gap: 14px;">
+        <span style="font-size: 16px; font-weight: 600; color: #f5f3ff;">Reminders</span>
+        <button onClick="{{ toggleEmail }}" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid #22223a; background: #0e0e17; cursor: pointer; text-align: left;" style-hover="border-color: #4b3fa8;">
+          <span style="display: flex; flex-direction: column; gap: 3px;">
+            <span style="font-size: 15px; color: #f5f3ff;">Email me at check-in</span>
+            <span style="font-size: 13px; color: #8b88a8;">{{ emailSub }}</span>
+          </span>
+          <span style="{{ emailTrackStyle }}"><span style="{{ emailKnobStyle }}"></span></span>
+        </button>
+        <button onClick="{{ toggleStreakAlert }}" style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid #22223a; background: #0e0e17; cursor: pointer; text-align: left;" style-hover="border-color: #4b3fa8;">
+          <span style="display: flex; flex-direction: column; gap: 3px;">
+            <span style="font-size: 15px; color: #f5f3ff;">Warn me before the streak breaks</span>
+            <span style="font-size: 13px; color: #8b88a8;">A nudge the day before the period closes.</span>
+          </span>
+          <span style="{{ streakTrackStyle }}"><span style="{{ streakKnobStyle }}"></span></span>
+        </button>
+      </div>
+
+      <div style="padding: 22px; border-radius: 16px; border: 1px solid #2b2b46; background: #0e0e17; display: flex; align-items: center; justify-content: space-between; gap: 20px;">
+        <span style="display: flex; flex-direction: column; gap: 4px;">
+          <span style="font-size: 15px; color: #f5f3ff;">Your vault, your data</span>
+          <span style="font-size: 13px; color: #8b88a8;">Export every record as JSON, or close the account.</span>
+        </span>
+        <span style="display: flex; gap: 8px;">
+          <button style="font-family: inherit; font-size: 14px; padding: 11px 16px; border-radius: 10px; border: 1px solid #2b2b46; background: transparent; color: #f5f3ff; cursor: pointer;" style-hover="border-color: #4b3fa8;">Export</button>
+          <button style="font-family: inherit; font-size: 14px; padding: 11px 16px; border-radius: 10px; border: 1px solid #3a2430; background: transparent; color: #ff9d9d; cursor: pointer;" style-hover="background: #1c1017;">Delete account</button>
+        </span>
+      </div>
+    </main>
+  </sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 980}, &quot;cadence&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;Weekly&quot;, &quot;Biweekly&quot;, &quot;Monthly&quot;], &quot;default&quot;: &quot;Weekly&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Behavior&quot;}, &quot;showYearGrid&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Behavior&quot;}}">
+class Component extends DCLogic {
+  state = {
+    tab: 'home',
+    draft: '',
+    expanded: false,
+    msgs: null,
+    added: [],
+    nextNo: 14,
+    selected: 0,
+    filter: 'All',
+    cadence: null,
+    target: '',
+    importOff: {},
+    emailOn: true,
+    streakAlertOn: true,
+    resumesExtra: [],
+  };
+
+  scrollRef = React.createRef();
+
+  baseEntries = [
+    { no: '013', kind: 'MILESTONE', title: 'Led firmwide GenAI training, Q3', org: 'KPMG US · ~120 attendees', date: '20 JUL 2026', year: '2026', short: 'JUL 26', body: 'Second firmwide session this quarter, spanning tax and finance delivery teams. Built the curriculum around real client workflows rather than generic prompting.', logged: '20 Jul 2026, from chat', used: '1 résumé' },
+    { no: '012', kind: 'CERTIFICATION', title: 'AWS Solutions Architect – Associate', org: 'Amazon Web Services', date: '11 MAR 2026', year: '2026', short: 'MAR 26', body: 'Passed on the first attempt while shipping the CareerVault MVP on the same stack.', logged: '11 Mar 2026, from chat', used: '2 résumés' },
+    { no: '011', kind: 'PROJECT', title: 'CareerVault — serverless MVP shipped', org: 'Personal · AWS, Bedrock', date: '29 JAN 2026', year: '2026', short: 'JAN 26', body: 'Designed and shipped a serverless app that turns a chat check-in into structured career records, then drafts targeted résumés from them.', logged: '29 Jan 2026, from chat', used: '1 résumé' },
+    { no: '010', kind: 'ROLE', title: 'Manager, Asset Management Technology', org: 'KPMG US · AI Solutions', date: '01 OCT 2025', year: '2025', short: 'OCT 25', body: 'Promoted to Manager, owning AI solution delivery for asset management clients across a portfolio of engagements.', logged: '04 Oct 2025, from chat', used: '3 résumés' },
+    { no: '009', kind: 'PROJECT', title: 'AI pipeline for asset management tax forms', org: 'KPMG US · led team of 4', date: '01 OCT 2025', year: '2025', short: 'OCT 25', body: 'Led a team of 4 designing and deploying an AI pipeline to extract and analyze 500+ asset management tax forms in under 30 minutes, automating manual workflows for accounting and compliance teams.', logged: '04 Oct 2025, from chat', used: '3 résumés' },
+    { no: '008', kind: 'ROLE', title: 'Senior Associate, AI Solutions', org: 'KPMG US', date: '12 MAY 2025', year: '2025', short: 'MAY 25', body: 'Moved onto the AI Solutions team as a senior associate, leading discovery and build for two client pilots.', logged: '12 May 2025, imported', used: '3 résumés' },
+    { no: '007', kind: 'MILESTONE', title: 'Firmwide GenAI enablement, 4 cohorts', org: 'KPMG US · ~300 attendees', date: '18 NOV 2024', year: '2024', short: 'NOV 24', body: 'Ran four cohorts of GenAI enablement for delivery teams, and wrote the internal playbook that followed.', logged: '18 Nov 2024, from chat', used: '2 résumés' },
+    { no: '006', kind: 'CERTIFICATION', title: 'Azure AI Fundamentals', org: 'Microsoft', date: '07 JUN 2024', year: '2024', short: 'JUN 24', body: 'Foundational certification taken ahead of a client migration to Azure OpenAI.', logged: '07 Jun 2024, imported', used: '1 résumé' },
+    { no: '005', kind: 'AWARD', title: 'Innovation Award, Digital Solutions', org: 'KPMG US', date: '03 DEC 2023', year: '2023', short: 'DEC 23', body: 'Recognized for an internal automation that cut a recurring reporting task from two days to twenty minutes.', logged: '03 Dec 2023, imported', used: '2 résumés' },
+    { no: '004', kind: 'ROLE', title: 'Associate, Technology Assurance', org: 'KPMG US', date: '15 AUG 2022', year: '2022', short: 'AUG 22', body: 'Started at KPMG on technology assurance engagements for financial services clients.', logged: '15 Aug 2022, imported', used: '3 résumés' },
+  ];
+
+  importCatalog = [
+    { id: 'i1', title: 'Manager, Asset Management Technology', meta: 'KPMG US · Oct 2025 — present · role' },
+    { id: 'i2', title: 'AI pipeline for 500+ tax forms', meta: 'KPMG US · Oct 2025 · project' },
+    { id: 'i3', title: 'Firmwide GenAI enablement programme', meta: 'KPMG US · 2024 · milestone' },
+    { id: 'i4', title: 'AWS Solutions Architect – Associate', meta: 'Amazon Web Services · 2026 · certification' },
+    { id: 'i5', title: 'B.S. Computer Science', meta: 'University · 2022 · education' },
+    { id: 'i6', title: 'Skills: Python, AWS, Bedrock, SQL', meta: 'Skill list · not dated' },
+  ];
+
+  cadenceWord() { return this.state.cadence || this.props.cadence || 'Weekly'; }
+
+  entries() { return this.state.added.concat(this.baseEntries); }
+
+  initialMsgs() {
+    const c = this.cadenceWord().toLowerCase();
+    const q = c === 'monthly'
+      ? "It's been a month since the GenAI training landed — what has moved since?"
+      : c === 'biweekly'
+        ? "Two weeks since you logged the GenAI training — what have you been working on?"
+        : "It's been a week since you logged the GenAI training — what have you been working on?";
+    return [{ id: 'p0', type: 'prompt', text: q, sub: 'Your ' + c + ' check-in · Friday' }];
+  }
+
+  msgs() { return this.state.msgs || this.initialMsgs(); }
+
+  componentDidUpdate() {
+    const el = this.scrollRef.current;
+    if (!el) return;
+    const key = this.msgs().length + '/' + this.state.expanded;
+    if (key !== this._scrollKey) {
+      this._scrollKey = key;
+      el.scrollTop = el.scrollHeight;
+    }
+  }
+
+  titleFor(text) {
+    const t = text.trim().replace(/\s+/g, ' ');
+    const first = t.split(/[.!?]/)[0];
+    const clipped = first.length > 78 ? first.slice(0, 75).trim() + '…' : first;
+    return clipped.charAt(0).toUpperCase() + clipped.slice(1);
+  }
+
+  kindFor(text) {
+    const t = text.toLowerCase();
+    if (/certif|passed|exam|credential/.test(t)) return 'CERTIFICATION';
+    if (/award|recogni|promot/.test(t)) return 'AWARD';
+    if (/shipped|built|launch|pipeline|app|migrat/.test(t)) return 'PROJECT';
+    return 'MILESTONE';
+  }
+
+  send(text) {
+    const body = (text || '').trim();
+    if (!body) return;
+    const id = 'm' + Date.now();
+    const proposal = {
+      id: id + 'p',
+      type: 'proposal',
+      lead: 'Here it is as a record — edit anything before it lands:',
+      kind: this.kindFor(body),
+      when: 'Jul 2026 · KPMG US',
+      title: this.titleFor(body),
+      body: body.length > 120 ? body : body + ' Logged during the ' + this.cadenceWord().toLowerCase() + ' check-in.',
+      saved: false,
+    };
+    this.setState((s) => ({
+      tab: 'log',
+      expanded: true,
+      draft: '',
+      msgs: (s.msgs || this.initialMsgs()).concat([{ id, type: 'user', text: body }]),
+    }));
+    setTimeout(() => this.setState((s) => ({ msgs: (s.msgs || []).concat([proposal]) })), 620);
+  }
+
+  saveProposal(id) {
+    this.setState((s) => {
+      const msgs = (s.msgs || []).map((m) => (m.id === id ? { ...m, saved: true, no: String(s.nextNo).padStart(3, '0') } : m));
+      const src = msgs.find((m) => m.id === id);
+      const entry = {
+        no: String(s.nextNo).padStart(3, '0'),
+        kind: src.kind,
+        title: src.title,
+        org: 'KPMG US',
+        date: '30 JUL 2026',
+        year: '2026',
+        short: 'JUL 26',
+        body: src.body,
+        logged: '30 Jul 2026, from chat',
+        used: 'not yet',
+      };
+      const note = {
+        id: id + 'n',
+        type: 'note',
+        text: 'That is ' + (s.added.length + 14) + ' records on deposit — and the streak holds at 7 weeks.',
+      };
+      return { msgs: msgs.concat([note]), added: [entry].concat(s.added), nextNo: s.nextNo + 1 };
+    });
+  }
+
+  renderVals() {
+    const { tab, draft, expanded, filter, selected } = this.state;
+    const entries = this.entries();
+    const cadence = this.cadenceWord();
+    const total = entries.length + 3;
+
+    const navDefs = [
+      ['home', 'Home'], ['log', 'Log'], ['timeline', 'Timeline'],
+      ['resumes', 'Résumés'], ['import', 'Import'], ['details', 'Details'],
+    ];
+    const navItems = navDefs.map(([key, label]) => ({
+      label,
+      onClick: () => this.setState({ tab: key }),
+      style: 'font-family: inherit; font-size: 15px; font-weight: ' + (tab === key ? '500' : '400') +
+        '; padding: 8px 12px; border-radius: 9px; border: none; cursor: pointer; white-space: nowrap; background: ' +
+        (tab === key ? 'rgba(124,108,255,0.14)' : 'transparent') + '; color: ' + (tab === key ? '#cbbcff' : '#8b88a8') + ';',
+    }));
+
+    const purple = ['#1a1a2c', '#3b2f7a', '#5a45c4', '#7c6cff', '#a58cff'];
+    const rand = (s) => { const x = Math.sin(s * 12.9898) * 43758.5453; return x - Math.floor(x); };
+    const cells = [];
+    for (let i = 0; i < 130; i++) {
+      const r = rand(i + 3), recency = i / 130;
+      const level = r < 0.42 - recency * 0.22 ? 0 : Math.min(4, 1 + Math.floor(r * 3.2 + recency * 1.4));
+      cells.push({ style: 'width: 13px; height: 13px; border-radius: 3px; background: ' + purple[level] + ';' });
+    }
+
+    const streakWeeks = [0, 1, 1, 1, 1, 1, 1, 1].map((on) => ({
+      style: 'width: 3px; height: ' + (on ? 13 : 7) + 'px; border-radius: 2px; background: ' + (on ? '#9d7bff' : '#2c2c44') + ';',
+      tallStyle: 'flex: 1; height: 20px; border-radius: 4px; background: ' + (on ? 'linear-gradient(180deg, #7c6cff, #5a45c4)' : '#1c1c2c') + ';',
+    }));
+
+    const counts = { Roles: 0, Projects: 0, Certifications: 0, Awards: 0, Milestones: 0 };
+    entries.forEach((e) => {
+      if (e.kind === 'ROLE') counts.Roles++;
+      else if (e.kind === 'PROJECT') counts.Projects++;
+      else if (e.kind === 'CERTIFICATION') counts.Certifications++;
+      else if (e.kind === 'AWARD') counts.Awards++;
+      else counts.Milestones++;
+    });
+    const maxCount = Math.max(counts.Roles + 3, counts.Projects, counts.Certifications, counts.Awards, counts.Milestones);
+    const bars = [
+      { label: 'Roles', count: counts.Roles + 3 },
+      { label: 'Projects', count: counts.Projects },
+      { label: 'Milestones', count: counts.Milestones },
+      { label: 'Certifications', count: counts.Certifications },
+      { label: 'Awards', count: counts.Awards },
+    ].map((b) => ({ ...b, style: 'height: 100%; width: ' + Math.round((b.count / maxCount) * 100) + '%; border-radius: 999px; background: linear-gradient(90deg, #5a45c4, #a58cff);' }));
+
+    const latest = entries.slice(0, 4).map((e) => ({ title: e.title, meta: e.org, short: e.short }));
+
+    const msgs = this.msgs();
+    const messages = msgs.map((m) => ({
+      ...m,
+      isPrompt: m.type === 'prompt',
+      isUser: m.type === 'user',
+      isNote: m.type === 'note',
+      isProposal: m.type === 'proposal',
+      unsaved: m.type === 'proposal' && !m.saved,
+      rowStyle: 'display: flex; flex-direction: column; animation: rise 0.28s ease both;' + (m.type === 'user' ? ' align-items: flex-end;' : ''),
+      save: () => this.saveProposal(m.id),
+    }));
+
+    const filters = ['All', 'Roles', 'Projects', 'Milestones', 'Certifications'].map((f) => ({
+      label: f,
+      onClick: () => this.setState({ filter: f }),
+      style: 'font-family: \'JetBrains Mono\', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 9px 13px; border-radius: 8px; cursor: pointer; border: 1px solid ' +
+        (filter === f ? '#4b3fa8' : '#22223a') + '; background: ' + (filter === f ? 'rgba(124,108,255,0.14)' : 'transparent') +
+        '; color: ' + (filter === f ? '#cbbcff' : '#8b88a8') + ';',
+    }));
+
+    const kindOf = { Roles: 'ROLE', Projects: 'PROJECT', Milestones: 'MILESTONE', Certifications: 'CERTIFICATION' };
+    const shown = filter === 'All' ? entries : entries.filter((e) => e.kind === kindOf[filter]);
+    let lastYear = null;
+    const timelineItems = shown.map((e, i) => {
+      const showYear = e.year !== lastYear;
+      lastYear = e.year;
+      const active = i === Math.min(selected, shown.length - 1);
+      return {
+        ...e, showYear, onClick: () => this.setState({ selected: i }),
+        style: 'width: 100%; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; text-align: left; padding: 16px 22px; border: none; border-bottom: 1px solid #1c1c2c; border-left: 2px solid ' +
+          (active ? '#7c6cff' : 'transparent') + '; background: ' + (active ? '#16162a' : 'transparent') + '; cursor: pointer; font-family: inherit;',
+      };
+    });
+    const sel = shown[Math.min(selected, shown.length - 1)] || entries[0];
+
+    const resumes = this.state.resumesExtra.concat([
+      { title: 'Solutions Architect, Financial Services', tag: 'Latest', meta: 'Built 12 Jul 2026 · 9 records drawn' },
+      { title: 'AI Solutions Manager', tag: 'Sent', meta: 'Built 03 Apr 2026 · 8 records drawn' },
+      { title: 'Technology Consulting — general', tag: 'Draft', meta: 'Built 19 Nov 2025 · 11 records drawn' },
+    ]);
+
+    const importRows = this.importCatalog.map((r) => {
+      const on = !this.state.importOff[r.id];
+      return {
+        ...r, check: on ? '✓' : '',
+        toggle: () => this.setState((s) => ({ importOff: { ...s.importOff, [r.id]: on } })),
+        style: 'display: flex; align-items: center; gap: 13px; width: 100%; padding: 14px 16px; border-radius: 12px; cursor: pointer; font-family: inherit; background: ' +
+          (on ? '#16162a' : '#0e0e17') + '; border: 1px solid ' + (on ? '#3a3468' : '#22223a') + ';',
+        boxStyle: 'width: 20px; height: 20px; flex-shrink: 0; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; background: ' +
+          (on ? '#7c6cff' : 'transparent') + '; border: 1px solid ' + (on ? '#7c6cff' : '#33335a') + ';',
+      };
+    });
+    const importSelected = importRows.filter((r) => r.check).length;
+
+    const cadenceOptions = [
+      { label: 'Weekly', desc: 'A prompt every Friday. Best for a fast-moving role.' },
+      { label: 'Biweekly', desc: 'Every other Friday. Enough to stay honest.' },
+      { label: 'Monthly', desc: 'First of the month. Lightest touch.' },
+    ].map((c) => ({
+      ...c,
+      onClick: () => this.setState({ cadence: c.label, msgs: null }),
+      style: 'display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 16px; border-radius: 12px; cursor: pointer; font-family: inherit; background: ' +
+        (cadence === c.label ? 'rgba(124,108,255,0.12)' : '#0e0e17') + '; border: 1px solid ' + (cadence === c.label ? '#4b3fa8' : '#22223a') + ';',
+    }));
+
+    const track = (on) => 'width: 42px; height: 24px; flex-shrink: 0; border-radius: 999px; padding: 3px; display: inline-flex; justify-content: ' +
+      (on ? 'flex-end' : 'flex-start') + '; background: ' + (on ? '#7c6cff' : '#22223a') + ';';
+    const knob = 'width: 18px; height: 18px; border-radius: 50%; background: #fff; display: inline-block;';
+
+    const nextCheckIn = cadence === 'Monthly' ? '1 Aug' : 'Friday';
+
+    return {
+      uiFont: "'Figtree', system-ui, sans-serif",
+      navItems, streakWeeks, streakLabel: '6-week streak',
+      isHome: tab === 'home', isLog: tab === 'log', isTimeline: tab === 'timeline',
+      isResumes: tab === 'resumes', isImport: tab === 'import', isDetails: tab === 'details',
+      dateLine: 'Thu 30 Jul · week 31', nextCheckIn, cadenceWord: cadence,
+      showYearGrid: this.props.showYearGrid !== false,
+      draft,
+      setDraft: (e) => this.setState({ draft: e.target.value }),
+      onDraftKey: (e) => { if (e.key === 'Enter') this.send(this.state.draft); },
+      submitDraft: () => this.send(this.state.draft),
+      chipShipped: () => this.setState({ draft: 'I shipped ' }),
+      chipRecognized: () => this.setState({ draft: 'I was recognized for ' }),
+      chipTaught: () => this.setState({ draft: 'I presented ' }),
+      chipLearned: () => this.setState({ draft: 'I learned ' }),
+      chipQuiet: () => this.send('Quiet period — mostly maintenance work and interviews for the new hire.'),
+      total, quarter: 4 + this.state.added.length, resumeCount: resumes.length,
+      lastResume: 'last: ' + resumes[0].title.split(',')[0],
+      projectCount: counts.Projects,
+      cells, bars, latest,
+      goTimeline: () => this.setState({ tab: 'timeline' }),
+      messages, showChips: msgs.length < 3,
+      expanded, expandLabel: expanded ? 'Show activity' : 'Hide activity',
+      toggleExpand: () => this.setState((s) => ({ expanded: !s.expanded })),
+      scrollRef: this.scrollRef,
+      logShellStyle: 'width: 100%; margin: 0 auto; padding: ' + (expanded ? '24px 32px 40px' : '34px 32px 60px') + '; max-width: ' + (expanded ? '1080px' : '1280px') + ';',
+      logGridCols: expanded ? '1fr' : '1fr 320px',
+      msgAreaStyle: 'flex: 1; overflow-y: auto; padding: 24px 22px; display: flex; flex-direction: column; gap: 16px; height: ' + (expanded ? '580px' : '400px') + '; transition: height 0.32s ease;',
+      showSidebar: !expanded,
+      filters, timelineItems, sel,
+      target: this.state.target,
+      setTarget: (e) => this.setState({ target: e.target.value }),
+      generate: () => {
+        const t = this.state.target.trim();
+        if (!t) return;
+        this.setState((s) => ({ target: '', resumesExtra: [{ title: t, tag: 'New', meta: 'Built just now · ' + (entries.length + 3) + ' records ranked' }].concat(s.resumesExtra) }));
+      },
+      resumes, importRows, importSelected,
+      commitImport: () => this.setState({ tab: 'timeline' }),
+      cadenceOptions,
+      emailSub: 'To oche.ocheobe@gmail.com, ' + cadence.toLowerCase() + '.',
+      toggleEmail: () => this.setState((s) => ({ emailOn: !s.emailOn })),
+      toggleStreakAlert: () => this.setState((s) => ({ streakAlertOn: !s.streakAlertOn })),
+      emailTrackStyle: track(this.state.emailOn), emailKnobStyle: knob,
+      streakTrackStyle: track(this.state.streakAlertOn), streakKnobStyle: knob,
+    };
+  }
+}
+</script>
+</body>
+</html>

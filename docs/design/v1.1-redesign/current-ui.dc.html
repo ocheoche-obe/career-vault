@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin: 0; background: #16171d; }
+  a { color: #c084fc; text-decoration: none; }
+  a:hover { color: #d8b4fe; }
+</style>
+</helmet>
+<div style="width: 1126px; max-width: 100%; margin: 0 auto; text-align: center; border-left: 1px solid #2e303a; border-right: 1px solid #2e303a; min-height: 100svh; display: flex; flex-direction: column; box-sizing: border-box; background: #16171d; color: #9ca3af; font: 18px/145% system-ui, 'Segoe UI', Roboto, sans-serif; letter-spacing: 0.18px; -webkit-font-smoothing: antialiased;">
+
+  <sc-if value="{{ signedOut }}" hint-placeholder-val="{{ false }}">
+    <main style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 20px; box-sizing: border-box;">
+      <h1 style="font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; color: #f3f4f6; font-size: 56px; letter-spacing: -1.68px; margin: 32px 0;">CareerVault</h1>
+      <button onClick="{{ signIn }}" style="font: 13.333px Arial, sans-serif; letter-spacing: normal; padding: 1px 6px; border: 1px solid #767676; border-radius: 0; background: #6b6b6b; color: #f3f4f6; cursor: pointer;">Sign in</button>
+    </main>
+  </sc-if>
+
+  <sc-if value="{{ signedIn }}" hint-placeholder-val="{{ true }}">
+  <main style="flex: 1; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px 20px; box-sizing: border-box;">
+    <header style="width: min(720px, 100%); display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+      <h1 style="margin: 0; font-size: 28px; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; color: #f3f4f6; letter-spacing: -1.68px;">CareerVault</h1>
+      <div style="display: flex; align-items: baseline; gap: 12px; font-size: 14px; color: #9ca3af;">
+        <span>oche.ocheobe@gmail.com</span>
+        <button onClick="{{ signOut }}" style="font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; cursor: pointer;" style-hover="border-color: rgba(192,132,252,0.5);">Sign out</button>
+      </div>
+    </header>
+
+    <nav style="width: min(720px, 100%); display: flex; gap: 8px;">
+      <button onClick="{{ goChat }}" style="{{ tabChat }}">Chat</button>
+      <button onClick="{{ goUpload }}" style="{{ tabUpload }}">Upload résumé</button>
+      <button onClick="{{ goEntries }}" style="{{ tabEntries }}">Entries</button>
+      <button onClick="{{ goResume }}" style="{{ tabResume }}">Résumé</button>
+      <button onClick="{{ goSettings }}" style="{{ tabSettings }}">Details</button>
+    </nav>
+
+    <sc-if value="{{ isChat }}" hint-placeholder-val="{{ true }}">
+      <section style="display: flex; flex-direction: column; width: min(720px, 100%); height: min(70vh, 640px); border: 1px solid #2e303a; border-radius: 12px; background: #16171d; overflow: hidden; text-align: left;">
+        <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+          <p style="color: #9ca3af; margin: auto; max-width: 44ch; text-align: center;">Tell me something that happened in your career — a project, a cert, an award, a new role — and I'll turn it into a vault entry for your review. Or ask me about what you've already logged: “how many certs do I have?”, “what did I do in 2025?”</p>
+        </div>
+        <form onSubmit="{{ noop }}" style="display: flex; gap: 8px; padding: 12px; border-top: 1px solid #2e303a;">
+          <textarea rows="2" placeholder="What did you accomplish?" style="flex: 1; resize: none; font: inherit; color: #f3f4f6; background: #1f2028; border: 1px solid #2e303a; border-radius: 8px; padding: 8px 10px;"></textarea>
+          <button type="submit" disabled="{{ true }}" style="align-self: flex-end; padding: 8px 18px; border-radius: 8px; border: 1px solid rgba(192,132,252,0.5); background: rgba(192,132,252,0.15); color: #c084fc; font: inherit; cursor: default; opacity: 0.5;">Send</button>
+        </form>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isUpload }}" hint-placeholder-val="{{ false }}">
+      <section style="width: min(720px, 100%); text-align: left; display: flex; flex-direction: column; gap: 16px;">
+        <div style="border: 1px dashed #2e303a; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+          <h2 style="margin: 0; font-size: 18px; color: #f3f4f6; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; line-height: 118%; letter-spacing: -0.24px;">Import from a resume</h2>
+          <p style="margin: 0; color: #9ca3af; line-height: 1.5; max-width: 56ch;">Upload a PDF or DOCX and we'll pull out your roles, projects, certifications, and more for you to review — nothing is saved until you confirm.</p>
+          <input type="file" style="font: inherit; font-size: 14px; color: #f3f4f6;" />
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isEntries }}" hint-placeholder-val="{{ false }}">
+      <section style="width: min(720px, 100%); text-align: left; display: flex; flex-direction: column; gap: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="color: #9ca3af; font-size: 14px;">13 entries</span>
+          <button style="font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 6px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; cursor: pointer;">Refresh</button>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <h2 style="margin: 0 0 2px; font-size: 15px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.6px; display: flex; align-items: center; gap: 8px; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; line-height: 118%;">Jobs <span style="font-size: 12px; font-weight: 500; color: #9ca3af; background: #1f2028; border: 1px solid #2e303a; border-radius: 999px; padding: 1px 8px; letter-spacing: 0;">7</span></h2>
+
+          <div style="border: 1px solid #2e303a; border-radius: 10px; padding: 12px 14px; background: #16171d; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <strong style="color: #f3f4f6; font-size: 15px;">Manager, Asset Management Technology - AI Solutions</strong>
+              <span style="color: #9ca3af; font-size: 13px; white-space: nowrap;">2025-10-01</span>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: #c084fc;">KPMG US</p>
+            <p style="margin: 0; color: #f3f4f6; font-size: 14px; line-height: 1.45;">Promoted to Manager, Asset Management Technology – AI Solutions at KPMG US in October 2025, following initial role as Senior Associate, Tax - AI Solutions which began in May 2025.</p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; font: inherit; cursor: pointer;">Edit</button>
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid crimson; background: transparent; color: crimson; font: inherit; cursor: pointer;">Delete</button>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #2e303a; border-radius: 10px; padding: 12px 14px; background: #16171d; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <strong style="color: #f3f4f6; font-size: 15px;">Manager, Asset Management Technology – AI Solutions</strong>
+              <span style="color: #9ca3af; font-size: 13px; white-space: nowrap;">2025-10-01</span>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: #c084fc;">KPMG US</p>
+            <p style="margin: 0; color: #f3f4f6; font-size: 14px; line-height: 1.45;">Led team of 4 designing and deploying AI pipeline to extract and analyze 500+ asset management tax forms (W-8ECI, W-8EXP, W-8IMY) in under 30 minutes, automating manual workflows for accounting and compliance teams. Drove AI workflow evolution from Python desktop executable to cloud-native Azure deployment, contributing to architecture decisions across CI/CD, document ingestion, workflow orchestration, and enterprise GenAI API integration. Scoped and managed cloud MVP backlog coordinating tax, advisory, engineering, and governance stakeholders; balanced automation velocity with audit, compliance, and financial controllership requirements. Facilitated 5+ firmwide GenAI trainings and demos for 450+ professionals across tax and finance delivery teams, driving AI tooling adoption and surfacing process improvement opportunities.</p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; font: inherit; cursor: pointer;">Edit</button>
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid crimson; background: transparent; color: crimson; font: inherit; cursor: pointer;">Delete</button>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #2e303a; border-radius: 10px; padding: 12px 14px; background: #16171d; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <strong style="color: #f3f4f6; font-size: 15px;">Senior Associate, AI Solutions</strong>
+              <span style="color: #9ca3af; font-size: 13px; white-space: nowrap;">2025-05-19</span>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: #c084fc;">KPMG US</p>
+            <p style="margin: 0; color: #f3f4f6; font-size: 14px; line-height: 1.45;">Contributed to AI solutions delivery and cloud platform engineering initiatives for asset management tax operations.</p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; font: inherit; cursor: pointer;">Edit</button>
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid crimson; background: transparent; color: crimson; font: inherit; cursor: pointer;">Delete</button>
+            </div>
+          </div>
+
+          <div style="border: 1px solid #2e303a; border-radius: 10px; padding: 12px 14px; background: #16171d; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <strong style="color: #f3f4f6; font-size: 15px;">Marketing Analytics Intern</strong>
+              <span style="color: #9ca3af; font-size: 13px; white-space: nowrap;">2023-10-01</span>
+            </div>
+            <p style="margin: 0; font-size: 13px; color: #c084fc;">Columbia Athletics</p>
+            <p style="margin: 0; color: #f3f4f6; font-size: 14px; line-height: 1.45;">Built Python + Apache Spark pipelines integrating 2M+ fan records with 99.9% accuracy; engineered Tableau dashboards supporting event operations that earned a 97% satisfaction score during the 2024 Ivy League sports season.</p>
+            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: #f3f4f6; font: inherit; cursor: pointer;">Edit</button>
+              <button style="padding: 7px 16px; border-radius: 8px; border: 1px solid crimson; background: transparent; color: crimson; font: inherit; cursor: pointer;">Delete</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isResume }}" hint-placeholder-val="{{ false }}">
+      <section style="width: min(720px, 100%); text-align: left; display: flex; flex-direction: column; gap: 16px;">
+        <div style="border: 1px dashed #2e303a; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+          <h2 style="margin: 0; font-size: 18px; color: #f3f4f6; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; line-height: 118%; letter-spacing: -0.24px;">Generate a tailored résumé</h2>
+          <p style="margin: 0; color: #9ca3af; line-height: 1.5; max-width: 56ch;">Paste the job description you're targeting (or just name the role). The agent picks the most relevant items from your logged history — it only uses what you've actually recorded.</p>
+          <textarea placeholder="Paste a job description, or e.g. “Senior Solutions Architect, AWS partner, focus on data platforms”" style="font: inherit; font-size: 14px; line-height: 1.5; min-height: 180px; resize: vertical; padding: 10px 12px; border-radius: 10px; border: 1px solid #2e303a; background: #16171d; color: #f3f4f6;"></textarea>
+          <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+            <button disabled="{{ true }}" style="font: inherit; font-size: 14px; padding: 7px 16px; border-radius: 8px; border: 1px solid rgba(192,132,252,0.5); background: rgba(192,132,252,0.15); color: #c084fc; cursor: default; opacity: 0.5;">Generate résumé</button>
+          </div>
+        </div>
+      </section>
+    </sc-if>
+
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+      <section style="max-width: 32rem; display: flex; flex-direction: column; gap: 0.9rem;">
+        <h2 style="margin: 0; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; color: #f3f4f6; font-size: 24px; line-height: 118%; letter-spacing: -0.24px;">Your details</h2>
+        <p style="margin: 0; color: #666; font-size: 0.9em;">These appear at the top of every résumé you generate. Nothing here is sent to the AI model — the header is rendered directly from what you enter.</p>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">Full name</span>
+          <input value="Oche Oche-Obe" style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit;" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">Email</span>
+          <input value="oche.ocheobe@gmail.com" disabled="{{ true }}" style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit; opacity: 0.6;" />
+          <small style="color: #666; font-size: 0.78em;">From your sign-in — not editable here.</small>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">Location</span>
+          <input value="Seattle, WA 98144" style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit;" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">Phone</span>
+          <input placeholder="Optional" style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit;" />
+        </label>
+        <h2 style="margin-top: 0.8rem; padding-top: 1.1rem; border-top: 1px solid #2e303a; font-family: system-ui, 'Segoe UI', Roboto, sans-serif; font-weight: 500; color: #f3f4f6; font-size: 24px; line-height: 118%; letter-spacing: -0.24px;">Check-in emails</h2>
+        <p style="margin: 0; color: #666; font-size: 0.9em;">A short nudge to log what you've been working on, while it's still fresh.</p>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">Career goal</span>
+          <input value="I want to democratize the digital world and help people build the software they dream of" style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit;" />
+          <small style="color: #666; font-size: 0.78em;">Used to tailor your check-ins when you haven't logged anything recently. Leave blank to skip that.</small>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 0.3rem;">
+          <span style="font-size: 0.85em; color: #f3f4f6;">How often</span>
+          <select style="padding: 0.5rem 0.6rem; border-radius: 8px; border: 1px solid #2e303a; background: transparent; color: inherit; font: inherit;">
+            <option>Every week</option>
+            <option>Every two weeks</option>
+            <option>Every month</option>
+            <option>Every three months</option>
+          </select>
+        </label>
+        <label style="display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 0.2rem 0.5rem;">
+          <input type="checkbox" style="width: 1rem; height: 1rem; margin: 0; justify-self: start;" />
+          <span style="font-size: 0.85em; color: #f3f4f6;">Pause check-in emails</span>
+          <small style="grid-column: 2; color: #666; font-size: 0.78em;">Pausing keeps your schedule — unpausing picks up where it left off rather than sending straight away.</small>
+        </label>
+        <p style="margin: 0; color: #666; font-size: 0.85em;">Next check-in: Friday, Jul 31</p>
+        <div style="display: flex; align-items: center; gap: 0.7rem;">
+          <button style="padding: 0.5rem 1.1rem; border-radius: 8px; border: 1px solid rgba(192,132,252,0.5); background: rgba(192,132,252,0.15); color: #c084fc; font: inherit; cursor: pointer;">Save</button>
+        </div>
+      </section>
+    </sc-if>
+  </main>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { view: 'chat', out: false };
+  tab(name) {
+    const base = "font: inherit; font-size: 14px; padding: 6px 16px; border-radius: 8px; cursor: pointer; letter-spacing: 0.18px;";
+    return this.state.view === name
+      ? base + " border: 1px solid rgba(192,132,252,0.5); background: rgba(192,132,252,0.15); color: #c084fc;"
+      : base + " border: 1px solid #2e303a; background: transparent; color: #f3f4f6;";
+  }
+  renderVals() {
+    const v = this.state.view, out = this.state.out;
+    const go = (name) => () => this.setState({ view: name });
+    return {
+      signedOut: out, signedIn: !out,
+      signIn: () => this.setState({ out: false }),
+      signOut: () => this.setState({ out: true }),
+      isChat: v === 'chat', isUpload: v === 'upload', isEntries: v === 'entries',
+      isResume: v === 'resume', isSettings: v === 'settings',
+      goChat: go('chat'), goUpload: go('upload'), goEntries: go('entries'),
+      goResume: go('resume'), goSettings: go('settings'),
+      tabChat: this.tab('chat'), tabUpload: this.tab('upload'), tabEntries: this.tab('entries'),
+      tabResume: this.tab('resume'), tabSettings: this.tab('settings'),
+      noop: (e) => e.preventDefault(),
+      true: true,
+    };
+  }
+}
+</script>
+</body>
+</html>

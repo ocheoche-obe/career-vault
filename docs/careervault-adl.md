@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-07-28 (slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -74,6 +74,9 @@ Each ADR has:
 | ADR-040 | Nested `settings` updates — dotted-path `SET`, one path per sub-field       | Accepted   |
 | ADR-041 | MVP delivery posture — dev *is* the MVP, prod proven by dry run             | Accepted   |
 | ADR-042 | Integration tests tiered by cost, expensive tier opt-in                     | Accepted   |
+| ADR-043 | Correct two design-handoff tokens that fail WCAG, from its own palette      | Accepted   |
+| ADR-044 | Keep system-theme support; derive the light palette the handoff omits       | Accepted   |
+| ADR-045 | Home's aggregates derived client-side; "streak" defined                     | Accepted   |
 
 ---
 
@@ -2125,6 +2128,278 @@ Marking tests by resource cost rather than by speed is the same instinct as pyte
 not seconds. The transferable idea: **when a test consumes a metered external resource, the meter
 belongs in the test's metadata.** Anything that costs real money to run should have to say so at the
 point where someone decides to run it.
+
+---
+
+## ADR-043: Correct two design-handoff tokens that fail WCAG, using colours already in its palette
+
+**Status:** Accepted
+**Date:** 2026-08-07 (v1.1 slice 1)
+
+### Context
+The Claude Design handoff for the v1.1 redesign declares itself **high-fidelity**: *"Colors,
+typography, spacing, radii, and interactions are final. Recreate pixel-accurately using the exact
+values in the Design Tokens section."* It is a careful, thorough document — a full token table, per-
+view specs to the pixel, and a state model.
+
+It contains no accessibility section, states no contrast target, and was never measured. The
+pre-redesign audit measured every token pair (see
+[pre-redesign audit §B](design/v1.1-redesign/pre-redesign-audit.md)). Almost all of it passes
+comfortably — `text-secondary` at 7.39–8.16, `accent-text` above 10, `success` and `danger` above
+8.9. There are exactly **two** holes, and both are load-bearing:
+
+1. **`text-faint` #6f6c88 fails AA on all four surfaces** (3.53–3.90 against a 4.5 requirement).
+   There is no large-text exemption to fall back on: the handoff assigns this token to eyebrows,
+   placeholders, timestamps, record numbers, the year-grid month axis and panel labels — **all
+   specified at 10–11px**, far below the 18.66px-bold / 24px threshold. The smallest text in the
+   design is also its lowest-contrast text.
+
+2. **Keyboard focus is effectively unindicated.** The handoff specifies `outline: none` on inputs and
+   signals focus purely by swapping the border `border-strong #2b2b46` → `border-active #4b3fa8`.
+   That state change measures **1.68**, and the resulting border is **2.35** against the input it
+   sits on — below the 3.0 that WCAG 1.4.11 requires for a non-text indicator, and failing 2.4.7
+   (Focus Visible) outright.
+
+Neither is visible by inspection; both required measurement. This is precisely why the enumeration
+pass was retargeted to audit the *design* and not just the outgoing CSS.
+
+The tension is real. "Match the exact tokens" is a reasonable instruction from a designer who has
+made deliberate choices, and overriding it casually is how a reviewed design dies by a thousand
+implementer preferences. But an instruction about *visual fidelity* cannot bind on *accessibility*,
+because the designer was not making an accessibility claim — the handoff never mentions the subject.
+
+### Decision
+Deviate on exactly these two values, and **nowhere else**. Every other token ships verbatim.
+
+| Token | Handoff | Ships as | Rationale |
+|---|---|---|---|
+| `--text-faint` | `#6f6c88` | **`#817e99`** | Hue (246.4°) and saturation (11.5%) held exactly; HSL lightness raised 47.8% → 54.6%. The **minimum** lift that clears 4.5 on all four surfaces (4.55 / 4.76 / 4.92 / 5.02). |
+| focus indicator | `border-active` #4b3fa8, `outline: none` | **`accent` #7c6cff as a real ring** — `outline: 2px solid var(--accent); outline-offset: 2px` | Min **4.61** across all four surfaces vs 2.18. |
+
+Two constraints on how the deviation is made, both deliberate:
+
+- **No new colour is invented.** The focus fix uses `accent`, which is already in the handoff's
+  palette. We are not introducing an implementer's colour into a reviewed design; we are using the
+  right existing one.
+- **The tonal ladder is preserved.** `#817e99` remains clearly fainter than `text-muted` #8b88a8,
+  so the design's intended hierarchy of emphasis survives intact.
+
+`border-active` keeps its handoff role for **hover**, which carries no contrast requirement.
+
+### Consequences
+- The design's smallest type becomes legible without changing its size, weight, or placement.
+- Keyboard navigation becomes possible. The ring applies to buttons, chips and nav items too — not
+  just inputs — which the handoff's border-swap approach could never have covered.
+- A reviewer can diff our `:root` against the handoff's token table and find exactly two differences,
+  both documented here. That auditability is the reason for the minimum-lift rule.
+- **Knowingly accepted, not fixed:** the handoff's resting borders are hairlines
+  (`border` #22223a on `surface` = **1.20**; `border-strong` on `surface-sunken` = **1.40**), which is
+  thin against 1.4.11's identification requirement. Fixing it would mean rewriting the design's core
+  visual language — low-contrast surfaces separated by hairlines *is* the aesthetic — and inputs are
+  additionally identified by fill, placeholder and layout. Focus was fixed instead because focus
+  communicates **state**, which is the half a user cannot reconstruct from context. Recorded so the
+  choice is visible rather than overlooked. Same reasoning applies to the switch off-state (1.20) and
+  the year-grid's colour-only encoding, both logged in the audit as low severity.
+
+### Cross-cloud parallel
+The general shape is a **spec that is authoritative within its domain and silent outside it** — the
+same reason an OpenAPI document constrains payload shape but says nothing about rate limits, or a
+Terraform module fixes resource topology but not the account's SCPs. The failure mode is treating
+silence as permission. The discipline that makes the deviation safe is not the deviation itself but
+its *boundedness*: two named values, measured, minimum-magnitude, sourced from the existing palette,
+and written down before the code.
+
+---
+
+## ADR-044: Keep system-theme support; derive the light palette the handoff does not provide
+
+**Status:** Accepted
+**Date:** 2026-08-07 (v1.1 slice 1)
+
+### Context
+The handoff supplies **one palette, and it is dark** — the direction is explicitly a "data-centric
+dark dashboard" (concept 1b "Momentum"). There is no light variant anywhere in the document.
+
+The current app, however, **already follows the system theme**:
+[`index.css`](../frontend/src/index.css) sets `color-scheme: light dark` and ships a full
+`prefers-color-scheme: dark` block. Replacing that file wholesale with the handoff's dark-only
+palette would therefore **remove a capability the app has today** — silently, as a side effect of a
+visual redesign rather than as a decision anyone made.
+
+Raised by Oche on review of the audit: keep it.
+
+Two things make the timing matter more than the feature does:
+
+- **The token layer is the only cheap moment.** Theming is a property of how tokens are declared. Get
+  it right once in `index.css` and all six views inherit it for free; retrofit it after six views are
+  built against a single-palette assumption and it means auditing every feature CSS file. The cost
+  difference between doing this now and doing it later is roughly an order of magnitude.
+- **It is not a mechanical inversion.** The semantic *structure* transfers cleanly — in both themes
+  "elevated" is lighter than the page and "sunken" is darker than its card — but three things do not:
+  the accent washes (`rgba(124,108,255,0.14)` reads as a whisper over near-black and as a bruise over
+  white), the heatmap ramp (dark→pale must become pale→deep or "no activity" becomes the loudest
+  cell), and every contrast pair, which has to be re-measured from scratch.
+
+### Decision
+Ship both themes, with **dark as the declared base**:
+
+```css
+:root            { /* the handoff's dark tokens, verbatim except ADR-043's two */ }
+@media (prefers-color-scheme: light) { :root { /* derived light tokens */ } }
+```
+
+Dark on bare `:root` rather than the more conventional light-first, for a specific reason: **the
+approved artifact is the dark design.** Putting its values unqualified on `:root` means a reviewer
+can diff them against the handoff's token table line by line, and any browser that does not resolve
+`prefers-color-scheme` falls back to the design as approved rather than to our derivation.
+
+The light palette, every value validated at or above 4.5 for text and 3.0 for the focus ring:
+
+| Token | Dark | Light | Worst text ratio (light) |
+|---|---|---|---|
+| `bg` | `#0b0b12` | `#f7f6fb` | — |
+| `surface` | `#12121c` | `#ffffff` | — |
+| `surface-sunken` | `#0e0e17` | `#f1f0f7` | — |
+| `surface-raised` | `#16162a` | `#f4f2fd` | — |
+| `text-primary` | `#f5f3ff` | `#14121f` | 16.33 |
+| `text-body` | `#e8e6f2` | `#2a2740` | 12.68 |
+| `text-secondary` | `#a8a4c0` | `#55516e` | 6.65 |
+| `text-muted` | `#8b88a8` | `#615d7c` | 5.51 |
+| `text-faint` | `#817e99` *(ADR-043)* | `#6a6682` | **4.84** |
+| `accent` | `#7c6cff` | `#5b48d6` | 5.55 |
+| `accent-text` | `#cbbcff` | `#5b3fd4` | 5.97 |
+| `success` | `#8ad6b0` | `#1d7a4f` | 4.70 |
+| `danger` | `#ff9d9d` | `#c2354a` | 4.75 |
+| heatmap ramp | `#1a1a2c → #a58cff` | `#eae7f6 → #5b45c4` | ramp **inverted** |
+
+The ramp inversion is the one place light is not a re-tint but a re-think: in dark, intensity reads
+as *brighter*; in light it must read as *deeper*, or an empty week becomes the most prominent cell on
+Home.
+
+### Consequences
+- An existing capability survives a redesign that would otherwise have quietly dropped it. That is
+  the actual win here — this is **not-regressing**, not new scope.
+- Every feature CSS file must reference tokens only. A raw hex in `chat.css` is a light-mode bug that
+  will not show up in dark-mode review, which makes "no hex outside `index.css`" an enforceable slice
+  exit criterion rather than a style preference.
+- **The light theme is ours, not the designer's.** It has been held to the same contrast bar as dark
+  and derived from the same hues, but it has not been through their eye. If it is later reviewed and
+  revised, that revision lands in the token block alone.
+- Two themes doubles the surface for visual regression. Mitigated by tokens being the only place
+  colour is defined, but worth stating: any future palette change now has two answers to give.
+- **`color-scheme: light dark` must be retained** so form controls, scrollbars and the UA's own
+  chrome follow along. Dropping it produces the classic bug where a dark page renders white native
+  scrollbars and light-mode `<select>` popups.
+
+### Cross-cloud parallel
+The pattern is **environment-derived configuration resolved at the edge of the system, not threaded
+through it**: one declaration site, everything downstream reads a semantic name and stays ignorant of
+which environment it is in. It is the same discipline as referencing an SSM parameter rather than an
+account-specific ARN, or a CloudFormation `Mapping` keyed on region. The bug in every case is
+identical in shape — a literal that happened to be correct in the environment where it was written.
+
+---
+
+## ADR-045: Home's aggregates are derived client-side, and "streak" is defined here
+
+**Status:** Accepted
+**Date:** 2026-08-07 (v1.1 slice 1)
+
+### Context
+Home is the only genuinely new view in the redesign, and it is the only one that needs data the API
+does not return. It asks for: total entry count, count this quarter, a 130-cell year-activity grid,
+per-category counts, the four most recent entries, a **streak**, a résumé count, and a gap-analysis
+sentence.
+
+Most of that is already in the response to `GET /entries`, which returns every entry with
+`entry_type`, `event_date` and `created_at` (embeddings stripped server-side). Counting, bucketing
+and sorting that list is arithmetic, not retrieval.
+
+Two things are genuinely absent, and they are absent for different reasons:
+
+- **Résumé count / "Résumés built"** — there is no list endpoint at all. The API has
+  `POST /resumes/generate` and `GET /resumes/{run_id}` and nothing else. Worse, `RESUMERUN` items
+  carry a **30-day TTL** (ADR-037 / §3.2.5), so even with an endpoint a résumé history could not
+  reach further back than a month. That collision needs its own decision and is out of this slice.
+- **The gap-analysis line** ("*Light on certifications — three of your last four résumé targets asked
+  for one*") needs résumé target history *and* an inference over it. Against a $5 ceiling where
+  Bedrock is 87% of spend, a model call on every Home load is exactly the wrong shape.
+
+### Decision
+
+**1. Derive client-side, promote later if it hurts.** Everything computable from `GET /entries` is
+computed in the browser from the response the view already fetches. No new endpoint, no new IAM, no
+schema change, **$0** added cost. The corpus is 13 entries and ADR-028 already establishes that one
+career is tens-to-low-hundreds of items.
+
+This is a deliberate deferral, not an oversight: the promotion trigger is a corpus large enough that
+per-load derivation is felt, at which point the aggregates move behind an endpoint on `career_crud`
+and the view's data shape does not change. Recorded in the backlog rather than built now.
+
+**2. "Streak" is defined as follows.** The design invented this concept; nothing in the data model
+has it, so the definition is a product decision and belongs here rather than in whichever component
+happens to implement it.
+
+> A streak is the number of **consecutive completed cadence periods, counting backwards from the
+> current one, in which at least one entry was created.**
+
+Five details, each of which changes the number:
+
+- **It counts `created_at`, never `event_date`.** A streak measures *the habit of logging*, not when
+  things happened. Using `event_date` would let a user backfill a 2019 job and extend a 2026 streak,
+  which inverts the meaning of the metric.
+- **Period length follows the user's cadence**, reusing `CADENCE_DAYS` from
+  [`checkin_schedule.py`](../backend/shared/python/careervault/checkin_schedule.py) — the same source
+  that paces check-in emails, so the streak can never disagree with the thing that prompts it.
+- **Periods are anchored to the calendar, not to "now".** ISO weeks for weekly, ISO week-pairs for
+  biweekly, calendar months for monthly, calendar quarters for quarterly. A rolling window anchored
+  to the current instant would make the streak drift day to day with no user action; the design
+  already thinks this way, with its "week 31" eyebrow.
+- **The current period cannot break the streak until it ends.** An unfinished period with no entry is
+  neutral, not a miss. Otherwise every user's streak would read zero every Monday morning.
+- **All four cadences are supported, including quarterly.** The design offers three options; the
+  backend has offered four since slice 8 and `SettingsUpdate` validates against all four. The UI
+  noun follows the cadence — week / fortnight / month / quarter.
+
+**3. What cannot be derived is not faked.** B-015 is the precedent: the settings form shipped
+`placeholder="Oche Obe"` and it was logged as a defect. Inventing a résumé count would be the same
+mistake with more digits.
+
+| Design element | This slice |
+|---|---|
+| "In the vault" + "entries since 2022" | Derived — count, and earliest `event_date` year. |
+| "This quarter" + "up from N in Q2" | Derived — current and previous calendar-quarter counts. |
+| **"Résumés built" + "last: \<title\>"** | **No data source.** Card slot is kept and filled with **"Longest streak"**, which is derivable from the same data and on-theme. Reverts to the designed content when a résumé list endpoint exists. |
+| Year-in-wins grid | Derived — `created_at` bucketed into 26 fortnightly columns. |
+| "Latest in the vault" | Derived — four most recent by `created_at`. |
+| "Where the weight is" bars | Derived — counts per `entry_type`. |
+| **Gap-analysis sentence** | **Omitted this slice.** Requires résumé history; a per-load Bedrock call is the wrong shape against the ceiling. |
+
+Substituting the third stat card rather than dropping it is the smaller deviation: it preserves the
+design's `repeat(3, 1fr)` grid and its visual rhythm, where removing a card would leave a
+two-thirds-empty row that no one designed.
+
+### Consequences
+- Home ships this slice with no backend change whatsoever. The entire redesign of the shell and Home
+  is a frontend diff, which keeps the review surface small and the deployment risk near zero.
+- **One source of truth is preserved**, which the handoff calls out as load-bearing: saving an entry
+  updates the stat cards, the year grid, the category bars and "Latest in the vault" together,
+  because all four read the same derived array.
+- The streak is now falsifiable. It has a written definition, so it can have unit tests — cadence
+  boundaries, an empty corpus, a single entry, a gap of exactly one period, and the
+  current-period-not-yet-over case.
+- Two designed elements are visibly absent or altered. Both are recorded against the slice that can
+  actually supply them, rather than being quietly approximated.
+- The résumé-list endpoint and the `RESUMERUN` 30-day TTL question are now formally blocking the
+  Résumés view, and that view cannot be honestly built until the TTL question is answered.
+
+### Cross-cloud parallel
+"Derive on read until it hurts, then materialise" is the ordinary progression from computed views to
+materialised views — the same call as a SQL `VIEW` versus a summary table, or DynamoDB's choice
+between recomputing an aggregate and maintaining it via a stream. The trap is materialising first:
+you inherit invalidation, staleness and backfill before you have evidence you needed any of it. The
+part worth carrying is the *trigger* — writing down what would have to be true to change the answer,
+at the moment you make it, while the reasoning is still in your head.
 
 ---
 
