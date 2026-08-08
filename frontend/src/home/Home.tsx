@@ -169,22 +169,34 @@ export function Home({
           <h2 id="year-heading">Your year in wins</h2>
           <p className="range">last 12 {noun === 'month' ? 'months' : 'months'}</p>
         </div>
-        {/* Axis and cells share one max-content wrapper so the month labels stay aligned to the
-            columns they describe — and so both scroll together on a narrow viewport. */}
+        {/* Axis and cells share one wrapper on the same column track, so each month label sits above
+            the week its month actually starts in — and both scroll together on a narrow viewport. */}
         <div className="grid-scroll">
-          <div className="grid-inner">
+          <div className="grid-inner" style={{ '--cols': stats.grid.columns } as React.CSSProperties}>
             <div
               className="grid-cells"
               role="img"
-              aria-label={`Activity over the last year: ${stats.total} entries logged`}
+              aria-label={`Activity over the last year: ${stats.total} entries logged across ${stats.grid.columns} weeks`}
             >
-              {stats.grid.map((step, i) => (
-                <span key={i} className="cell" data-step={step} />
+              {stats.grid.cells.map((cell) => (
+                <span
+                  key={cell.date}
+                  className="cell"
+                  data-step={cell.step}
+                  data-future={cell.future ? '' : undefined}
+                  title={
+                    cell.future
+                      ? undefined
+                      : `${cell.count} ${cell.count === 1 ? 'entry' : 'entries'} on ${cell.date}`
+                  }
+                />
               ))}
             </div>
             <div className="grid-axis" aria-hidden="true">
-              {stats.monthLabels.map((m, i) => (
-                <span key={`${m}-${i}`}>{m}</span>
+              {stats.grid.months.map((month) => (
+                <span key={`${month.label}-${month.column}`} style={{ gridColumn: month.column }}>
+                  {month.label}
+                </span>
               ))}
             </div>
           </div>

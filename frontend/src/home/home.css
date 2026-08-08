@@ -161,11 +161,17 @@
   color: var(--text-muted);
 }
 
+/* Figtree, not the handoff's JetBrains Mono. Mono earns its place on small data-chrome — dates,
+   record numbers, uppercase micro-labels — but this is the largest type on the page, and a heavy
+   coding face at 30px against a soft grotesque reads as a second display typeface. That is the very
+   thing the handoff set out to avoid when it dropped 1d's serif accent for "one sans across the
+   entire UI". `tabular-nums` keeps the three stat cards on a shared numeric rhythm, which was the
+   only functional argument for mono here. */
 .stat-value {
-  font-family: var(--mono);
-  font-size: 30px;
+  font-size: 32px;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
 
@@ -187,32 +193,41 @@
   color: var(--text-muted);
 }
 
+/* One cell per day, columns are weeks, rows are day-of-week — the GitHub contribution-graph form.
+   The handoff's 26×5 fortnight blocks rendered as a small dense square in a mostly empty card;
+   this fills the width at any size and makes a weekly check-in habit visible as a horizontal band.
+   `1fr` columns are what spread the cells evenly rather than clustering them at a fixed 13px. */
 .grid-scroll {
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
-/* max-content, so the axis below inherits exactly the grid's width and its labels line up with the
-   columns they describe rather than spreading across the whole card. */
 .grid-inner {
-  width: max-content;
+  width: 100%;
+  /* Below this the cells stop being legible, so the container scrolls instead of shrinking. */
+  min-width: 620px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .grid-cells {
   display: grid;
+  grid-template-rows: repeat(7, 1fr);
   grid-auto-flow: column;
-  grid-template-rows: repeat(5, 13px);
-  gap: 4px;
+  grid-auto-columns: 1fr;
+  gap: 3px;
 }
 
 .cell {
-  width: 13px;
-  height: 13px;
-  border-radius: 3px;
+  aspect-ratio: 1;
+  border-radius: 2px;
   background: var(--heat-0);
+}
+
+/* Days after today in the current, partial week: present for alignment, invisible like GitHub's. */
+.cell[data-future] {
+  background: transparent;
 }
 
 .cell[data-step='1'] {
@@ -228,13 +243,21 @@
   background: var(--heat-4);
 }
 
+/* Same column track as the cells, so a label lands above the week its month begins in rather than
+   at an evenly-spaced approximation. */
 .grid-axis {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(var(--cols), 1fr);
+  gap: 3px;
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.1em;
   color: var(--text-faint);
+}
+
+.grid-axis span {
+  grid-row: 1;
+  white-space: nowrap;
 }
 
 /* ---- Two-column row ------------------------------------------------------------------------ */

@@ -1187,6 +1187,27 @@ placeholder content is logged as a defect, not shipped as a stand-in. Where a de
 source, either substitute something derivable and on-theme (as ADR-045 does for the third stat card)
 or omit it; do not fill it with plausible-looking fiction.
 
+**Amend the design where it does not work.** Oche's explicit direction, 2026-08-07: the handoff was
+commissioned as a *concept*, and although it presents itself as pixel-final, judgment overrides
+fidelity when an element does not hold up in the real app. Two worked examples from this slice, both
+of which only became visible once the thing was on screen:
+
+- **The year grid.** Specified as 130 cells in 26 fortnight columns, which measures 442px inside a
+  ~1172px card — a small dense block with two thirds of its card empty, reading as unfinished.
+  Rebuilt as one cell per day across 53 week-columns × 7 day-of-week rows (the GitHub
+  contribution-graph form), which fills any width and makes a check-in cadence visible as a
+  horizontal band.
+- **The big stat numerals.** Specified as JetBrains Mono 30px/700. Mono is right for small
+  data-chrome — dates, record numbers, uppercase micro-labels — but at 30px it is the largest type
+  on the page, and a heavy coding face beside a soft grotesque functions as a second display
+  typeface. That is what the handoff itself set out to avoid in dropping 1d's serif accent for "one
+  sans across the entire UI", so Figtree with `tabular-nums` is *more* faithful to its stated intent
+  than its literal instruction.
+
+The bar for amending: the deviation is recorded with its reasoning, and it serves the design's own
+stated goals rather than the implementer's preference. Accessibility deviations are a separate and
+stricter case — those go through an ADR (ADR-043).
+
 ### Scope — in
 
 1. Design bundle relocated to `docs/design/v1.1-redesign/`. ✅

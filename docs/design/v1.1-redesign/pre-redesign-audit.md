@@ -286,6 +286,16 @@ to 13 fortnightly buckets on mobile (changes what the chart means). **Recommend 
 container** — it keeps one data model across viewports, which matters because everything on Home
 reads from one derived source.
 
+> **Superseded — the grid was redesigned instead.** Building it revealed a second problem the
+> measurement missed: at 442px inside a ~1172px card, the specified grid rendered as a small dense
+> block with two thirds of its card empty, which read as unfinished rather than deliberate. Neither
+> that nor the mobile overflow was fixable without changing the form, so with Oche's sign-off the
+> grid became **one cell per day, 53 week-columns × 7 day-of-week rows** — the GitHub
+> contribution-graph form. `1fr` columns make it fill any width honestly, and it earns a property
+> the fortnight buckets could not: a user who checks in every Friday produces a clean horizontal
+> band, so the chart *shows the cadence*, which is the point of Home. The scroll container is still
+> there, now with a 620px floor below which cells stop being legible.
+
 ---
 
 ## Part D — Baseline measurements

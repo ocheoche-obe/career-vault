@@ -118,45 +118,96 @@ export function computeStreak(
   return { current, longest, recent };
 }
 
-/**
- * The year-activity grid.
- *
- * The handoff specifies 130 cells laid out column-major as 26 columns × 5 rows, with a month axis
- * every two months — which makes each column a fortnight and each cell ~2.8 days of a 364-day
- * window. That is an odd bucket size semantically, but it is what produces the intended visual, and
- * at this corpus size a bucket holds 0 or 1 entries either way.
- *
- * Returns intensity steps 0–4, oldest first, mapping onto `--heat-0` … `--heat-4`.
- */
-export function yearGrid(entries: Entry[], now: Date = new Date(), cells = 130): number[] {
-  const windowDays = 364;
-  const bucketMs = (windowDays * DAY_MS) / cells;
-  const start = now.getTime() - windowDays * DAY_MS;
+export type GridCell = {
+  /** Intensity 0–4, mapping onto `--heat-0` … `--heat-4`. */
+  step: number;
+  /** ISO date (UTC) this cell represents — also its tooltip. */
+  date: string;
+  count: number;
+  /** Days after today in the current, partial week. Rendered invisible, as GitHub does. */
+  future: boolean;
+};
 
-  const counts = new Array<number>(cells).fill(0);
+export type YearGrid = {
+  cells: GridCell[];
+  columns: number;
+  /** Month labels with the grid column each one starts at (1-based, for `grid-column`). */
+  months: { label: string; column: number }[];
+};
+
+const GRID_WEEKS = 53;
+
+/**
+ * The year-activity grid — one cell per day, columns are ISO weeks, rows are day-of-week.
+ *
+ * **This deviates from the handoff deliberately.** It specified 130 cells as 26 columns × 5 rows,
+ * which works out to ~2.8-day buckets and, at the card's real width, renders as a small dense block
+ * occupying about a third of the card with the rest empty. Confirmed with Oche 2026-08-07: the
+ * handoff is conceptual, and where an element does not work it should be amended rather than
+ * reproduced faithfully.
+ *
+ * A day/week/day-of-week grid is the well-understood form (GitHub's contribution graph), it fills
+ * the card width honestly at any size, and it earns a property the fortnight buckets could not: a
+ * user who checks in every Friday produces a clean horizontal band, so the chart *shows the
+ * cadence*, which is the entire point of Home.
+ */
+export function yearGrid(entries: Entry[], now: Date = new Date()): YearGrid {
+  const counts = new Map<string, number>();
   for (const entry of entries) {
     const at = loggedAt(entry);
     if (!at) continue;
-    const offset = at.getTime() - start;
-    if (offset < 0) continue;
-    const bucket = Math.min(cells - 1, Math.floor(offset / bucketMs));
-    counts[bucket] += 1;
+    const key = new Date(
+      Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()),
+    ).toISOString();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const max = Math.max(...counts, 0);
-  if (max === 0) return counts.map(() => 0);
-  // Four filled steps above "none"; a bucket with any activity never reads as empty.
-  return counts.map((c) => (c === 0 ? 0 : Math.min(4, Math.ceil((c / max) * 4))));
-}
+  // Anchor to the Monday of the current week so the last column is the in-progress one, then step
+  // back 52 weeks — 53 columns inclusive, which is what covers a full year at any start date.
+  const lastMonday = mondayOf(now);
+  const start = lastMonday - (GRID_WEEKS - 1) * WEEK_MS;
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
 
-/** The six months labelling the grid axis, every other month across the window. */
-export function gridMonthLabels(now: Date = new Date()): string[] {
-  const labels: string[] = [];
-  for (let i = 12; i > 0; i -= 2) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i + 1, 1));
-    labels.push(d.toLocaleString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase());
+  const cells: GridCell[] = [];
+  const months: { label: string; column: number }[] = [];
+  let previousMonth = -1;
+
+  for (let column = 0; column < GRID_WEEKS; column += 1) {
+    for (let row = 0; row < 7; row += 1) {
+      const time = start + column * WEEK_MS + row * DAY_MS;
+      const date = new Date(time);
+      const key = date.toISOString();
+      const count = counts.get(key) ?? 0;
+      cells.push({ step: 0, date: key.slice(0, 10), count, future: time > today });
+
+      // A month is labelled at the column containing its first Monday, so the label sits above the
+      // week the month actually begins in rather than at an evenly-spaced guess.
+      if (row === 0) {
+        const month = date.getUTCMonth();
+        if (month !== previousMonth) {
+          previousMonth = month;
+          months.push({
+            label: date.toLocaleString("en-US", { month: "short", timeZone: "UTC" }).toUpperCase(),
+            column: column + 1,
+          });
+        }
+      }
+    }
   }
-  return labels;
+
+  const max = Math.max(...cells.map((c) => c.count), 0);
+  if (max > 0) {
+    for (const cell of cells) {
+      // Four filled steps above "none": a day with any activity never renders as empty.
+      cell.step = cell.count === 0 ? 0 : Math.min(4, Math.ceil((cell.count / max) * 4));
+    }
+  }
+
+  // Drop the first label if it would collide with the second — a window starting mid-month leaves
+  // its first column only a week or two wide.
+  if (months.length > 1 && months[1].column - months[0].column < 3) months.shift();
+
+  return { cells, columns: GRID_WEEKS, months };
 }
 
 /**
@@ -204,8 +255,7 @@ export type HomeStats = {
   lastQuarter: number;
   streak: StreakResult;
   categories: CategoryCount[];
-  grid: number[];
-  monthLabels: string[];
+  grid: YearGrid;
   latest: Entry[];
 };
 
@@ -247,7 +297,6 @@ export function deriveHomeStats(
     streak: computeStreak(entries, cadence, now),
     categories: categoryCounts(entries),
     grid: yearGrid(entries, now),
-    monthLabels: gridMonthLabels(now),
     latest,
   };
 }

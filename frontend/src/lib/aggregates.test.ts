@@ -145,22 +145,58 @@ describe("categoryCounts", () => {
 });
 
 describe("yearGrid", () => {
-  it("returns the full cell count with everything empty for no entries", () => {
+  it("is a full year of days as 53 week-columns × 7 day rows", () => {
     const grid = yearGrid([], NOW);
-    expect(grid).toHaveLength(130);
-    expect(grid.every((step) => step === 0)).toBe(true);
+    expect(grid.columns).toBe(53);
+    expect(grid.cells).toHaveLength(53 * 7);
+    expect(grid.cells.every((c) => c.step === 0)).toBe(true);
   });
 
-  it("gives any bucket with activity a non-zero step", () => {
-    // A bucket holding a single entry must never render as "none" — at this corpus size almost
-    // every non-empty bucket holds exactly one.
+  it("gives any day with activity a non-zero step", () => {
+    // A day holding a single entry must never render as "none" — at this corpus size almost every
+    // non-empty day holds exactly one.
     const grid = yearGrid([entry(daysBefore(5))], NOW);
-    expect(grid.filter((step) => step > 0)).toHaveLength(1);
-    expect(Math.max(...grid)).toBe(4);
+    const lit = grid.cells.filter((c) => c.step > 0);
+    expect(lit).toHaveLength(1);
+    expect(lit[0].step).toBe(4);
   });
 
-  it("drops entries older than the window rather than clamping them into the first bucket", () => {
-    expect(yearGrid([entry(daysBefore(900))], NOW).every((s) => s === 0)).toBe(true);
+  it("groups several entries logged on one day into a single cell", () => {
+    const sameDay = [entry(daysBefore(5)), entry(daysBefore(5)), entry(daysBefore(5))];
+    const lit = yearGrid(sameDay, NOW).cells.filter((c) => c.step > 0);
+    expect(lit).toHaveLength(1);
+    expect(lit[0].count).toBe(3);
+  });
+
+  it("drops entries older than the window rather than clamping them into the first cell", () => {
+    expect(yearGrid([entry(daysBefore(900))], NOW).cells.every((c) => c.step === 0)).toBe(true);
+  });
+
+  it("puts each row on a fixed weekday, which is what makes a check-in cadence visible", () => {
+    // Column-major fill: cells 0-6 are the first week, and row N is the same weekday every column.
+    const { cells } = yearGrid([], NOW);
+    const firstColumnDay = new Date(cells[0].date).getUTCDay();
+    const secondColumnDay = new Date(cells[7].date).getUTCDay();
+    expect(firstColumnDay).toBe(1); // Monday
+    expect(secondColumnDay).toBe(1);
+  });
+
+  it("marks days after today as future so they render invisible instead of empty", () => {
+    // NOW is a Thursday, so the current week's Fri/Sat/Sun are future — real days, not absences.
+    const { cells } = yearGrid([], NOW);
+    const future = cells.filter((c) => c.future);
+    expect(future).toHaveLength(3);
+    expect(cells[cells.length - 1].future).toBe(true);
+  });
+
+  it("labels months at the column their month begins in, not at even intervals", () => {
+    const { months } = yearGrid([], NOW);
+    // A 53-week window spans 12-13 month boundaries.
+    expect(months.length).toBeGreaterThanOrEqual(12);
+    expect(months.every((m) => m.column >= 1 && m.column <= 53)).toBe(true);
+    // Columns strictly increase — a label out of order would mean a mislabelled axis.
+    const columns = months.map((m) => m.column);
+    expect([...columns].sort((a, b) => a - b)).toEqual(columns);
   });
 });
 
