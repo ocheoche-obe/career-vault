@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { buildLogoutUrl } from './auth/oidcConfig'
 import { Chat } from './chat/Chat'
@@ -6,30 +6,115 @@ import { Dashboard } from './entries/Dashboard'
 import { Upload } from './upload/Upload'
 import { Resume } from './resume/Resume'
 import { Settings } from './settings/Settings'
+import { Home } from './home/Home'
+import { listEntries, getSettings, type Entry } from './lib/api'
+import { computeStreak, CADENCE_NOUN, type Cadence } from './lib/aggregates'
 import './App.css'
 import './entries/entries.css'
 
 /**
- * Authed shell (ADR-025). Five views behind Cognito auth: the ingestion Chat (FR-2, plus FR-6.1
- * Q&A), the resume Upload bootstrap (ADR-013/ADR-035), the entries Dashboard (FR-3.2/3.3), Résumé
- * generation (FR-5, the ADR-037 async job), and Details — the profile identity that gets printed
- * on a generated résumé (backlog B-008). Entries persist only after the user confirms — a proposal
- * card in chat, or a row in the upload review table.
+ * Authed shell (ADR-025), rebuilt for the v1.1 redesign.
+ *
+ * Six views behind Cognito auth: Home (new — derived aggregates per ADR-045), Log (FR-2 ingestion
+ * plus FR-6.1 Q&A), Timeline (FR-3.2/3.3), Résumés (FR-5, the ADR-037 async job), Import
+ * (ADR-013/ADR-035) and Details (the profile identity printed on a generated résumé, B-008).
+ *
+ * Structure matters as much as styling here. Pre-redesign audit §A1 found `<header>` nested inside
+ * `<main>`, which silently costs the banner landmark — `<nav>` keeps its role anywhere, `<header>`
+ * only earns `banner` when scoped to the body. Header and nav are now siblings of `<main>`, there is
+ * a skip link, the active tab carries `aria-current`, and the wordmark is no longer an `<h1>` so
+ * each view can own the page's single heading (§A10).
+ *
+ * Entries are fetched once here rather than per-view: Home derives every aggregate it shows from
+ * that one list, which is what keeps the handoff's "everything reads from one source of truth"
+ * property true rather than aspirational.
  */
-type View = 'chat' | 'upload' | 'entries' | 'resume' | 'settings'
+type View = 'home' | 'log' | 'timeline' | 'resumes' | 'import' | 'details'
+
+const NAV: { id: View; label: string }[] = [
+  { id: 'home', label: 'Home' },
+  { id: 'log', label: 'Log' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'resumes', label: 'Résumés' },
+  { id: 'import', label: 'Import' },
+  { id: 'details', label: 'Details' },
+]
+
+function initials(email?: string, name?: string | null): string {
+  const source = (name || email || '').trim()
+  if (!source) return '··'
+  const parts = source.split(/[\s.@_-]+/).filter(Boolean)
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
+  return source.slice(0, 2).toUpperCase()
+}
 
 function App() {
   const auth = useAuth()
-  const [view, setView] = useState<View>('chat')
+  const [view, setView] = useState<View>('home')
+  const [entries, setEntries] = useState<Entry[] | null>(null)
+  const [cadence, setCadence] = useState<Cadence>('weekly')
+  const [profileName, setProfileName] = useState<string | null>(null)
+  // Carries Home's one-line composer text across to Log so the hand-off does not lose it.
+  const [logDraft, setLogDraft] = useState('')
 
-  if (auth.isLoading) return <main><p>Loading…</p></main>
-  if (auth.error) return <main><p>Auth error: {auth.error.message}</p></main>
+  const idToken = auth.user?.id_token
+
+  // One fetch for the shell and Home: Home derives every aggregate it shows from this single list,
+  // which is what makes the handoff's "everything reads from one source of truth" property real
+  // rather than aspirational.
+  //
+  // `allSettled` rather than `all` because the two calls fail independently — a missing PROFILE is
+  // an ordinary state for a new user (it is exactly what B-008 traced), and it must not blank out
+  // the entry list. The cancellation guard keeps a slow response from a previous token writing
+  // state after it has been superseded.
+  useEffect(() => {
+    if (!idToken) return
+    let cancelled = false
+
+    void (async () => {
+      const [rows, profile] = await Promise.allSettled([listEntries(idToken), getSettings(idToken)])
+      if (cancelled) return
+
+      if (rows.status === 'fulfilled') setEntries(rows.value)
+      if (profile.status === 'fulfilled') {
+        const value = (profile.value as { settings?: { checkin_cadence?: string } }).settings
+          ?.checkin_cadence
+        if (value && value in CADENCE_NOUN) setCadence(value as Cadence)
+        setProfileName((profile.value as { name?: string | null }).name ?? null)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [idToken])
+
+  if (auth.isLoading) {
+    return (
+      <main className="app-state" aria-busy="true">
+        <p>Loading…</p>
+      </main>
+    )
+  }
+
+  if (auth.error) {
+    return (
+      <main className="app-state">
+        <h1>Something went wrong</h1>
+        <p role="alert">Auth error: {auth.error.message}</p>
+      </main>
+    )
+  }
 
   if (!auth.isAuthenticated) {
     return (
-      <main>
+      <main className="app-state app-signin">
+        <span className="logo-mark" aria-hidden="true" />
         <h1>CareerVault</h1>
-        <button onClick={() => void auth.signinRedirect()}>Sign in</button>
+        <p>Your career, on the record. Log what you achieve while it is fresh.</p>
+        <button className="btn-primary" onClick={() => void auth.signinRedirect()}>
+          Sign in
+        </button>
       </main>
     )
   }
@@ -40,42 +125,89 @@ function App() {
     window.location.href = buildLogoutUrl()
   }
 
-  const idToken = auth.user?.id_token
+  const email = auth.user?.profile.email
+  const streak = computeStreak(entries ?? [], cadence)
+  const noun = CADENCE_NOUN[cadence]
 
   return (
-    <main>
+    <>
+      <a className="skip-link" href="#view">
+        Skip to content
+      </a>
+
       <header className="app-header">
-        <h1>CareerVault</h1>
-        <div className="app-header-user">
-          <span>{auth.user?.profile.email ?? auth.user?.profile.sub}</span>
-          <button onClick={signOut}>Sign out</button>
+        <div className="app-header-inner">
+          <div className="brand">
+            <span className="logo-mark" aria-hidden="true" />
+            <span className="wordmark">CareerVault</span>
+          </div>
+
+          <nav className="view-nav" aria-label="Views">
+            {NAV.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className={view === item.id ? 'active' : ''}
+                aria-current={view === item.id ? 'page' : undefined}
+                onClick={() => setView(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <div className="header-end">
+            <p className="streak-pill">
+              <span className="sparkline" aria-hidden="true">
+                {streak.recent.map((hit, i) => (
+                  <span key={i} className={hit ? 'bar hit' : 'bar'} />
+                ))}
+              </span>
+              <span className="streak-label">
+                {streak.current > 0 ? `${streak.current}-${noun} streak` : 'No streak yet'}
+              </span>
+            </p>
+            <details className="account">
+              <summary aria-label={`Account menu for ${email ?? 'your account'}`}>
+                <span className="avatar" aria-hidden="true">
+                  {initials(email, profileName)}
+                </span>
+              </summary>
+              <div className="account-menu">
+                <p className="account-email">{email}</p>
+                <button type="button" onClick={signOut}>
+                  Sign out
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
       </header>
 
-      <nav className="view-nav">
-        <button className={view === 'chat' ? 'active' : ''} onClick={() => setView('chat')}>Chat</button>
-        <button className={view === 'upload' ? 'active' : ''} onClick={() => setView('upload')}>Upload résumé</button>
-        <button className={view === 'entries' ? 'active' : ''} onClick={() => setView('entries')}>Entries</button>
-        <button className={view === 'resume' ? 'active' : ''} onClick={() => setView('resume')}>Résumé</button>
-        <button className={view === 'settings' ? 'active' : ''} onClick={() => setView('settings')}>Details</button>
-      </nav>
-
-      {idToken ? (
-        view === 'chat' ? (
-          <Chat idToken={idToken} />
-        ) : view === 'upload' ? (
+      <main id="view" tabIndex={-1}>
+        {!idToken ? (
+          <p role="alert">No token — sign in again.</p>
+        ) : view === 'home' ? (
+          <Home
+            entries={entries}
+            cadence={cadence}
+            name={profileName}
+            onNavigate={setView}
+            onDraft={setLogDraft}
+          />
+        ) : view === 'log' ? (
+          <Chat idToken={idToken} initialDraft={logDraft} />
+        ) : view === 'import' ? (
           <Upload idToken={idToken} />
-        ) : view === 'resume' ? (
+        ) : view === 'resumes' ? (
           <Resume idToken={idToken} />
-        ) : view === 'settings' ? (
+        ) : view === 'details' ? (
           <Settings idToken={idToken} />
         ) : (
           <Dashboard idToken={idToken} />
-        )
-      ) : (
-        <p>No token — sign in again.</p>
-      )}
-    </main>
+        )}
+      </main>
+    </>
   )
 }
 

@@ -333,6 +333,12 @@ time:
 
 The scorecard marks NFR-6.2 ❓*Unverified*. It should read ❌ **Failed** — there is now a number.
 
+> **Fixed in this slice.** After the shell rebuild: **0px overflow on all six views at 375px**,
+> verified in-browser. The header's email string moved into a fixed-width account disclosure and the
+> nav scrolls horizontally as the handoff specifies. Scorecard re-scored to ⚠️ rather than ✅ — zero
+> overflow is one measurable property of "usable on mobile", and the five views behind the shell
+> keep their pre-redesign internal layouts until v1.1 slice 2.
+
 **The failure is entirely in the shell**, not in any individual view: `.app-header` is
 `width: min(720px, 100%)` with a 241px email string that cannot compress, and `.view-nav` neither
 wraps nor scrolls. That is a fortunate result — the shell is exactly what this slice rebuilds, so

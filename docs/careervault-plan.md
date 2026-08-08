@@ -68,6 +68,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
 | 8 | Check-in emails | FR-4 | ✅ | [#31](https://github.com/ocheoche-obe/career-vault/pull/31) |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
+| **v1.1-1** | **Redesign — audit, tokens, shell, Home** | **B-001, NFR-6.2, NFR-2.3** | **🔨** | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1160,6 +1161,64 @@ Not dropped — reconsidered when their trigger arrives.
 - **B-010** (Sonnet 5) — `blocked-external`, nothing self-serve remains.
 - **B-016** (a failed send consumes the cycle) — correct trade for a nudge; revisit only if the
   pattern is copied somewhere transactional.
+
+---
+
+## v1.1 slice 1 — Redesign: audit, tokens, shell, Home 🔨
+
+**Goal:** land the design system and the two views that carry it — the app shell and a new Home —
+against a measured baseline, fixing the accessibility debt a visual rebuild would otherwise inherit.
+
+**Key refs:** [pre-redesign audit](design/v1.1-redesign/pre-redesign-audit.md) ·
+[design handoff](design/v1.1-redesign/README.md) · ADR-043 (token corrections) ·
+ADR-044 (both themes) · ADR-045 (client-side aggregates, streak) · ADR-003 · ADR-019 · ADR-025
+
+### ⚠ How to read the design handoff
+
+**It is a proposal informed by the repo, not a contract** — confirmed with Oche 2026-08-07. Claude
+Design was given the direction and read access to the repository, and it filled gaps with features
+that seemed plausible. Several specified elements **describe things that do not exist**: a résumé
+history grid (no list endpoint; `RESUMERUN` is TTL'd at 30 days), a gap-analysis insight line, a
+"warn me before the streak breaks" reminder, JSON export, and account deletion.
+
+The rule for this and every later redesign slice: **build against what exists, defer the rest with a
+backlog item, and never fabricate the data in between.** B-015 is the standing precedent — invented
+placeholder content is logged as a defect, not shipped as a stand-in. Where a designed slot has no
+source, either substitute something derivable and on-theme (as ADR-045 does for the third stat card)
+or omit it; do not fill it with plausible-looking fiction.
+
+### Scope — in
+
+1. Design bundle relocated to `docs/design/v1.1-redesign/`. ✅
+2. Enumeration pass: a11y tree per view, contrast audit of the incoming design, NFR-2.3 baseline. ✅
+3. ADR-043 / ADR-044 / ADR-045. ✅
+4. Tokens into `index.css` — both themes per ADR-044; dead Vite starter CSS removed.
+5. Shell: `<header>`/`<nav>` as siblings of `<main>`, six-tab nav, `aria-current`, streak pill,
+   avatar, **and the auth states the design omits** (loading, error, signed-out, sign-out).
+6. Home view — aggregates derived client-side per ADR-045.
+7. Responsive: breakpoints per audit §C; the mobile overflow that fails NFR-6.2 is shell-local.
+8. Frontend tests updated — `App.test.tsx` asserts nav labels that all change; new tests for the
+   streak derivation, which ADR-045 makes falsifiable.
+
+### Scope — out
+
+Log, Timeline, Résumés, Import, Details (v1.1 slice 2). Résumé list endpoint and the `RESUMERUN`
+TTL question (**B-028**, now blocking the Résumés view). Gap-analysis line (**B-030**). Aggregate
+endpoint (**B-029**). Voice capture and the résumé-latency workstream — separate v1.1 items.
+
+### Exit criteria
+
+- `docs/design/v1.1-redesign/` in place; no stray top-level folder. ✅
+- Enumeration artifact committed with a11y findings, contrast remedies, NFR-2.3 baseline. ✅
+- ADR-043/044/045 written **before** the code they justify. ✅
+- Tokens in `index.css`; **no hex outside it** — a raw hex in a feature CSS file is a light-mode bug
+  invisible to dark-mode review, so this is an exit criterion, not a style preference.
+- Shell + Home match the handoff at ≥1280px and stack cleanly at 375px, in **both** themes.
+- Zero horizontal overflow at 360px on every view (closes the NFR-6.2 failure).
+- Banner landmark present; `aria-current` on the active tab; exactly one `<h1>` per view.
+- Auth states preserved — the design has no sign-out and we must not lose it.
+- Frontend tests green and updated.
+- Scorecard NFR-6.2 re-measured and re-scored after the fix.
 
 ---
 

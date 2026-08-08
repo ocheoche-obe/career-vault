@@ -29,9 +29,16 @@ type Turn =
 
 const MAX_MESSAGE_CHARS = 4000;
 
-export function Chat({ idToken }: { idToken: string }) {
+/**
+ * `initialDraft` seeds the composer from Home's one-line input so the user's text survives the
+ * hand-off between views. It is deliberately *not* auto-sent: the handoff's Home composer sends
+ * immediately and lands in a redesigned proposal-card flow, and faking half of that here would
+ * imply the Log view had been redesigned when it has not. Seeding preserves the intent and loses
+ * nothing; auto-send lands with the Log redesign in v1.1 slice 2.
+ */
+export function Chat({ idToken, initialDraft = "" }: { idToken: string; initialDraft?: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft);
   const [sending, setSending] = useState(false);
   const sessionIdRef = useRef<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
