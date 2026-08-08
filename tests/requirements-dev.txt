@@ -5,4 +5,4 @@ boto3
 pytest
 # resume_agent renders HTML with Jinja2 (bundled with that function). WeasyPrint is NOT installed
 # for tests — rendering.py imports it lazily, so the PDF path is exercised only in deployed smoke.
-jinja2>=3.1.4,<4.0
+jinja2>=3.1.6,<4.0
