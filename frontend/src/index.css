@@ -66,6 +66,9 @@
 
   /* ---- Gradients --------------------------------------------------------------------------- */
   --grad-primary: linear-gradient(145deg, #7c6cff, #9d7bff);
+  /* Reserved. The handoff's gradient logo square was a placeholder for a mark that does not exist,
+     and was removed rather than shipped as decoration (B-031). Kept so this block still diffs
+     cleanly against the handoff's token table, per ADR-044. */
   --grad-logo: linear-gradient(145deg, #7c6cff, #b98cff);
   --grad-user-bubble: linear-gradient(145deg, #6b5cf0, #8d74ff);
   --grad-bar-fill: linear-gradient(90deg, #5a45c4, #a58cff);

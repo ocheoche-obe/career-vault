@@ -38,14 +38,6 @@
   flex-shrink: 0;
 }
 
-.logo-mark {
-  width: 26px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--grad-logo);
-  flex-shrink: 0;
-}
-
 /* Deliberately a <span>, not a heading: the wordmark used to be the page's only <h1>, which left
    every view without one and would have produced two <h1>s once the redesign gave views their own
    titles (audit §A10). */
@@ -222,12 +214,6 @@ main:focus {
   color: var(--text-secondary);
 }
 
-.app-signin .logo-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-}
-
 .app-signin h1 {
   font-size: 32px;
   letter-spacing: -0.02em;
@@ -267,10 +253,9 @@ main:focus {
     gap: 10px;
   }
 
-  .wordmark {
-    display: none;
-  }
-
+  /* The wordmark now stays at every width. It used to be hidden here to make room for the gradient
+     square beside it; with that gone there is space, and it is the only branding left — dropping it
+     would leave the header with none at all on mobile. */
   .streak-label {
     display: none;
   }
@@ -286,5 +271,14 @@ main:focus {
 
   .app-state {
     padding: 48px 20px;
+  }
+}
+
+/* Below this the wordmark, a scrollable nav, the streak pill and the avatar stop coexisting. The
+   pill goes first: it is the only one that is purely decorative here, and the same streak is stated
+   in full on Home. */
+@media (max-width: 600px) {
+  .streak-pill {
+    display: none;
   }
 }

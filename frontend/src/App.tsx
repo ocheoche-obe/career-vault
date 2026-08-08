@@ -109,7 +109,6 @@ function App() {
   if (!auth.isAuthenticated) {
     return (
       <main className="app-state app-signin">
-        <span className="logo-mark" aria-hidden="true" />
         <h1>CareerVault</h1>
         <p>Your career, on the record. Log what you achieve while it is fresh.</p>
         <button className="btn-primary" onClick={() => void auth.signinRedirect()}>
@@ -137,8 +136,10 @@ function App() {
 
       <header className="app-header">
         <div className="app-header-inner">
+          {/* Wordmark only. The handoff's gradient square was a placeholder for a logo that does
+              not exist; a meaningless mark reads worse than none. The slot is here when there is
+              something real to put in it (B-031). */}
           <div className="brand">
-            <span className="logo-mark" aria-hidden="true" />
             <span className="wordmark">CareerVault</span>
           </div>
 
