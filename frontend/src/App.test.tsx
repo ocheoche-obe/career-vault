@@ -26,7 +26,7 @@ vi.mock("react-oidc-context", () => ({ useAuth: () => mockAuth() }));
 // contents. Stubbed to keep this a smoke test rather than an accidental integration test.
 vi.mock("./chat/Chat", () => ({ Chat: () => <div>chat-view</div> }));
 vi.mock("./upload/Upload", () => ({ Upload: () => <div>upload-view</div> }));
-vi.mock("./entries/Dashboard", () => ({ Dashboard: () => <div>entries-view</div> }));
+vi.mock("./entries/Timeline", () => ({ Timeline: () => <div>entries-view</div> }));
 vi.mock("./resume/Resume", () => ({ Resume: () => <div>resume-view</div> }));
 vi.mock("./settings/Settings", () => ({ Settings: () => <div>settings-view</div> }));
 vi.mock("./home/Home", () => ({ Home: () => <div>home-view</div> }));
@@ -162,16 +162,30 @@ describe("shell accessibility (pre-redesign audit §A1, §A2, §A10)", () => {
     expect(screen.getByText("CareerVault")).toBeInTheDocument();
   });
 
-  it("wraps the not-yet-redesigned views in a container so they are not flush to the edge", async () => {
-    // The redesign made `main` a plain block, but those five views set a width and rely on a
-    // parent for centring and padding — without this wrapper they sit against the viewport edge,
-    // under the sticky header. The wrapper is temporary and dies view-by-view in slice 2.
+  it("wraps the not-yet-redesigned view in a container so it is not flush to the edge", async () => {
+    // The redesign made `main` a plain block, but an un-redesigned view sets a width and relies on
+    // a parent for centring and padding — without this wrapper it sits against the viewport edge,
+    // under the sticky header. Résumés is the last one left (blocked on B-028); when slice 3
+    // rebuilds it, this test and the wrapper are deleted together.
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Timeline" }));
+    await user.click(screen.getByRole("button", { name: "Résumés" }));
 
     expect(container.querySelector(".legacy-view")).not.toBeNull();
+  });
+
+  it("renders the redesigned views without the legacy wrapper", async () => {
+    // The other half of the invariant, and the one that actually retires the scaffolding: a
+    // rebuilt view must not still be inside `.legacy-view`, whose padding would double up on the
+    // `.view` padding it now brings itself.
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    for (const name of ["Log", "Timeline", "Import", "Details"]) {
+      await user.click(screen.getByRole("button", { name }));
+      expect(container.querySelector(".legacy-view")).toBeNull();
+    }
   });
 
   it("does not re-seed Log with a message that was already sent", async () => {
