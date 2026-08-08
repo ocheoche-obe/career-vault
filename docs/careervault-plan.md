@@ -66,8 +66,8 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 6a | Resume agent — backend loop | FR-5.1, 5.2 | ✅ | [#27](https://github.com/ocheoche-obe/career-vault/pull/27) |
 | 6b | Resume agent — output UI | FR-5.3, 5.4 | ✅ | [#28](https://github.com/ocheoche-obe/career-vault/pull/28) |
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
-| 8 | Check-in emails | FR-4 | ✅ | — |
-| 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | — |
+| 8 | Check-in emails | FR-4 | ✅ | [#31](https://github.com/ocheoche-obe/career-vault/pull/31) |
+| 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1080,7 +1080,9 @@ that costs real money, the request contract deserves a free test of its own.*
 **Audit outcome** ([scorecard](careervault-mvp-scorecard.md)): 5/6 success criteria clean (the 6th
 passed only after correcting the criterion); 20/22 FRs met, 1 partial (B-022 — no copyable bullets,
 "technically met" via FR-5.3's AND/OR wording), 1 deliberately deferred (FR-5.4); 16 NFRs met, 4
-caveated, 3 unverified, 1 not measurable. **Cost: $3.88 / $5.00** in the project's heaviest month,
+caveated, 3 unverified, 1 not measurable — *revised at v1.1 slice 1 to 16 met, 5 caveated, 1
+unverified, **1 failed**, 1 not measurable, after NFR-2.3 and NFR-6.2 were finally measured.*
+**Cost: $3.88 / $5.00** in the project's heaviest month,
 with Bedrock at 87% and *all* deployed infrastructure under $0.01 combined — the reframing that
 decided both ADR-041 and ADR-042.
 
