@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { deriveHomeStats, CADENCE_NOUN, type Cadence } from '../lib/aggregates'
+import { CHIPS, MAX_MESSAGE_CHARS, isoWeek } from '../lib/composer'
 import type { Entry } from '../lib/api'
 import './home.css'
 
@@ -22,32 +23,14 @@ import './home.css'
 
 type View = 'home' | 'log' | 'timeline' | 'resumes' | 'import' | 'details'
 
-const CHIPS: { label: string; seed: string }[] = [
-  { label: 'Shipped something', seed: 'I shipped ' },
-  { label: 'Got recognized', seed: 'I was recognized for ' },
-  { label: 'Presented or taught', seed: 'I presented ' },
-  { label: 'Learned a skill', seed: 'I learned ' },
-]
-
 function greetingFor(hour: number): string {
   if (hour < 12) return 'Good morning'
   if (hour < 18) return 'Good afternoon'
   return 'Good evening'
 }
 
-function isoWeek(d: Date): number {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-  const dayNum = date.getUTCDay() || 7
-  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
-  return Math.ceil(((date.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7)
-}
-
 const SHORT_DATE = new Intl.DateTimeFormat('en-GB', { month: 'short', year: '2-digit' })
 const EYEBROW_DATE = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-
-/** Matches the backend's per-message cap so an over-long paste is caught here, not by a 4xx. */
-const MAX_MESSAGE_CHARS = 4000
 
 /** `Intl.format` throws a RangeError on an Invalid Date, which would blank the whole app. */
 function shortDate(value: unknown): string {
@@ -89,7 +72,7 @@ export function Home({
   const maxCategory = Math.max(...stats.categories.map((c) => c.count), 1)
 
   return (
-    <div className="home">
+    <div className="view home">
       <div className="greeting-row">
         <div>
           <p className="eyebrow">

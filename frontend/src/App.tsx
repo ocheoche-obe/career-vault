@@ -1,16 +1,24 @@
+// App.css is imported FIRST, above the view components, and the order is load-bearing.
+//
+// Vite emits CSS in module-graph order, so a stylesheet imported by a child component lands in the
+// bundle *before* one imported here below it. That inverts the cascade everyone expects: App.css's
+// shared `.card { flex-direction: column }` was winning over `settings.css`'s
+// `.data-card { flex-direction: row }` at equal specificity purely because it came later, and the
+// card silently rendered as a centred column. Importing the shared layer first restores
+// tokens -> shell/shared -> feature, so a view stylesheet can override a shared primitive by saying
+// so rather than by out-specifying it.
+import './App.css'
 import { useEffect, useState } from 'react'
 import { useAuth } from 'react-oidc-context'
 import { buildLogoutUrl } from './auth/oidcConfig'
 import { Chat } from './chat/Chat'
-import { Dashboard } from './entries/Dashboard'
+import { Timeline } from './entries/Timeline'
 import { Upload } from './upload/Upload'
 import { Resume } from './resume/Resume'
 import { Settings } from './settings/Settings'
 import { Home } from './home/Home'
 import { listEntries, getSettings, type Entry } from './lib/api'
 import { computeStreak, CADENCE_NOUN, type Cadence } from './lib/aggregates'
-import './App.css'
-import './entries/entries.css'
 
 /**
  * Authed shell (ADR-025), rebuilt for the v1.1 redesign.
@@ -61,6 +69,13 @@ function App() {
   const [dataVersion, setDataVersion] = useState(0)
 
   const idToken = auth.user?.id_token
+
+  /**
+   * Re-read the entry list. Called when a view *writes* an entry, so every derived number in the
+   * shell and in the sibling views (header streak, Log's sidebar and status row, Home's stats) stops
+   * being stale the moment a save lands rather than at the next navigation.
+   */
+  const refresh = () => setDataVersion((v) => v + 1)
 
   /**
    * Nav is routed through here rather than raw `setView` so two pieces of cross-view state stay
@@ -224,22 +239,32 @@ function App() {
             onNavigate={navigate}
             onDraft={setLogDraft}
           />
+        ) : view === 'log' ? (
+          <Chat
+            idToken={idToken}
+            initialDraft={logDraft}
+            entries={entries}
+            cadence={cadence}
+            onEntrySaved={refresh}
+          />
+        ) : view === 'timeline' ? (
+          <Timeline
+            idToken={idToken}
+            entries={entries}
+            loadError={loadError}
+            onChanged={refresh}
+          />
+        ) : view === 'import' ? (
+          <Upload idToken={idToken} onImported={refresh} />
+        ) : view === 'details' ? (
+          <Settings idToken={idToken} entries={entries} onSaved={refresh} />
         ) : (
-          // TEMPORARY wrapper. These five views have no container of their own — they relied on the
-          // old `main`'s flex centering and padding, which the redesign removed. Each one drops out
-          // of here as it gains its own layout in v1.1 slice 2.
+          // TEMPORARY wrapper, and now down to its last occupant. Résumés has no container of its
+          // own — it relied on the old `main`'s flex centering and padding, which the redesign
+          // removed. It is blocked on B-028 (no résumé list endpoint; RESUMERUN TTL'd at 30 days),
+          // so slice 3 rebuilds it and deletes this wrapper along with the final shim alias.
           <div className="legacy-view">
-            {view === 'log' ? (
-              <Chat idToken={idToken} initialDraft={logDraft} />
-            ) : view === 'import' ? (
-              <Upload idToken={idToken} />
-            ) : view === 'resumes' ? (
-              <Resume idToken={idToken} />
-            ) : view === 'details' ? (
-              <Settings idToken={idToken} />
-            ) : (
-              <Dashboard idToken={idToken} />
-            )}
+            <Resume idToken={idToken} />
           </div>
         )}
       </main>

@@ -3,7 +3,11 @@ import {
   categoryCounts,
   computeStreak,
   deriveHomeStats,
+  formatEventDate,
+  orgOf,
   periodIndex,
+  periodStart,
+  relativeSince,
   yearGrid,
 } from "./aggregates";
 import type { Entry } from "./api";
@@ -231,5 +235,89 @@ describe("deriveHomeStats", () => {
     expect(stats.sinceYear).toBeNull();
     expect(stats.streak.current).toBe(0);
     expect(stats.categories).toEqual([]);
+  });
+});
+
+/**
+ * Regressions from the v1.1 slice 2 code review.
+ *
+ * Every one of these passed a full green suite before the fix, which is the point: the existing
+ * tests exercised these functions only at values that happened to sit away from the boundary.
+ */
+describe("periodStart / periodIndex agreement (slice 2 review)", () => {
+  it.each(["weekly", "biweekly", "monthly", "quarterly"] as const)(
+    "%s: the start of a period is inside that same period",
+    (cadence) => {
+      // The invariant the biweekly bug broke. A week *index* cannot be converted back to a
+      // timestamp by multiplying by WEEK_MS — the Unix epoch is a Thursday, so every multiple
+      // lands on a Thursday. The old code returned a start four days early, i.e. in the
+      // *previous* fortnight, so this equality failed by one.
+      for (let offset = 0; offset < 40; offset += 1) {
+        const d = new Date(Date.UTC(2026, 0, 1 + offset * 3));
+        expect(periodIndex(periodStart(d, cadence), cadence)).toBe(periodIndex(d, cadence));
+      }
+    },
+  );
+
+  it("weekly and biweekly periods start on a Monday", () => {
+    for (let offset = 0; offset < 40; offset += 1) {
+      const d = new Date(Date.UTC(2026, 0, 1 + offset * 3));
+      expect(periodStart(d, "weekly").getUTCDay()).toBe(1);
+      // Was a Thursday — and rendered as "Logged since Thursday" in the Log sidebar.
+      expect(periodStart(d, "biweekly").getUTCDay()).toBe(1);
+    }
+  });
+
+  it("a biweekly period starts no more than 13 days back and never in the future", () => {
+    const d = new Date("2026-08-08T12:00:00Z");
+    const delta = d.getTime() - periodStart(d, "biweekly").getTime();
+    expect(delta).toBeGreaterThanOrEqual(0);
+    expect(delta).toBeLessThan(14 * 86_400_000);
+  });
+});
+
+describe("relativeSince counts calendar days (slice 2 review)", () => {
+  it("an entry logged yesterday evening is not 'today'", () => {
+    // Elapsed time is 10 hours, so `floor(elapsed / 24h)` was 0 and the Log opened with
+    // "You logged X today" for something logged the day before — the exact misstatement the
+    // function exists to prevent.
+    const from = new Date("2026-08-07T23:00:00Z");
+    const now = new Date("2026-08-08T09:00:00Z");
+    expect(relativeSince(from, now)).toBe("a day");
+  });
+
+  it("still returns null for something logged earlier the same day", () => {
+    expect(relativeSince(new Date("2026-08-08T01:00:00Z"), new Date("2026-08-08T23:00:00Z"))).toBeNull();
+  });
+
+  it("boundaries do not depend on the time of day something was logged", () => {
+    // 6d23h and 7d1h both fall on the same calendar-day count, so they must read alike.
+    const now = new Date("2026-08-08T12:00:00Z");
+    expect(relativeSince(new Date("2026-08-01T13:00:00Z"), now)).toBe("a week");
+    expect(relativeSince(new Date("2026-08-01T11:00:00Z"), now)).toBe("a week");
+  });
+});
+
+describe("orgOf (slice 2 review)", () => {
+  it("finds the employer on a JOB, which the Log sidebar was missing", () => {
+    // The sidebar checked only `organization`/`issuer`, so a role rendered the literal "JOB".
+    expect(orgOf({ entry_type: "JOB", employer: "KPMG US" } as never)).toBe("KPMG US");
+    expect(orgOf({ entry_type: "EDUCATION", institution: "A University" } as never)).toBe("A University");
+    expect(orgOf({ entry_type: "CERT", issuer: "Microsoft" } as never)).toBe("Microsoft");
+    expect(orgOf({ entry_type: "MILESTONE" } as never)).toBe("");
+  });
+});
+
+describe("formatEventDate (slice 2 review)", () => {
+  it("formats a calendar date in UTC, not the reader's zone", () => {
+    // `new Date("2026-03-14")` is midnight UTC; formatting locally renders 13 Mar west of
+    // Greenwich, so a certification appears earned the day before it was.
+    expect(formatEventDate("2026-03-14", { year: "numeric" })).toBe("14 Mar 2026");
+  });
+
+  it("passes through anything that is not a full calendar date", () => {
+    // The backend permits partial dates; mangling them into "Invalid Date" would be worse.
+    expect(formatEventDate("2026-03")).toBe("2026-03");
+    expect(formatEventDate(undefined)).toBe("");
   });
 });

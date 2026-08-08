@@ -2,17 +2,22 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EntryCard } from "./EntryCard";
+import { EntryDetail } from "./EntryDetail";
 import { stubFetch } from "../test/http";
 import type { Entry } from "../lib/api";
 
 /**
- * Edit and delete on a dashboard card (FR-3.3, ADR-027).
+ * Edit and delete in the Timeline's detail panel (FR-3.3, ADR-027).
  *
- * The card keeps its React instance across a save because the list gives it a stable key, so every
+ * The panel keeps its React instance across a save because the list gives it a stable key, so every
  * exit from the "saving" phase has to be written explicitly — the slice-3 bug was a success path
  * that updated the data and left the button reading "Saving…" forever. That is the regression these
  * tests are for, and it is invisible to typecheck, build, and lint alike.
+ *
+ * These nine tests predate the v1.1 redesign and were carried across it unchanged (the component was
+ * `EntryCard` when the Timeline was a list of expandable cards). That is the point: they assert
+ * behaviour through roles and visible text, so a full visual rebuild of the panel around them left
+ * every one of them meaningful.
  */
 
 const ENTRY: Entry = {
@@ -27,7 +32,15 @@ const ENTRY: Entry = {
 function renderCard() {
   const onEdited = vi.fn();
   const onDeleted = vi.fn();
-  render(<EntryCard idToken="tok" entry={ENTRY} onEdited={onEdited} onDeleted={onDeleted} />);
+  render(
+    <EntryDetail
+      idToken="tok"
+      entry={ENTRY}
+      recordNumber={13}
+      onEdited={onEdited}
+      onDeleted={onDeleted}
+    />,
+  );
   return { onEdited, onDeleted, user: userEvent.setup() };
 }
 

@@ -59,11 +59,14 @@ export function ReviewTable({
   candidates,
   dropped,
   onDone,
+  onSaved,
 }: {
   idToken: string;
   candidates: EntryCandidate[];
   dropped: number;
   onDone: () => void;
+  /** Fired after a batch lands so the shell re-reads entries and every derived number stays true. */
+  onSaved?: () => void;
 }) {
   const [rows, setRows] = useState<Row[]>(() => initialRows(candidates));
   const [busy, setBusy] = useState(false);
@@ -106,6 +109,13 @@ export function ReviewTable({
       // created | duplicate → saved; drop it from the selection so a re-save can't double-run it.
       return { ...r, checked: false, expanded: false, status: { phase: "saved", duplicate: result.status === "duplicate" } };
     });
+
+    // Fired here rather than only in `saveSelected` so the per-row "Save anyway" duplicate override
+    // also refreshes the shell. It persists an entry like any other save, but it is reachable
+    // without ever pressing the bulk button — and "Done" (the other path out) is not even rendered
+    // while rows remain savable, so the user could navigate away with the record written and every
+    // derived number in the app still showing the pre-import corpus.
+    if (result.status === "created" || result.status === "duplicate") onSaved?.();
   };
 
   const saveSelected = async () => {
@@ -120,19 +130,57 @@ export function ReviewTable({
   };
 
   return (
-    <section className="review">
-      <div className="review-summary">
-        <p>
-          Found <strong>{rows.length}</strong> {rows.length === 1 ? "entry" : "entries"} in your resume.
-          {savedCount > 0 && <> {savedCount} saved.</>}
-          {dropped > 0 && (
-            <span className="review-dropped"> {dropped} couldn&apos;t be parsed cleanly and were skipped.</span>
-          )}
+    <section className="card review" aria-labelledby="review-heading">
+      <div className="card-head">
+        <h2 id="review-heading">
+          {rows.length} {rows.length === 1 ? "record" : "records"} found
+        </h2>
+        <p className="micro review-count">
+          {selectedCount} selected
+          {savedCount > 0 && ` · ${savedCount} saved`}
         </p>
-        <p className="review-hint">Uncheck anything you don&apos;t want, edit a row to fix it, then save.</p>
       </div>
 
-      <div className="review-toolbar">
+      <p className="muted">
+        Uncheck anything you don&apos;t want, edit a row to fix it, then save.
+        {dropped > 0 && ` ${dropped} couldn't be parsed cleanly and were skipped.`}
+      </p>
+
+      {/* §A11 — a batch save is a long silent operation otherwise. */}
+      <p className="sr-only" role="status">
+        {busy ? "Saving records" : savedCount > 0 ? `${savedCount} records saved` : ""}
+      </p>
+
+      <ul className="review-rows">
+        {rows.map((row) => (
+          <ReviewRowView
+            key={row.candidate.entry_id}
+            row={row}
+            busy={busy}
+            onToggleChecked={() =>
+              patch(row.candidate.entry_id, (r) => ({ ...r, checked: !r.checked }))
+            }
+            onToggleExpanded={() =>
+              patch(row.candidate.entry_id, (r) => ({ ...r, expanded: !r.expanded }))
+            }
+            onSetFields={(updater) =>
+              patch(row.candidate.entry_id, (r) => ({ ...r, fields: updater(r.fields) }))
+            }
+            onSaveAnyway={() => void saveRow({ ...row }, true)}
+          />
+        ))}
+      </ul>
+
+      <div className="review-actions">
+        {bulkSavableCount > 0 && (
+          <button
+            className="btn-primary"
+            onClick={() => void saveSelected()}
+            disabled={busy || selectedCount === 0}
+          >
+            {busy ? "Saving…" : `Save ${selectedCount} to vault`}
+          </button>
+        )}
         <label className="review-selectall">
           <input
             type="checkbox"
@@ -142,27 +190,12 @@ export function ReviewTable({
           />
           Select all
         </label>
-        <button onClick={() => void saveSelected()} disabled={busy || selectedCount === 0}>
-          {busy ? "Saving…" : `Save ${selectedCount} ${selectedCount === 1 ? "entry" : "entries"}`}
-        </button>
         {bulkSavableCount === 0 && (
-          <button className="secondary" onClick={onDone}>Done</button>
+          <button className="btn-quiet" onClick={onDone}>
+            Done
+          </button>
         )}
       </div>
-
-      <ul className="review-rows">
-        {rows.map((row) => (
-          <ReviewRowView
-            key={row.candidate.entry_id}
-            row={row}
-            busy={busy}
-            onToggleChecked={() => patch(row.candidate.entry_id, (r) => ({ ...r, checked: !r.checked }))}
-            onToggleExpanded={() => patch(row.candidate.entry_id, (r) => ({ ...r, expanded: !r.expanded }))}
-            onSetFields={(updater) => patch(row.candidate.entry_id, (r) => ({ ...r, fields: updater(r.fields) }))}
-            onSaveAnyway={() => void saveRow({ ...row }, true)}
-          />
-        ))}
-      </ul>
     </section>
   );
 }
@@ -190,19 +223,36 @@ function ReviewRowView({
   const checkboxDisabled = busy || !isBulkSavable(row);
 
   return (
-    <li className={`review-row ${saved ? "saved" : ""}`}>
+    <li className={`review-row${saved ? " saved" : ""}${row.checked ? " selected" : ""}`}>
       <div className="review-row-head">
-        <input
-          type="checkbox"
-          checked={row.checked}
-          disabled={checkboxDisabled}
-          onChange={onToggleChecked}
-        />
-        <span className="badge small">{candidate.entry_type}</span>
-        <button className="review-row-title" onClick={onToggleExpanded} disabled={busy}>
-          {title || "(untitled)"}
-        </button>
+        {/* The label wraps the checkbox *and* the text, so the whole row toggles selection while
+            the control keeps native checkbox semantics — a <button> containing a checkbox, which
+            is how the handoff draws it, is invalid nesting and announces as neither. */}
+        <label className="row-select">
+          <input
+            type="checkbox"
+            checked={row.checked}
+            disabled={checkboxDisabled}
+            onChange={onToggleChecked}
+          />
+          <span className="checkbox" aria-hidden="true" />
+          <span className="row-text">
+            <span className="row-title">{title || "(untitled)"}</span>
+            <span className="row-meta">
+              <span className="badge small">{candidate.entry_type}</span>
+              {typeof candidate.event_date === "string" && candidate.event_date}
+            </span>
+          </span>
+        </label>
         <StatusPill status={status} />
+        <button
+          className="row-edit micro"
+          onClick={onToggleExpanded}
+          disabled={busy || saved}
+          aria-expanded={row.expanded}
+        >
+          {row.expanded ? "Close" : "Edit"}
+        </button>
       </div>
 
       {status.phase === "duplicate" && (
@@ -216,7 +266,9 @@ function ReviewRowView({
               </li>
             ))}
           </ul>
-          <button onClick={onSaveAnyway} disabled={busy}>Save anyway</button>
+          <button className="btn-quiet" onClick={onSaveAnyway} disabled={busy}>
+            Save anyway
+          </button>
         </div>
       )}
 

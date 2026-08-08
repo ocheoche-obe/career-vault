@@ -118,6 +118,95 @@ export function computeStreak(
   return { current, longest, recent };
 }
 
+/**
+ * UTC midnight at which the cadence period containing `d` began.
+ *
+ * The biweekly case is the one with a trap in it. A week *index* cannot be turned back into a
+ * timestamp by multiplying by `WEEK_MS`: the Unix epoch is a **Thursday**, so every multiple of
+ * `WEEK_MS` lands on a Thursday, not a Monday. Doing that returned a start four days early — which
+ * put it in the *previous* fortnight, so `periodIndex(periodStart(d)) !== periodIndex(d)`, and the
+ * Log sidebar read "Logged since Thursday" for a period that begins on Monday.
+ *
+ * Stepping back from `mondayOf(d)` by whole weeks keeps the result on the Monday grid, so this
+ * function and `periodIndex` agree by construction. The invariant is tested.
+ */
+export function periodStart(d: Date, cadence: Cadence): Date {
+  switch (cadence) {
+    case "weekly":
+      return new Date(mondayOf(d));
+    case "biweekly": {
+      const monday = mondayOf(d);
+      // Which half of the pair this week is, taken from the same index the streak uses.
+      const isSecondWeek = Math.floor(monday / WEEK_MS) % 2 !== 0;
+      return new Date(isSecondWeek ? monday - WEEK_MS : monday);
+    }
+    case "monthly":
+      return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+    case "quarterly":
+      return new Date(Date.UTC(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1));
+  }
+}
+
+/** Entries logged in the current cadence period, newest first — the Log sidebar's "Logged since" list. */
+export function loggedThisPeriod(
+  entries: Entry[],
+  cadence: Cadence,
+  now: Date = new Date(),
+): Entry[] {
+  const start = periodStart(now, cadence).getTime();
+  return entries
+    .filter((entry) => {
+      const at = loggedAt(entry);
+      return at !== null && at.getTime() >= start;
+    })
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+/** The most recently *logged* entry, or null. `created_at`, never `event_date` — same reason as the streak. */
+export function mostRecentEntry(entries: Entry[]): Entry | null {
+  let best: Entry | null = null;
+  let bestAt = -Infinity;
+  for (const entry of entries) {
+    const at = loggedAt(entry);
+    if (at && at.getTime() > bestAt) {
+      bestAt = at.getTime();
+      best = entry;
+    }
+  }
+  return best;
+}
+
+/**
+ * A coarse "how long ago", for the check-in prompt.
+ *
+ * **This is a deliberate deviation from the handoff**, which fixes the copy per cadence — "It's been
+ * a week since you logged the GenAI training" for weekly, and so on. That sentence is only true when
+ * the user last logged something exactly one cadence period ago. Someone who logs twice in a day
+ * would be told it had been a week, which is the app stating a falsehood about the user's own
+ * history on the most prominent line of the view.
+ *
+ * The handoff's own production note already says to reference the real most-recent entry rather than
+ * a fixed one; measuring the real elapsed time is the same instruction applied to the other half of
+ * the sentence. Returns null for "today", which the caller renders as different copy entirely rather
+ * than as "0 days".
+ */
+export function relativeSince(from: Date, now: Date = new Date()): string | null {
+  // Calendar days between the two UTC dates, not elapsed-milliseconds / 24h. The latter reports an
+  // entry logged at 23:00 yesterday as "today" when read at 09:00 — the exact misstatement this
+  // function exists to prevent — and slides every other boundary by the time of day it was logged.
+  const startOfDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const days = Math.round((startOfDay(now) - startOfDay(from)) / DAY_MS);
+  if (days < 1) return null;
+  if (days === 1) return "a day";
+  if (days < 7) return `${days} days`;
+  if (days < 14) return "a week";
+  if (days < 31) return `${Math.floor(days / 7)} weeks`;
+  if (days < 62) return "a month";
+  if (days < 365) return `${Math.floor(days / 30)} months`;
+  if (days < 730) return "a year";
+  return `${Math.floor(days / 365)} years`;
+}
+
 export type GridCell = {
   /** Intensity 0–4, mapping onto `--heat-0` … `--heat-4`. */
   step: number;
@@ -228,6 +317,44 @@ export const TYPE_LABEL: Record<string, string> = {
   VOLUNTEER: "Volunteering",
   HOBBY: "Interests",
 };
+
+/**
+ * The organisation-ish field for an entry, in the order the schemas actually populate them.
+ *
+ * One list, because there were three: the Log sidebar checked only `organization`/`issuer` and so
+ * rendered the literal string "JOB" for any role (whose field is `employer`), while Timeline and the
+ * detail panel each walked their own longer list. Per-type field names are architecture §2.7.
+ */
+export const ORG_FIELDS = ["employer", "issuer", "institution", "organization", "degree"] as const;
+
+export function orgOf(entry: Entry): string {
+  for (const key of ORG_FIELDS) {
+    const value = entry[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return "";
+}
+
+/**
+ * Format an `event_date`, which is a plain `YYYY-MM-DD` calendar date rather than an instant.
+ *
+ * Pinned to UTC on both parse and format, and the pairing is load-bearing: `new Date("2026-03-14")`
+ * is midnight UTC, so formatting it locally renders 13 Mar for anyone west of Greenwich and a
+ * certification appears to have been earned the day before it was. Anything that does not match the
+ * full-date shape is passed through untouched, since the backend also permits partial dates.
+ */
+export function formatEventDate(value: unknown, opts: Intl.DateTimeFormatOptions = {}): string {
+  if (typeof value !== "string") return "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+    ...opts,
+  }).format(parsed);
+}
 
 export type CategoryCount = { type: string; label: string; count: number };
 

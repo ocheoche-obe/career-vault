@@ -1,264 +1,693 @@
-/* Chat pane — theme-aware via the CSS custom properties in index.css. */
+/**
+ * The Log — check-in conversation (v1.1 redesign). Tokens only, no raw hex (ADR-044).
+ *
+ * The panel is a fixed-height flex column with one scrolling child, rather than a page that grows:
+ * the composer must stay reachable without scrolling past the transcript, which is the whole point
+ * of a chat layout. The handoff's two heights (400px shown / 580px hidden) are what the activity
+ * toggle animates between.
+ *
+ * Deviation, recorded: those fixed heights are a desktop assumption. Below 768px the sidebar stacks
+ * under the panel and the message area switches to a viewport-relative height — a hard 400px on a
+ * 640px-tall phone leaves the composer below the fold, which is the one thing the layout exists to
+ * prevent.
+ */
 
-.chat {
+.log {
+  max-width: var(--w-wide);
+}
+
+.log-grid {
+  display: grid;
+  grid-template-columns: 1fr var(--w-sidebar);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Sidebar unmounted: the panel narrows to the handoff's focused width and the transcript grows. */
+.log-grid[data-activity="hidden"] {
+  grid-template-columns: 1fr;
+  max-width: var(--w-focused);
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ---- Panel --------------------------------------------------------------------------------- */
+
+/**
+ * The panel never exceeds the space the shell leaves it: 66px of sticky header plus the `.view`
+ * padding above and below.
+ *
+ * Deviation from the handoff, recorded. It specifies the transcript as a hard 400px (580px with the
+ * activity sidebar hidden), which on a 800px-tall window puts the composer — the only control on the
+ * view — below the fold. `dvh` rather than `vh` because mobile browser chrome makes `vh` overshoot,
+ * which is the same bug one viewport smaller.
+ */
+.chat-panel {
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface);
   display: flex;
   flex-direction: column;
-  width: min(720px, 100%);
-  height: min(70vh, 640px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg);
   overflow: hidden;
-  text-align: left;
+  min-width: 0;
+  max-height: calc(100dvh - 160px);
 }
 
-.chat-scroll {
-  flex: 1;
+.panel-head {
+  padding: 16px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.panel-title h1 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: normal;
+}
+
+.panel-date {
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  margin-top: 3px;
+}
+
+.panel-toggle {
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--accent-text);
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.panel-toggle:hover {
+  border-color: var(--border-active);
+  background: var(--surface-raised);
+}
+
+/* ---- Transcript ---------------------------------------------------------------------------- */
+
+/* `flex: 1 1 auto`, never `flex: 1`. The shorthand `flex: 1` expands to `flex-basis: 0%`, which wins
+   over `height` on the main axis — the declared 400px would be silently ignored and the panel would
+   shrink to fit its content, which for a one-message conversation is a panel the size of a bubble.
+   With `auto` the height below becomes the *preferred* size, free to shrink when the panel hits its
+   viewport cap. `min-height: 0` is what actually permits that shrink: a flex item's automatic
+   minimum size is its content, so without it the transcript refuses to get smaller and overflows the
+   panel instead of scrolling inside it. */
+.messages {
+  flex: 1 1 auto;
+  min-height: 120px;
+  height: 400px;
   overflow-y: auto;
-  padding: 16px;
+  padding: 24px 22px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
+  transition: height 0.32s ease;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
 }
 
-.chat-hint {
-  color: var(--text);
-  margin: auto;
-  max-width: 44ch;
-  text-align: center;
+.log-grid[data-activity="hidden"] .messages {
+  height: 580px;
 }
 
-.bubble-row {
+@media (prefers-reduced-motion: reduce) {
+  .messages {
+    transition: none;
+  }
+}
+
+.msg {
   display: flex;
-}
-.bubble-row.user {
-  justify-content: flex-end;
-}
-.bubble-row.assistant {
-  justify-content: flex-start;
+  flex-direction: column;
+  animation: rise 0.28s ease both;
 }
 
-.bubble {
-  max-width: 85%;
-  padding: 10px 14px;
-  border-radius: 14px;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  line-height: 1.4;
-}
-.bubble-row.user .bubble {
-  background: var(--accent-bg);
-  border: 1px solid var(--accent-border);
-  color: var(--text-h);
-  border-bottom-right-radius: 4px;
-}
-.bubble-row.assistant .bubble {
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  color: var(--text-h);
-  border-bottom-left-radius: 4px;
-}
-.bubble.error {
-  border-color: crimson;
-}
-.bubble.typing {
-  color: var(--text);
-  letter-spacing: 3px;
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.bubble .retry {
-  display: block;
-  margin-top: 8px;
+@media (prefers-reduced-motion: reduce) {
+  .msg {
+    animation: none;
+  }
+}
+
+/* Opening check-in question */
+.msg.prompt {
+  padding: 22px 24px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-raised);
+  max-width: 80%;
+  gap: 9px;
+}
+
+.prompt-q {
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.prompt-sub {
   font-size: 13px;
-  padding: 3px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--accent-border);
-  background: transparent;
-  color: var(--accent);
-  cursor: pointer;
+  color: var(--text-muted);
 }
 
-.chat-input {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
-}
-.chat-input textarea {
-  flex: 1;
-  resize: none;
-  font: inherit;
-  color: var(--text-h);
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-.chat-input textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.chat-input button {
+.msg.user {
   align-self: flex-end;
-  padding: 8px 18px;
-  border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
+  align-items: flex-end;
+  max-width: 74%;
+  gap: 6px;
 }
-.chat-input button:disabled {
+
+.bubble-user {
+  padding: 15px 20px;
+  border-radius: 20px 20px 6px 20px;
+  background: var(--grad-user-bubble);
+  color: var(--on-accent);
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.msg.assistant {
+  max-width: 84%;
+  gap: 8px;
+}
+
+.bubble-assistant {
+  padding: 16px 20px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-raised);
+  color: var(--text-body);
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.msg.assistant.error .bubble-assistant {
+  border-color: var(--danger-border);
+  color: var(--danger);
+}
+
+.send-failed {
+  font-size: 13px;
+}
+
+.retry {
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--accent-text);
+}
+
+.retry:hover {
+  border-color: var(--border-active);
+}
+
+.retry:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* Proposal confirm/edit card (Phase B gate) */
+/* System follow-up after a save */
+.msg.note {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: var(--accent-wash-note);
+  border: 1px solid var(--border-raised);
+  max-width: 82%;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--accent-text);
+  line-height: 1.45;
+}
 
-.proposal-card {
-  width: min(480px, 85%);
-  border: 1px solid var(--accent-border);
-  border-radius: 12px;
-  padding: 14px;
-  background: var(--bg);
+.msg.typing {
+  padding: 14px 20px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-raised);
+  align-self: flex-start;
+}
+
+.dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes pulse {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dots span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* ---- Composer ------------------------------------------------------------------------------ */
+
+.composer {
+  padding: 16px 22px 20px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.input-pill {
+  display: flex;
+  /* `flex-end`, not `center`: the textarea grows downward, and the send button must stay level with
+     the last line rather than drifting to the vertical middle of a tall message. */
+  align-items: flex-end;
+  gap: 10px;
+  padding: 7px 7px 7px 20px;
+  /* A pill while it is one line; softens to a rounded box as it grows, because a 999px radius on a
+     four-line field cuts the corners off the text. */
+  border-radius: 22px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-strong);
+}
+
+.input-pill:focus-within {
+  border-color: var(--border-active);
+}
+
+.input-pill textarea {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  border: none;
+  background: transparent;
+  color: var(--text-body);
+  resize: none;
+  /* Auto-grows to ~5 lines, then scrolls — `field-sizing` where supported, with a sane fixed
+     fallback everywhere else so the control is never a single cramped line. */
+  field-sizing: content;
+  max-height: 7lh;
+  padding: 9px 0;
+}
+
+.input-pill textarea:focus {
+  outline: none;
+}
+
+.input-pill textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.input-pill button {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  border: none;
+  background: var(--grad-primary);
+  color: var(--on-accent);
+  font-size: 17px;
+  display: grid;
+  place-items: center;
+}
+
+.input-pill button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* ---- Activity sidebar ---------------------------------------------------------------------- */
+
+.activity {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.card-label {
+  color: var(--text-muted);
+  letter-spacing: 0.14em;
+}
+
+.streak-value {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.streak-value strong {
+  font-size: 34px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.streak-value span {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.streak-bars {
+  display: flex;
+  gap: 4px;
+}
+
+.streak-bars .bar {
+  flex: 1;
+  height: 20px;
+  border-radius: 4px;
+  background: var(--bar-miss);
+}
+
+.streak-bars .bar.hit {
+  background: var(--grad-streak-bar);
+}
+
+.recent-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.proposal-card.saved {
-  border-color: var(--border);
-  color: var(--text-h);
-}
-.proposal-card .badge {
-  align-self: flex-start;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--accent-bg);
-  color: var(--accent);
-}
-/* Shared entry-field grid (propose + edit flows) — globally available via this bundle. */
-.entry-fields {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.entry-fields label {
+
+.recent-list li {
   display: flex;
   flex-direction: column;
   gap: 3px;
-}
-.entry-fields .field-name {
-  font-size: 12px;
-  color: var(--text);
-  text-transform: capitalize;
-}
-.entry-fields input,
-.entry-fields textarea {
-  font: inherit;
-  font-size: 14px;
-  color: var(--text-h);
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-  resize: vertical;
-}
-.entry-fields input:focus-visible,
-.entry-fields textarea:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-.field-error {
-  color: crimson;
-  font-size: 13px;
-  margin: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
 }
 
-/* Duplicate warning (ADR-033) */
-.proposal-card.duplicate-warning {
-  border-color: #d98324;
+.recent-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
 }
-.dup-lead {
-  margin: 0;
-  color: var(--text-h);
+
+.recent-title {
   font-size: 14px;
+  color: var(--text-body);
 }
-.dup-list {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 14px;
-  color: var(--text-h);
+
+.recent-meta {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---- Proposal card (Phase B confirm gate, FR-2.3) ------------------------------------------- */
+
+.msg.proposal {
+  padding: 20px 22px;
+  border-radius: 20px 20px 20px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-raised);
+  max-width: 84%;
+  gap: 14px;
+}
+
+.proposal-lead {
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.proposal-card {
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-raised);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.dup-score {
-  color: var(--text);
-  font-size: 13px;
-}
-.badge.small {
-  font-size: 10px;
-  padding: 1px 6px;
+  gap: 12px;
 }
 
-/* Card action rows + button variants (shared by proposal + entry cards) */
-.card-actions {
+.proposal-card .badge {
+  align-self: flex-start;
+}
+
+.proposal-card.saved {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.proposal-card.saved p {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--success);
+}
+
+/* Duplicate warning (ADR-033) — a soft gate the user can override, not an error. */
+.proposal-card.duplicate-warning {
+  border-color: var(--border-active);
+}
+
+.dup-lead {
+  font-size: 14px;
+  color: var(--text-body);
+}
+
+.dup-list {
   display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text-body);
 }
-.proposal-card > button,
-.card-actions button {
-  padding: 7px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
+
+.dup-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
 }
+
+.dup-score {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
 .proposal-card > button {
-  align-self: flex-end;
+  align-self: flex-start;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 20px;
+  border-radius: 999px;
+  border: none;
+  background: var(--grad-primary);
+  color: var(--on-accent);
 }
+
+.proposal-card > button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.card-actions button {
+  font-size: 15px;
+  font-weight: 500;
+  padding: 11px 20px;
+  border-radius: 999px;
+  border: none;
+  background: var(--grad-primary);
+  color: var(--on-accent);
+}
+
 .card-actions button.secondary {
-  border-color: var(--border);
+  border: 1px solid var(--border-strong);
   background: transparent;
-  color: var(--text-h);
+  color: var(--text-secondary);
 }
+
+.card-actions button.secondary:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
 .card-actions button.danger {
-  border-color: crimson;
+  border: 1px solid var(--danger-border);
   background: transparent;
-  color: crimson;
+  color: var(--danger);
 }
-.proposal-card > button:disabled,
+
+.card-actions button.danger:hover {
+  border-color: var(--danger-border-hover);
+  background: var(--danger-wash);
+}
+
 .card-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-/* Answer provenance (ADR-038): which entries grounded the answer, so it can be checked
-   against the vault rather than taken on trust. Deliberately quiet — supporting evidence,
-   not the answer itself. */
+/* Answer provenance (ADR-038): which entries grounded the answer, so it can be checked against the
+   vault rather than taken on trust. Deliberately quiet — supporting evidence, not the answer. */
 .answer-sources {
-  margin: 0.6rem 0 0;
-  padding: 0.5rem 0 0;
-  border-top: 1px solid var(--border);
-  list-style: none;
-  font-size: 0.82em;
-  opacity: 0.75;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
 }
+
 .answer-sources li {
   display: flex;
-  gap: 0.4rem;
+  gap: 8px;
   align-items: baseline;
-  padding: 0.1rem 0;
 }
+
 .source-type {
   flex: none;
-  font-size: 0.85em;
-  letter-spacing: 0.04em;
-  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--accent-text);
+}
+
+/* ---- Responsive ---------------------------------------------------------------------------- */
+
+@media (max-width: 1024px) {
+  .log-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Stacked, the sidebar's two cards read better side by side than as a tall column. */
+  .activity {
+    flex-direction: row;
+  }
+
+  .activity > .card {
+    flex: 1;
+  }
+}
+
+@media (max-width: 768px) {
+  .activity {
+    flex-direction: column;
+  }
+
+  /* The shell's chrome is shorter here (24px/40px view padding), so the panel gets more of it. */
+  .chat-panel {
+    max-height: calc(100dvh - 130px);
+  }
+
+  .messages,
+  .log-grid[data-activity="hidden"] .messages {
+    padding: 18px 16px;
+  }
+
+  .panel-head,
+  .composer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .msg.prompt {
+    max-width: 100%;
+    padding: 18px 18px;
+  }
+
+  .prompt-q {
+    font-size: 18px;
+  }
+
+  .msg.user {
+    max-width: 88%;
+  }
+
+  .msg.assistant,
+  .msg.proposal,
+  .msg.note {
+    max-width: 96%;
+  }
+
+  .status-row {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Wrapped, five chips stack into four rows and eat the transcript — the panel is height-capped,
+     so every row the composer gains is a row the conversation loses. Scrolling them sideways is
+     the usual mobile treatment and keeps the composer one row tall. */
+  .composer .chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    /* Cancels the shrink flex applies to overflowing children, which would otherwise squash every
+       chip to fit rather than letting the row scroll. */
+    padding-bottom: 2px;
+  }
+
+  .composer .chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .composer .chip,
+  .composer .chips-label {
+    flex-shrink: 0;
+  }
 }

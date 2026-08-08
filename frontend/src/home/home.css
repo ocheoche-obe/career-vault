@@ -8,42 +8,9 @@
  * changed its bucket size on mobile would quietly break that.
  */
 
+/* `.home` layers only its max-width onto the shared `.view` (App.css). */
 .home {
   max-width: var(--w-wide);
-  margin: 0 auto;
-  padding: 34px 32px 60px;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
-.card {
-  padding: 20px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.card h2 {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: normal;
-}
-
-.card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.muted {
-  font-size: 14px;
-  color: var(--text-muted);
 }
 
 /* ---- Greeting ------------------------------------------------------------------------------ */
@@ -53,15 +20,6 @@
   align-items: flex-end;
   justify-content: space-between;
   gap: 30px;
-}
-
-.eyebrow {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  margin-bottom: 6px;
 }
 
 .greeting-row h1 {
@@ -107,36 +65,6 @@
 
 .composer-row input:focus {
   border-color: var(--border-active);
-}
-
-.chips {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.chips-label {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-  margin-right: 4px;
-}
-
-.chip {
-  font-size: 14px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface-sunken);
-  color: var(--accent-text);
-}
-
-.chip:hover {
-  border-color: var(--border-active);
-  background: var(--surface-raised);
 }
 
 /* ---- Stat trio ----------------------------------------------------------------------------- */
@@ -307,19 +235,6 @@
   text-transform: capitalize;
 }
 
-.link-btn {
-  align-self: flex-start;
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--accent-text);
-  font-size: 14px;
-}
-
-.link-btn:hover {
-  color: var(--accent-hover);
-}
-
 .weight-list li {
   display: flex;
   flex-direction: column;
@@ -355,21 +270,12 @@
 /* ---- Responsive ---------------------------------------------------------------------------- */
 
 @media (max-width: 1024px) {
-  .home {
-    padding: 28px 20px 48px;
-  }
-
   .two-col {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 768px) {
-  .home {
-    padding: 24px 16px 40px;
-    gap: 18px;
-  }
-
   .greeting-row {
     flex-direction: column;
     align-items: flex-start;

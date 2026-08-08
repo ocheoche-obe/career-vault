@@ -127,8 +127,17 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**v1.1 slice 1 complete (redesign: audit, tokens, shell, Home — PR #43). Next: v1.1 slice 2 — the
-remaining five views.** Phase 2 / MVP was declared 2026-07-29 (slice 9, PR #32).
+**v1.1 slice 2 complete (redesign: Log, Timeline, Import, Details — PR #48). Next: v1.1 slice 3 —
+Résumés + B-028.** Slice 1 (audit, tokens, shell, Home) shipped as PR #43. Five of six views are now
+redesigned; **Résumés is the last**, and it is blocked on **B-028** (no résumé list endpoint;
+`RESUMERUN` TTL'd at 30 days, which ADR-015 was amended to match — so changing it reopens that
+decision). Slice 3 owes an ADR before any code. Phase 2 / MVP was declared 2026-07-29 (slice 9,
+PR #32).
+
+**Slice 3 also retires the last scaffolding (B-036):** `resume.css` is the only remaining consumer
+of the four shim aliases in `index.css`, and Résumés is the only remaining occupant of
+`.legacy-view` in `App.css`. Both blocks, plus the `App.test.tsx` carve-out that asserts them, are
+deleted together — that is the completion condition, not a nice-to-have.
 
 **Read before touching the frontend:**
 [`docs/design/v1.1-redesign/README.md`](docs/design/v1.1-redesign/README.md) (the design handoff) and
@@ -177,13 +186,13 @@ Each of these caused, or would have caused, a wrong action. Detail is in the lin
 
 ## Testing
 
-510 tests. **The default run of every suite is free** — that is deliberate, because a suite that
+574 tests. **The default run of every suite is free** — that is deliberate, because a suite that
 costs money is a suite people avoid, and an avoided test still implies coverage nobody has (ADR-042).
 
 ```bash
 ./scripts/run-tests.sh                    # 376 backend unit                        $0
-cd frontend && npm test                   # 72 component (Vitest + RTL)             $0
-./scripts/run-integration.sh              # 56 · DynamoDB Local + deployed dev      $0
+cd frontend && npm test                   # 139 component (Vitest + RTL)            $0
+./scripts/run-integration.sh              # 59 · DynamoDB Local + deployed dev      $0
 ./scripts/run-integration.sh --bedrock    # + real Haiku round-trips           ~$0.01
 ./scripts/run-integration.sh --expensive  # + a full Sonnet résumé run         ~$0.11
 ```
@@ -192,6 +201,12 @@ cd frontend && npm test                   # 72 component (Vitest + RTL)         
 - **Never `python -m pytest` directly** — it misses the venv deps; use `./scripts/run-tests.sh`.
 - Writing frontend tests: stub `fetch` (`src/test/http.ts`), don't mock the api module. A `vi.fn()`
   returning a rejected promise fails the test *even when the component catches it correctly*.
+- **`npm test` does not typecheck.** Vitest transpiles without checking, so a test file can pass the
+  suite and still fail CI at `tsc -b` (v1.1 slice 2 hit exactly this: a `vi.fn(() => …)` with no
+  declared parameter has call tuple `[]`, so reading `calls[0][0]` is a type error). Run
+  `npm run build` before pushing — it is the same `tsc -b` CI runs.
+- **A green suite is not evidence a new test works.** Break the code deliberately and confirm the
+  test notices; slice 2's fifteen review findings all passed a green suite before they were fixed.
 
 ## Session rituals
 

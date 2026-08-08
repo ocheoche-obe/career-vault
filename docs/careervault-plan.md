@@ -69,6 +69,8 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 8 | Check-in emails | FR-4 | ✅ | [#31](https://github.com/ocheoche-obe/career-vault/pull/31) |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
 | v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
+| v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
+| v1.1-3 | Redesign — Résumés + résumé history | B-028, B-001 | ⏳ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1298,6 +1300,176 @@ browser at two viewports and two themes — including a layout regression affect
 Browser verification confirmed the views I *built* and never re-checked the ones I merely *touched*.
 The lesson generalises: when a change lands in a shared container, the blast radius is every child,
 and "I looked at it" only covers what was on screen. All 8 were fixed in-slice; none deferred.
+
+---
+
+## v1.1 slice 2 — Redesign: Log, Timeline, Import, Details ✅
+
+**Goal:** rebuild four of the five remaining views on the slice-1 token layer, retiring the
+compatibility shim and the `.legacy-view` wrapper view-by-view, and fixing the accessibility debt the
+audit recorded against each one.
+
+**Key refs:** [pre-redesign audit](design/v1.1-redesign/pre-redesign-audit.md) §Findings (A3–A11) ·
+[design handoff](design/v1.1-redesign/README.md) §§2, 3, 5, 6 · ADR-043 (token corrections) ·
+ADR-044 (both themes) · ADR-045 (derive client-side; omit rather than fabricate) · ADR-040
+(nested settings merge)
+
+### ⚠ Why Résumés is not in this slice
+
+Split out at slice-2 scoping (2026-08-08) and promoted to its own slice. The Résumés view is the one
+that **cannot be built honestly from what exists**: `template.yaml` exposes only
+`POST /resumes/generate` and `GET /resumes/{run_id}` — there is no list endpoint — and `RESUMERUN`
+items carry a 30-day TTL, so even with one, the designed grid ("Built 12 Jul 2026 · 9 records drawn")
+could not reach back further than a month. That is **B-028**, and it is not a UI problem: ADR-015 was
+*amended* at slice 6b to make résumé artifact retention a flat 30 days precisely to match that TTL,
+so any fix reopens a retention decision.
+
+The reasoning for splitting rather than absorbing it: slice 2 is otherwise a **pure frontend diff**,
+which is what made slice 1's deployment risk near zero. Folding in a data-model decision, a new API
+route, a Lambda change and integration tests would mix two very different risk profiles in one
+review. B-028 gets an ADR and a slice of its own.
+
+### Scope — in
+
+1. **Log (chat)** — panel layout, cadence-aware header, proposal cards ([`ProposalCard.tsx`](../frontend/src/chat/ProposalCard.tsx)
+   already exists), prompt chips, activity sidebar with show/hide. Sidebar streak card and
+   "Logged since Friday" derive from `GET /entries` via the existing [`aggregates.ts`](../frontend/src/lib/aggregates.ts) (ADR-045).
+2. **Timeline (entries)** — header + filters, list with year dividers, sticky detail panel, fact rows.
+3. **Import (upload)** — dropzone, selectable results rows, commit button.
+4. **Details (settings)** — "You" card, cadence options, reminders, data card. **JSON export built**
+   (see below).
+5. **Accessibility, per the audit's per-view assignments** — **A4** (live region on the chat
+   transcript; High), **A5** (message roles exposed to AT), **A6** (typing indicator announces
+   meaningfully, not as "…"), **A7** ("Retry" associated with the message that failed), **A9** (file
+   input accessible name), plus **A3** (real labels, not placeholder-only), **A10** (exactly one
+   `<h1>` per view) and **A11** (live regions for async state) as they apply to each view built here.
+6. **Retire the slice-1 scaffolding** — delete each `index.css` shim alias as its stylesheet stops
+   using it; drop each view out of `.legacy-view` as it is rebuilt. Four of five aliases should die
+   here; the wrapper survives only for Résumés.
+7. **B-032 — self-host Figtree and JetBrains Mono**, replacing the Google Fonts `@import`. Frontend-only,
+   closes a slice-1 security-review note, and this is the slice already editing `index.css`.
+
+### Scope — out
+
+Résumés (v1.1 slice 3, with **B-028**). Three designed Details features that do not exist and are
+**deferred rather than faked**, per the B-015 precedent:
+
+- **"Warn me before the streak breaks"** (**B-033**) — a settings field plus a second scheduled send
+  in `checkin_lambda`/EventBridge. Backend work, and it lands next to **B-019**, the other untouched
+  check-in-delivery gap. A toggle that persists but sends nothing was explicitly rejected.
+- **Account deletion** (**B-034**) — a destructive flow across Cognito, DynamoDB and S3 for a
+  single-user MVP whose one user is the developer.
+- **Gap-analysis line** (**B-030**) — already blocked on B-028.
+
+Two designed data points have **no source and are omitted**, not invented: the Timeline detail
+panel's "from chat" provenance (the `Entry` model has no `source` field; `created_at` supplies the
+date half) and "Used in — 1 résumé" (needs résumé history → B-028).
+
+### ⚠ Decisions
+
+**No new ADR is required for this slice** — deliberately, and worth stating rather than manufacturing
+one. Every judgment call here resolves under precedent already written: ADR-045 covers *derive
+client-side and omit rather than fabricate* (which decides the export, the sidebar aggregates and both
+omitted data points), ADR-043/044 cover the token and theme rules, and ADR-040 covers the nested
+settings write the cadence and reminder controls need. The decision that **does** need an ADR — B-028's
+retention/list-endpoint question — is exactly the one moved to slice 3.
+
+- **JSON export is client-side.** `GET /entries` is already fetched for the view; export is a `Blob`
+  download over data in hand, not a new endpoint. This is ADR-045's pattern applied again, and it
+  inherits ADR-045's revisit trigger (**B-029**) unchanged.
+- **B-012 is a standing invariant this slice must not break.** The Log redesign is the single most
+  likely place to reach for a markdown renderer, and doing so would reopen the ADR-038 injection
+  exfiltration channel. Chat answers stay plain text; the tested invariant stays tested.
+
+### Exit criteria
+
+- Four views rebuilt against the handoff at ≥1280px and stacked cleanly at 375px, in **both** themes.
+- **No hex outside `index.css`** — same exit criterion as slice 1, same reason: a raw hex in a feature
+  stylesheet is a light-mode bug that dark-mode review cannot see.
+- Zero horizontal overflow at 360px on every view, re-measured rather than assumed.
+- Audit findings A4, A5, A6, A7, A9 closed; A3/A10/A11 satisfied on all four views.
+- Exactly one `<h1>` per view; live regions announce async state on each.
+- Four of five shim aliases deleted; four views out of `.legacy-view`. Both are *checked*, not
+  assumed — the remaining contents are named in the completion notes.
+- B-012 verified still true: no markdown/HTML renderer anywhere in `frontend/src`.
+- Frontend tests green and extended to the rebuilt views; backend suite untouched and still green.
+- Every view re-checked in a browser **after** the last shared-container change, not before — the
+  slice-1 lesson that cost 8 code-review findings.
+
+### Completion notes
+
+**Shipped.** Log, Timeline, Import and Details rebuilt on the slice-1 token layer, plus **B-032**
+(fonts self-hosted). A pure frontend diff — no `backend/`, no `infrastructure/`, no deployed
+behaviour changed, which is why the deployment risk is again near zero. **Tests 72 → 139 frontend**
+(376 backend unchanged; 574 total).
+
+**Exit criteria: met, with one prediction of my own that was wrong.** I wrote "four of five shim
+aliases deleted"; only `--code-bg` could go, because the other four are all referenced by
+`resume.css` — they are shared, not one-per-view, so they die together in slice 3. The substance
+held: four views rebuilt, four out of `.legacy-view`, and the remaining contents are now *named* in
+the `index.css` comment with the grep that verifies them. One raw hex survives outside `index.css` —
+`resume.css`'s print paper-white, documented and belonging to slice 3; the other eight became
+`--on-accent`.
+
+**Verified across 24 combinations** (6 views × 2 themes × 2 widths): zero horizontal overflow, one
+`<h1>` per rebuilt view, `.legacy-view` only on Résumés. A live chat round-trip (~$0.01) exercised
+API Gateway → Lambda → DynamoDB and the restyled proposal card; the proposal was deliberately left
+unsaved, so no test data entered the vault. Only static asset hosting is unverified — deferred as in
+slice 1, since Résumés is still un-redesigned.
+
+**Six defects the browser caught that no review would have.** Recorded because the pattern is the
+point — each was invisible in the diff and obvious on screen:
+
+1. **"Logged since Sunday" for a week that starts Monday.** `periodStart` returns a UTC-anchored
+   midnight; formatting it locally renders the previous evening. Every UTC-anchored date now formats
+   in UTC.
+2. **`flex: 1` silently discarded the transcript height.** The shorthand expands to
+   `flex-basis: 0%`, which beats `height` on the main axis, so the panel collapsed to bubble-size.
+3. **The design's 580px transcript put the composer below the fold** on an 800px window. The panel
+   now caps to `100dvh` minus the shell chrome and the transcript flexes inside it.
+4. **CSS source order was inverted.** Vite emits child-imported CSS *before* the parent's, so
+   `App.css`'s shared `.card { flex-direction: column }` beat `settings.css`'s
+   `.data-card { row }` — the data card rendered as a centred column. Fixed structurally by
+   importing `App.css` first in `App.tsx`, restoring tokens → shared → feature.
+5. **Details had no `<h1>` while loading** — a real §A10 gap invisible to any check that runs after
+   the fetch resolves.
+6. **Five chips wrapped to four rows at 360px**, eating a height-capped transcript.
+
+**The code review returned 15 findings and all 15 were fixed in-slice.** Two were arithmetic bugs
+that a green suite had been hiding, and both were confirmed numerically before being touched:
+
+- **`periodStart(d, "biweekly")` returned a Thursday in the *previous* fortnight.** A week *index*
+  cannot be turned back into a timestamp by multiplying by `WEEK_MS` — the Unix epoch is a Thursday,
+  so every multiple lands on one. `periodIndex(periodStart(d))` was off by a whole period, so the
+  sidebar list and the streak disagreed about which fortnight was current.
+- **`relativeSince` divided elapsed milliseconds by 24h instead of counting calendar days**, so an
+  entry logged at 23:00 was reported as "today" when read at 09:00 — the exact misstatement the
+  function was written to prevent.
+
+The rest: the settings save never told the shell to re-read (so a cadence change left the header
+pill, Home and the Log title computing against the old cadence); "Save anyway" persisted an entry
+without refreshing anything; Timeline dropped the optimistic update, so a delete left the panel
+offering Edit/Delete on a record that no longer existed; the cadence picker replaced a `<select>`
+with buttons implementing none of the radiogroup keyboard contract — a net a11y regression in the
+slice meant to close a11y findings; the composer became a single-line `<input>`, silently collapsing
+newlines on the app's primary ingestion path; `revokeObjectURL` fired synchronously after `click()`
+on a detached anchor, which is Chrome-specific behaviour; and four duplications (`isoWeek`, `CHIPS`,
+`MAX_MESSAGE_CHARS`, the org lookup, the UTC date helper) now live in `lib/composer.ts` and
+`lib/aggregates.ts`.
+
+**Every fix was mutation-verified.** Reintroducing the two arithmetic bugs fails exactly 4 of the new
+tests; reverting the overlay, the filter fallback and the settings callback fails exactly 4 more. A
+test that passes for the wrong reason is worse than no test, and a green suite is not evidence —
+all 15 findings passed a green suite before they were fixed.
+
+**Cost: $0 added infrastructure**, ~$0.01 of Bedrock for the one live verification round-trip.
+Month-to-date at wrap was **$0.04** against the $5 ceiling.
+
+**One thing to improve.** I set an exit criterion ("four of five aliases") on an assumption I never
+checked — that each alias belonged to one stylesheet. Thirty seconds of grep at planning time would
+have said otherwise. The lesson generalises past this slice: a criterion asserting a fact about the
+codebase should be *verified when written*, not discovered to be wrong at the gate that was supposed
+to enforce it.
 
 ---
 
