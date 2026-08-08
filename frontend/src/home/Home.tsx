@@ -46,16 +46,28 @@ function isoWeek(d: Date): number {
 const SHORT_DATE = new Intl.DateTimeFormat('en-GB', { month: 'short', year: '2-digit' })
 const EYEBROW_DATE = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 
+/** Matches the backend's per-message cap so an over-long paste is caught here, not by a 4xx. */
+const MAX_MESSAGE_CHARS = 4000
+
+/** `Intl.format` throws a RangeError on an Invalid Date, which would blank the whole app. */
+function shortDate(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? '' : SHORT_DATE.format(parsed).toUpperCase()
+}
+
 export function Home({
   entries,
   cadence,
   name,
+  loadError = false,
   onNavigate,
   onDraft,
 }: {
   entries: Entry[] | null
   cadence: Cadence
   name: string | null
+  loadError?: boolean
   onNavigate: (view: View) => void
   onDraft?: (text: string) => void
 }) {
@@ -65,8 +77,8 @@ export function Home({
 
   const noun = CADENCE_NOUN[cadence]
   const firstName = (name || '').trim().split(/\s+/)[0]
-  const loading = entries === null
-  const empty = !loading && entries.length === 0
+  const loading = entries === null && !loadError
+  const empty = entries !== null && entries.length === 0
 
   const start = () => {
     const text = draft.trim()
@@ -108,6 +120,7 @@ export function Home({
           <input
             id="home-composer"
             value={draft}
+            maxLength={MAX_MESSAGE_CHARS}
             placeholder="What did you accomplish? — a line is enough"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -143,15 +156,21 @@ export function Home({
         <div className="card stat">
           <p className="stat-label">In the vault</p>
           <p className="stat-value">{loading ? '—' : stats.total}</p>
+          {/* Sub-lines follow the loading state too: a user with 40 entries should not read
+              "nothing logged yet" for the duration of the fetch. */}
           <p className="stat-sub">
-            {stats.sinceYear ? `entries since ${stats.sinceYear}` : 'nothing logged yet'}
+            {loading ? ' ' : stats.sinceYear ? `entries since ${stats.sinceYear}` : 'nothing logged yet'}
           </p>
         </div>
         <div className="card stat">
           <p className="stat-label">This quarter</p>
           <p className="stat-value">{loading ? '—' : stats.thisQuarter}</p>
           <p className="stat-sub">
-            {stats.lastQuarter > 0 ? `against ${stats.lastQuarter} last quarter` : 'first of the quarter'}
+            {loading
+              ? ' '
+              : stats.lastQuarter > 0
+                ? `against ${stats.lastQuarter} last quarter`
+                : 'first of the quarter'}
           </p>
         </div>
         {/* "Résumés built" in the handoff — substituted until a résumé list endpoint exists (B-028). */}
@@ -159,7 +178,7 @@ export function Home({
           <p className="stat-label">Longest streak</p>
           <p className="stat-value">{loading ? '—' : stats.streak.longest}</p>
           <p className="stat-sub">
-            {stats.streak.longest === 1 ? `${noun} logged` : `${noun}s in a row`}
+            {loading ? ' ' : stats.streak.longest === 1 ? `${noun} logged` : `${noun}s in a row`}
           </p>
         </div>
       </div>
@@ -176,7 +195,12 @@ export function Home({
             <div
               className="grid-cells"
               role="img"
-              aria-label={`Activity over the last year: ${stats.total} entries logged across ${stats.grid.columns} weeks`}
+              // Counts what the chart actually draws — the trailing 53 weeks — not the whole
+              // corpus, which for a backfilled vault is a much larger and contradictory number.
+              aria-label={`Activity over the last year: ${stats.grid.cells.reduce(
+                (sum, cell) => sum + cell.count,
+                0,
+              )} entries logged across ${stats.grid.columns} weeks`}
             >
               {stats.grid.cells.map((cell) => (
                 <span
@@ -206,7 +230,9 @@ export function Home({
       <div className="two-col">
         <section className="card" aria-labelledby="latest-heading">
           <h2 id="latest-heading">Latest in the vault</h2>
-          {loading ? (
+          {loadError ? (
+            <p className="muted">Could not load your entries. Refresh to try again.</p>
+          ) : loading ? (
             <p className="muted">Loading…</p>
           ) : empty ? (
             <p className="muted">Nothing logged yet. The composer above is the fastest way in.</p>
@@ -215,9 +241,7 @@ export function Home({
               {stats.latest.map((entry) => (
                 <li key={entry.entry_id}>
                   <span className="latest-title">{entry.title}</span>
-                  <span className="latest-date">
-                    {entry.created_at ? SHORT_DATE.format(new Date(entry.created_at)).toUpperCase() : ''}
-                  </span>
+                  <span className="latest-date">{shortDate(entry.created_at)}</span>
                   <span className="latest-meta">
                     {String(entry.organization || entry.issuer || entry.entry_type || '')}
                   </span>
@@ -232,8 +256,10 @@ export function Home({
 
         <section className="card" aria-labelledby="weight-heading">
           <h2 id="weight-heading">Where the weight is</h2>
-          {loading || empty ? (
-            <p className="muted">{loading ? 'Loading…' : 'No entries to weigh yet.'}</p>
+          {loadError || loading || empty ? (
+            <p className="muted">
+              {loadError ? 'Unavailable right now.' : loading ? 'Loading…' : 'No entries to weigh yet.'}
+            </p>
           ) : (
             <ul className="weight-list">
               {stats.categories.map((category) => (

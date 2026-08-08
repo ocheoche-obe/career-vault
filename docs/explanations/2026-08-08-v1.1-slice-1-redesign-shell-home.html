@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Measuring before you style: the redesign slice that found two broken requirements</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Measuring before you style: the redesign slice that found two broken requirements</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">v1.1 slice 1 · Prepared 2026-08-08 · PR #43 · ADR-043 / ADR-044 / ADR-045</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+<p>This slice is the first of v1.1, and on paper it is the least interesting kind of work: make the app look better. CareerVault had been visually basic since slice 4 — logged as <strong>B-001</strong>, one vague line in the backlog reading "flesh out the UI."</p>
+
+<p>What actually happened is that measuring the app before restyling it turned up <em>two failing requirements nobody knew were failing</em>, and measuring the incoming design turned up two accessibility failures that no amount of looking at it would have revealed. The styling was the easy part. This explainer is about the measuring.</p>
+
+<h3>Skippable if you know it: what actually serves this page</h3>
+
+<p>CareerVault's frontend is a React + Vite single-page app (<strong>ADR-003</strong>). It is not served by a server that runs code. The built bundle — one HTML file, one JS file, one CSS file — sits in a private S3 bucket, and CloudFront serves it worldwide with Origin Access Control so the bucket itself is unreachable from the internet (<strong>ADR-019</strong>).</p>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box">Browser</div>
+    <div class="arrow">→</div>
+    <div class="box">CloudFront<br><small>static bundle</small></div>
+    <div class="arrow">→</div>
+    <div class="box">S3<br><small>private, OAC</small></div>
+  </div>
+  <p><small>Serving the app. Nothing here runs your code — it is file delivery.</small></p>
+  <div class="flow">
+    <div class="box">Browser</div>
+    <div class="arrow">→</div>
+    <div class="box">API Gateway<br><small>Cognito JWT authorizer</small></div>
+    <div class="arrow">→</div>
+    <div class="box">Lambda<br><small>career_crud</small></div>
+    <div class="arrow">→</div>
+    <div class="box">DynamoDB</div>
+  </div>
+  <p><small>Serving the <em>data</em>. This is the path that turned out to be slow.</small></p>
+</div>
+
+<p>The two paths are completely separate, and that separation is the reason a frontend-only slice could still surface a backend performance problem: the page renders instantly from CloudFront, and then sits there waiting on the second path.</p>
+
+<h3>The one AWS concept this slice turns on: cold starts</h3>
+
+<div class="callout"><strong>Lambda cold start.</strong> AWS Lambda does not keep your function running. When a request arrives and no initialised copy exists, AWS must allocate a micro-VM, download your deployment package and layers, start the Python runtime, and execute your module-level code — <em>before</em> your handler runs at all. That is a <strong>cold start</strong>. Once warm, the same environment is reused for subsequent requests and the overhead disappears. AWS keeps environments warm for an unpublished period, typically minutes to tens of minutes of idleness.</div>
+
+<p>Cold starts are usually filed under "a tax you pay occasionally." The interesting part of this slice is discovering that for CareerVault, that framing is exactly backwards.</p>
+
+<h3>What the design handoff was</h3>
+
+<p>The redesign came from Claude Design as a bundle of HTML prototypes plus a written specification: a full colour-token table, per-view layouts specified to the pixel, and a state model. It declared itself <strong>high-fidelity</strong> — "Colors, typography, spacing, radii, and interactions are final."</p>
+
+<p>It is a genuinely careful document. It is also silent on accessibility — no contrast target, no focus states, no ARIA — and that silence turns out to matter.</p>
+
+<h2 id="intuition">Intuition</h2>
+<h3>1. The cold path is the typical path</h3>
+
+<p>The plan for v1.1 said to <em>enumerate before styling</em>. The obvious reading is "catalogue what's broken in the current UI" — but almost all of that CSS was about to be deleted, so those findings would be bug reports against code that would not exist. The enumeration was retargeted at things that survive a visual rebuild. One of them was simply: <strong>how fast is this thing, actually?</strong></p>
+
+<p>Requirement <strong>NFR-2.3</strong> says the dashboard loads in under 2 seconds. It had never had a number attached — scored "❓ Unverified" on the MVP scorecard. So we measured it, by driving the real app against the deployed dev API.</p>
+
+<table>
+  <tr><th>Condition</th><th>Click → rendered</th><th>of which <code>GET /entries</code></th></tr>
+  <tr><td><strong>Cold</strong> (first load of a session)</td><td><strong>3686 ms</strong></td><td>3639 ms</td></tr>
+  <tr><td>Warm, run 1</td><td>1133 ms</td><td>613 ms</td></tr>
+  <tr><td>Warm, run 2</td><td>1012 ms</td><td>497 ms</td></tr>
+  <tr><td>Warm, run 3</td><td>721 ms</td><td>347 ms</td></tr>
+  <tr><td>Warm, run 4</td><td>895 ms</td><td>397 ms</td></tr>
+</table>
+
+<p>Two things fall out immediately. First, <strong>the client is not the bottleneck</strong> — 3639 of the 3686 milliseconds are the API call. Rendering thirteen entries is free. Second, warm comfortably meets the 2s budget and cold misses it by nearly double.</p>
+
+<p>Here is where most teams would report the average, or the warm number, and move on. That would be wrong here, and the reason is a product fact rather than a technical one.</p>
+
+<div class="callout"><strong>The insight.</strong> CareerVault's entire retention mechanism is <strong>FR-4</strong>: a scheduled check-in email that nudges you to log accomplishments, on a weekly-to-monthly cadence. The whole point is that you <em>are not using the app in between</em>. So a user arriving from that email has not touched it in a week — and the Lambda is reliably, structurally cold when they do.</div>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box">Check-in email<br><small>weekly / monthly</small></div>
+    <div class="arrow">→</div>
+    <div class="box">User returns<br><small>after ~7+ days idle</small></div>
+    <div class="arrow">→</div>
+    <div class="box fail">Lambda is cold<br><small>always</small></div>
+    <div class="arrow">→</div>
+    <div class="box fail">3.7 s wait</div>
+  </div>
+  <p><small>The cadence that drives retention also guarantees the slow path. The two features are coupled, and nothing in either one's design says so.</small></p>
+</div>
+
+<p>So the cold number is not an edge case to be averaged away — <strong>it is the number describing the app's core loop</strong>. The scorecard now records NFR-2.3 as "met warm, failed cold," which is less tidy than a tick or a cross and considerably more honest.</p>
+
+<h3>2. You cannot see a contrast failure</h3>
+
+<p>The second thing worth measuring was the incoming design itself. Every foreground/background token pair was run through the WCAG contrast formula. Almost everything passed comfortably — but two holes appeared, and neither is visible by inspection.</p>
+
+<table>
+  <tr><th>Token</th><th>on bg</th><th>on surface</th><th>on sunken</th><th>on raised</th><th></th></tr>
+  <tr><td><code>text-secondary</code> #a8a4c0</td><td>8.16</td><td>7.74</td><td>7.99</td><td>7.39</td><td>✅</td></tr>
+  <tr><td><code>text-muted</code> #8b88a8</td><td>5.78</td><td>5.48</td><td>5.65</td><td>5.23</td><td>✅</td></tr>
+  <tr><td><strong><code>text-faint</code> #6f6c88</strong></td><td><strong>3.90</strong></td><td><strong>3.70</strong></td><td><strong>3.82</strong></td><td><strong>3.53</strong></td><td>❌ needs 4.5</td></tr>
+  <tr><td><code>accent</code> #7c6cff</td><td>5.09</td><td>4.82</td><td>4.98</td><td>4.61</td><td>✅</td></tr>
+</table>
+
+<p>WCAG AA requires 4.5:1 for normal text. There is a relaxation to 3:1 for "large" text — but large means 18.66px bold or 24px regular, and the handoff assigns <code>text-faint</code> to eyebrows, timestamps, record numbers and axis labels <strong>all specified at 10–11px</strong>. The smallest text in the design is also its lowest-contrast text. No exemption applies.</p>
+
+<p>The second hole is worse because it is invisible in a different way. The design says <code>outline: none</code> on inputs, and signals keyboard focus purely by changing the border colour:</p>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box">resting border<br><code>#2b2b46</code></div>
+    <div class="arrow">→</div>
+    <div class="box fail">focused border<br><code>#4b3fa8</code></div>
+  </div>
+  <p><small>Contrast between the two states: <strong>1.68</strong>. The ring against its own input: <strong>2.35</strong>, where WCAG 1.4.11 wants 3.0. Keyboard focus is, in practice, unindicated.</small></p>
+</div>
+
+<p>The fix is the pleasing part. Neither correction invents a colour — both come out of the handoff's own palette. <code>text-faint</code> is lifted along a single axis (HSL lightness 47.8% → 54.6%, hue and saturation held exactly) to <code>#817e99</code>, the <em>minimum</em> lift that clears 4.5 on all four surfaces. And for focus, the palette already contained something that works: <code>--accent</code> #7c6cff scores at worst 4.61 against every surface. So the ring is a real ring made of an existing token.</p>
+
+<div class="callout"><strong>Why the minimum lift matters.</strong> The deviation is deliberately bounded so that a reviewer can diff the shipped <code>:root</code> block against the handoff's token table and find <em>exactly two differences</em>, both documented in <strong>ADR-043</strong>. A design that has been reviewed dies by a thousand small implementer preferences; "two values, measured, minimum-magnitude, written down" is what makes a deviation defensible rather than the start of drift.</div>
+
+<h3>3. A landmark you lose by nesting</h3>
+
+<p>The old shell rendered like this:</p>
+
+<pre><code>&lt;main&gt;
+  &lt;header&gt;…&lt;/header&gt;      ← inside main
+  &lt;nav&gt;…&lt;/nav&gt;            ← also inside main
+  {the current view}
+&lt;/main&gt;</code></pre>
+
+<p>That looks harmless. It is not, and the live accessibility tree is precise about why:</p>
+
+<pre><code>- main:
+  - generic:                  ← &lt;header&gt; — banner role LOST
+    - heading "CareerVault" [level=1]
+    - button "Sign out"
+  - navigation:               ← &lt;nav&gt; — navigation role SURVIVES
+    - button "Chat"</code></pre>
+
+<div class="callout"><strong>The rule.</strong> <code>&lt;nav&gt;</code> maps to the <code>navigation</code> landmark wherever it appears. <code>&lt;header&gt;</code> only maps to <code>banner</code> when it is <em>not</em> a descendant of <code>main</code>, <code>article</code>, <code>aside</code>, <code>nav</code> or <code>section</code> — otherwise it silently degrades to a generic container. One of the two survived the nesting and the other did not, and nothing in the visual rendering differs at all.</div>
+
+<p>This is the category of defect that motivated retargeting the whole enumeration. It is a property of <em>DOM structure</em>, not of styling — so a purely visual redesign would have carried it forward untouched and invisible. The same is true of the other findings: no <code>aria-current</code> on the active tab, no live region anywhere, inputs labelled only by placeholder, and no view owning an <code>&lt;h1&gt;</code>.</p>
+
+<p>That last one had a trap in it. The redesign gives every view its own 30px title styled as <code>&lt;h1&gt;</code> — while keeping the "CareerVault" wordmark, which <em>was</em> the app's only <code>&lt;h1&gt;</code>. Ported naively, every page would have shipped two.</p>
+
+<h2 id="code">Code walkthrough</h2>
+<h3>The token layer, and one rule that makes it enforceable</h3>
+
+<p><a href="frontend/src/index.css">frontend/src/index.css</a> was, before this slice, mostly unmodified Vite starter template — <code>#social</code>, <code>.counter</code>, a <code>code {}</code> block, and three asset files referenced nowhere. That is a pleasant discovery when you are about to replace a file: most of it was dead.</p>
+
+<p>It is now the only file in the app permitted to define a colour. That is not a style preference; it is what makes two themes tractable:</p>
+
+<div class="callout"><strong>A raw hex in a feature stylesheet is a light-mode bug that dark-mode review cannot see.</strong> If <code>chat.css</code> hard-codes <code>#f5f3ff</code>, it looks perfect in dark mode and is invisible-on-white in light mode — and you will only find out by switching themes on every view. Making "no hex outside <code>index.css</code>" a slice exit criterion turns a class of bug into a grep.</div>
+
+<p>The theme structure inverts the usual convention, deliberately (<strong>ADR-044</strong>):</p>
+
+<pre><code>:root { /* the handoff's DARK tokens, verbatim except ADR-043's two */ }
+
+@media (prefers-color-scheme: light) {
+  :root { /* derived light tokens */ }
+}</code></pre>
+
+<p>Light-first is more common. Dark sits on bare <code>:root</code> here for two reasons: the dark palette <em>is</em> the approved artifact, so its values sit unqualified where they can be diffed line-by-line against the handoff's table; and a browser that cannot resolve <code>prefers-color-scheme</code> falls back to the design as approved rather than to our derivation.</p>
+
+<p>The light palette is derived, not supplied — the handoff ships one palette and it is dark. Most of it transfers structurally (in both themes "elevated" is lighter than the page, "sunken" is darker than its card). One thing does not:</p>
+
+<pre><code>/* dark: intensity reads as BRIGHTER */
+--heat-0: #1a1a2c;  →  --heat-4: #a58cff;
+
+/* light: intensity must read as DEEPER, or an empty
+   week becomes the loudest cell on the page */
+--heat-0: #eae7f6;  →  --heat-4: #5b45c4;</code></pre>
+
+<h3>The compatibility shim, and why it had to exist</h3>
+
+<p>This slice redesigns the shell and Home; five views keep their old stylesheets until slice 2. Those stylesheets reference old token names — <code>--text-h</code>, <code>--text</code>, <code>--accent-bg</code>. And here is the trap:</p>
+
+<div class="callout"><strong>An unset CSS custom property resolves to nothing, not to a fallback.</strong> <code>color: var(--text-h)</code> where <code>--text-h</code> no longer exists does not fall back to a sensible default — the declaration is invalid at computed-value time and the property inherits or resets. Deleting the old names outright would have rendered five views essentially colourless, in both themes.</div>
+
+<p>So <a href="frontend/src/index.css">index.css</a> carries five aliases, loudly marked as temporary. Each dies with the stylesheet that uses it; when the block is empty, slice 2 is done.</p>
+
+<h3>The shell</h3>
+
+<p><a href="frontend/src/App.tsx">frontend/src/App.tsx</a> now renders <code>&lt;header&gt;</code> and <code>&lt;nav&gt;</code> as <em>siblings</em> of <code>&lt;main&gt;</code>, so the banner landmark exists at all. The wordmark became a <code>&lt;span&gt;</code>, freeing each view to own the page's single <code>&lt;h1&gt;</code>. The active tab carries <code>aria-current="page"</code>, so the state is in the accessibility tree and not only in a CSS class.</p>
+
+<p>Two things the handoff did not account for, both preserved deliberately:</p>
+
+<ul>
+<li><strong>Sign-out.</strong> The design shows a bare avatar and no sign-out control anywhere. Losing a functional control to visual fidelity is not a trade worth making, so the avatar became a <code>&lt;details&gt;</code> disclosure holding the email and the sign-out button.</li>
+<li><strong>The mobile overflow fix.</strong> This is the same change. <strong>NFR-6.2</strong> was failing on <em>all five views</em> — 82px of horizontal overflow at 360px — and the cause was entirely shell-local: <code>.app-header</code> was <code>width: min(720px, 100%)</code> carrying a 241px email string that cannot compress, beside a nav that neither wrapped nor scrolled. Moving the email into a fixed-width disclosure and letting the nav scroll fixed every view at once. Now 0px on all six.</li>
+</ul>
+
+<h3>Deriving Home, and defining a word</h3>
+
+<p><a href="frontend/src/lib/aggregates.ts">frontend/src/lib/aggregates.ts</a> computes everything Home displays from the entry list the shell already fetched — no new endpoint, no schema change, $0 added cost (<strong>ADR-045</strong>). Promotion to a server-side aggregate is tracked as <strong>B-029</strong> with an explicit trigger, and the component's props are designed not to change when it happens.</p>
+
+<p>The interesting part is that the design invented a concept the data model does not have: a <strong>streak</strong>. Defining it is a product decision, so it lives in the ADR rather than in whichever component happened to implement it. Three rules do the work:</p>
+
+<pre><code>// 1. created_at, NEVER event_date
+function loggedAt(entry) { return new Date(entry.created_at) }</code></pre>
+
+<p>A streak measures <em>the habit of logging</em>. Counting event dates would let you backfill a 2019 job and extend a 2026 streak — which inverts the metric from "how consistent are you" into "how long is your career."</p>
+
+<pre><code>// 2. the current period is neutral until it ends
+let cursor = logged.has(currentPeriod) ? currentPeriod : currentPeriod - 1;
+while (logged.has(cursor)) { current += 1; cursor -= 1; }</code></pre>
+
+<p>An unfinished period with no entry is not a miss. Without this, every user's streak reads zero every Monday morning until they log something.</p>
+
+<pre><code>// 3. periods anchored to the calendar, not to "now"
+case "weekly": return Math.floor(mondayOf(d) / WEEK_MS);</code></pre>
+
+<p>A rolling window measured back from the current instant would make the number drift day to day with no user action. Period length comes from the same cadence table that paces the check-in emails, so the streak can never disagree with the thing that prompts it.</p>
+
+<h3>Where the design was amended</h3>
+
+<p>Two elements did not survive contact with the real app. The handoff specified the year-activity grid as 130 cells in 26 fortnight columns — which measures 442px inside a ~1172px card, rendering as a small dense block with two thirds of its card empty. It also could not fit a mobile viewport, and the ~2.8-day bucket it implied meant nothing.</p>
+
+<p>Rebuilt as one cell per day across 53 week-columns × 7 day-of-week rows — the GitHub contribution-graph form. <code>1fr</code> columns fill any width honestly, and it earns a property the fortnight buckets could not:</p>
+
+<div class="callout"><strong>Because rows are fixed weekdays, a user who checks in every Friday produces a clean horizontal band.</strong> The chart shows the <em>cadence</em> — which is the entire point of Home. The original bucketing was structurally incapable of showing that.</div>
+
+<p>The second amendment: the big stat numerals moved from JetBrains Mono to Figtree with <code>tabular-nums</code>. Mono is right for small data-chrome and keeps its job on dates and micro-labels — but at 30px it was the largest type on the page, and a heavy coding face beside a soft grotesque functions as a second display typeface. That is exactly what the handoff itself set out to avoid when it dropped concept 1d's serif accent for "one sans across the entire UI." Following the letter of the spec would have worked against its stated intent.</p>
+
+<h3>What the code review caught that browser testing did not</h3>
+
+<p>Worth recording honestly. The diff had been driven in a real browser at two viewports and two themes before review. The review still returned eight findings, and the most severe was a layout regression on <em>five of six views</em>: making <code>&lt;main&gt;</code> a plain block removed the flex centring those un-redesigned views silently depended on, so they rendered flush against the left edge under the sticky header.</p>
+
+<div class="callout"><strong>The generalisable lesson.</strong> Browser verification confirmed the views that were <em>built</em> and never re-checked the ones merely <em>touched</em>. When a change lands in a shared container, the blast radius is every child — and "I looked at it" only ever covers what was on screen.</div>
+
+<p>All eight were fixed in-slice, including an unguarded <code>Intl.format</code> call that would throw a <code>RangeError</code> and white-screen the entire app on a single malformed date, since there is no error boundary above Home.</p>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>The dashboard loads in ~940ms warm and 3686ms cold, against a 2-second requirement. Why does the slice report the cold number as the one that matters, rather than the warm average?</strong></p>
+<button class="quiz-opt" data-correct="false">Because CloudFront caches the bundle for 24 hours, so the first load of a day is always cold.</button>
+<button class="quiz-opt" data-correct="false">Because DynamoDB on-demand capacity scales down when idle, adding latency to the first query.</button>
+<button class="quiz-opt" data-correct="true">Because FR-4's check-in email brings users back on a weekly-to-monthly cadence, so the Lambda is reliably cold whenever they arrive — the cold path is the core loop's typical path.</button>
+<button class="quiz-opt" data-correct="false">Because cold starts are the worst case, and requirements should always be measured against worst-case behaviour.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The design specifies &lt;code&gt;text-faint&lt;/code&gt; #6f6c88, which scores 3.53–3.90 against the four surface colours. WCAG AA allows 3:1 for large text. Why doesn&#x27;t that exemption rescue it?</strong></p>
+<button class="quiz-opt" data-correct="false">The large-text exemption only applies to headings, and none of these are headings.</button>
+<button class="quiz-opt" data-correct="true">The handoff assigns that token exclusively to 10–11px text, far below the 18.66px-bold / 24px threshold that "large" requires.</button>
+<button class="quiz-opt" data-correct="false">The exemption was withdrawn in WCAG 2.1 and no longer applies to any text.</button>
+<button class="quiz-opt" data-correct="false">It does rescue it — the token was left unchanged and only the focus indicator was fixed.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The old shell rendered &lt;code&gt;&amp;lt;header&amp;gt;&lt;/code&gt; and &lt;code&gt;&amp;lt;nav&amp;gt;&lt;/code&gt; inside &lt;code&gt;&amp;lt;main&amp;gt;&lt;/code&gt;. What did the live accessibility tree show?</strong></p>
+<button class="quiz-opt" data-correct="true"><code>&lt;nav&gt;</code> kept its navigation landmark, but <code>&lt;header&gt;</code> degraded to a generic container and the banner landmark was lost entirely.</button>
+<button class="quiz-opt" data-correct="false">Both landmarks survived — nesting affects styling but never roles.</button>
+<button class="quiz-opt" data-correct="false"><code>&lt;header&gt;</code> kept its banner role but <code>&lt;nav&gt;</code> was demoted, because <code>main</code> already implies navigation.</button>
+<button class="quiz-opt" data-correct="false">Both landmarks were lost, because neither is valid inside <code>&lt;main&gt;</code>.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>ADR-045 specifies that the streak counts &lt;code&gt;created_at&lt;/code&gt; and never &lt;code&gt;event_date&lt;/code&gt;. What breaks if you use &lt;code&gt;event_date&lt;/code&gt;?</strong></p>
+<button class="quiz-opt" data-correct="false"><code>event_date</code> is stored in local time while the grid is computed in UTC, so periods would be off by a day.</button>
+<button class="quiz-opt" data-correct="false">Nothing breaks; the two fields are equivalent for entries created through the chat flow.</button>
+<button class="quiz-opt" data-correct="false"><code>event_date</code> is optional on some entry types, so the streak would throw on entries that lack it.</button>
+<button class="quiz-opt" data-correct="true">Backfilling an old role would extend a current streak, changing the metric from "how consistently you log" into "how long your career is".</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why did deleting the old token names outright require a compatibility shim rather than just letting the un-redesigned views fall back?</strong></p>
+<button class="quiz-opt" data-correct="false">CSS custom properties cannot be removed once other stylesheets reference them; the browser throws a parse error.</button>
+<button class="quiz-opt" data-correct="false">The old names were still needed by the design handoff's prototypes, which are checked into the repo.</button>
+<button class="quiz-opt" data-correct="true">An unset CSS custom property resolves to nothing rather than to a fallback, so those five views would have rendered essentially colourless in both themes.</button>
+<button class="quiz-opt" data-correct="false">Vite's CSS bundler fails the build when it finds a <code>var()</code> reference with no matching declaration.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

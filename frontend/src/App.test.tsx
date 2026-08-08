@@ -162,6 +162,31 @@ describe("shell accessibility (pre-redesign audit §A1, §A2, §A10)", () => {
     expect(screen.getByText("CareerVault")).toBeInTheDocument();
   });
 
+  it("wraps the not-yet-redesigned views in a container so they are not flush to the edge", async () => {
+    // The redesign made `main` a plain block, but those five views set a width and rely on a
+    // parent for centring and padding — without this wrapper they sit against the viewport edge,
+    // under the sticky header. The wrapper is temporary and dies view-by-view in slice 2.
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Timeline" }));
+
+    expect(container.querySelector(".legacy-view")).not.toBeNull();
+  });
+
+  it("does not re-seed Log with a message that was already sent", async () => {
+    // `Chat` seeds its composer from `initialDraft` on every mount, so a draft left in App state
+    // reappeared prefilled each time Log was reopened.
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Log" }));
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    await user.click(screen.getByRole("button", { name: "Log" }));
+
+    expect(await screen.findByText("chat-view")).toBeInTheDocument();
+  });
+
   it("keeps sign-out reachable even though the design omits it", async () => {
     render(<App />);
     // The handoff shows a bare avatar with no sign-out anywhere. Losing it to visual fidelity would

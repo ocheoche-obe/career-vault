@@ -203,6 +203,27 @@ main:focus {
   outline: none;
 }
 
+/* TEMPORARY — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
+   The five un-redesigned views set a width (`.dashboard` is `width: min(720px, 100%)`) but no
+   margin or padding of their own: they were centred by the old `main`'s `align-items: center` and
+   padded by its `24px 20px`. The redesign replaced that with a plain block `main`, so without this
+   wrapper they render flush against the left edge, touching the sticky header. */
+.legacy-view {
+  max-width: var(--w-wide);
+  margin: 0 auto;
+  padding: 28px 32px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .legacy-view {
+    padding: 24px 16px 40px;
+  }
+}
+
 .app-state {
   max-width: var(--w-narrow);
   margin: 0 auto;

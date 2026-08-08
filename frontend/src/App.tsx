@@ -54,10 +54,28 @@ function App() {
   const [entries, setEntries] = useState<Entry[] | null>(null)
   const [cadence, setCadence] = useState<Cadence>('weekly')
   const [profileName, setProfileName] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
   // Carries Home's one-line composer text across to Log so the hand-off does not lose it.
   const [logDraft, setLogDraft] = useState('')
+  // Bumped when returning to Home, to re-derive its aggregates against anything saved elsewhere.
+  const [dataVersion, setDataVersion] = useState(0)
 
   const idToken = auth.user?.id_token
+
+  /**
+   * Nav is routed through here rather than raw `setView` so two pieces of cross-view state stay
+   * correct: the composer hand-off is consumed exactly once, and Home re-reads entries on arrival.
+   */
+  const navigate = (next: View) => {
+    // Home's numbers are derived from the entry list, so a save made in Log or Import would leave
+    // the stats, streak, heatmap and header pill stale until a full reload. Refetching on arrival
+    // is the cheap fix: Home is where the data is *read*, never where it is mutated. Entries are
+    // not cleared first, so this updates in place instead of flashing a loading state.
+    if (next === 'home') setDataVersion((v) => v + 1)
+    // A sent message must not reappear prefilled the next time Log is opened.
+    if (view === 'log' && next !== 'log') setLogDraft('')
+    setView(next)
+  }
 
   // One fetch for the shell and Home: Home derives every aggregate it shows from this single list,
   // which is what makes the handoff's "everything reads from one source of truth" property real
@@ -75,7 +93,16 @@ function App() {
       const [rows, profile] = await Promise.allSettled([listEntries(idToken), getSettings(idToken)])
       if (cancelled) return
 
-      if (rows.status === 'fulfilled') setEntries(rows.value)
+      if (rows.status === 'fulfilled') {
+        setEntries(rows.value)
+        setLoadError(false)
+      } else {
+        // Without this the list stays `null` forever and Home renders "Loading…" indefinitely — a
+        // failure that looks identical to a slow network and reports nothing to anyone.
+        console.error('Failed to load entries', rows.reason)
+        setLoadError(true)
+      }
+
       if (profile.status === 'fulfilled') {
         const value = (profile.value as { settings?: { checkin_cadence?: string } }).settings
           ?.checkin_cadence
@@ -87,7 +114,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [idToken])
+  }, [idToken, dataVersion])
 
   if (auth.isLoading) {
     return (
@@ -150,7 +177,7 @@ function App() {
                 type="button"
                 className={view === item.id ? 'active' : ''}
                 aria-current={view === item.id ? 'page' : undefined}
-                onClick={() => setView(item.id)}
+                onClick={() => navigate(item.id)}
               >
                 {item.label}
               </button>
@@ -193,19 +220,27 @@ function App() {
             entries={entries}
             cadence={cadence}
             name={profileName}
-            onNavigate={setView}
+            loadError={loadError}
+            onNavigate={navigate}
             onDraft={setLogDraft}
           />
-        ) : view === 'log' ? (
-          <Chat idToken={idToken} initialDraft={logDraft} />
-        ) : view === 'import' ? (
-          <Upload idToken={idToken} />
-        ) : view === 'resumes' ? (
-          <Resume idToken={idToken} />
-        ) : view === 'details' ? (
-          <Settings idToken={idToken} />
         ) : (
-          <Dashboard idToken={idToken} />
+          // TEMPORARY wrapper. These five views have no container of their own — they relied on the
+          // old `main`'s flex centering and padding, which the redesign removed. Each one drops out
+          // of here as it gains its own layout in v1.1 slice 2.
+          <div className="legacy-view">
+            {view === 'log' ? (
+              <Chat idToken={idToken} initialDraft={logDraft} />
+            ) : view === 'import' ? (
+              <Upload idToken={idToken} />
+            ) : view === 'resumes' ? (
+              <Resume idToken={idToken} />
+            ) : view === 'details' ? (
+              <Settings idToken={idToken} />
+            ) : (
+              <Dashboard idToken={idToken} />
+            )}
+          </div>
         )}
       </main>
     </>

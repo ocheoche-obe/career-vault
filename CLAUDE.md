@@ -127,9 +127,27 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**Phase 2 complete — MVP declared 2026-07-29 (slice 9, PR #32). Next: v1.1.**
+**v1.1 slice 1 complete (redesign: audit, tokens, shell, Home — PR #43). Next: v1.1 slice 2 — the
+remaining five views.** Phase 2 / MVP was declared 2026-07-29 (slice 9, PR #32).
 
-Scope is already agreed and sliced in `docs/careervault-plan.md` § "v1.1 — graduated scope":
+**Read before touching the frontend:**
+[`docs/design/v1.1-redesign/README.md`](docs/design/v1.1-redesign/README.md) (the design handoff) and
+[`pre-redesign-audit.md`](docs/design/v1.1-redesign/pre-redesign-audit.md) (18 ranked findings; the
+ones marked "next slice" are slice 2's list). Three things that will bite:
+
+- **The handoff is a proposal, not a contract.** Claude Design was given the repo and filled gaps
+  with plausible features that do not exist — a résumé history grid, gap analysis, streak-break
+  reminders, JSON export, account deletion. Build what exists, defer the rest, **never fabricate the
+  data in between** (B-015 is the precedent). Amending the design where it does not work is
+  explicitly sanctioned; record the reasoning.
+- **`index.css` is the only file that may define a colour.** A raw hex in a feature stylesheet is a
+  light-mode bug that dark-mode review cannot see. Both themes ship (ADR-044).
+- **A temporary compatibility shim** in `index.css` aliases 5 old token names, and `.legacy-view` in
+  `App.css` wraps the un-redesigned views. Both exist only because slice 1 redesigned the shell
+  ahead of the views. **Delete each alias and drop each view out of the wrapper as it is rebuilt** —
+  when both are empty, slice 2 is done.
+
+Remaining v1.1 scope in `docs/careervault-plan.md` § "v1.1 — graduated scope":
 
 1. **Résumé speed + usability** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and optimising
    without a baseline ships changes that only *feel* faster), then B-020/B-004 (one mechanism — the
@@ -159,12 +177,12 @@ Each of these caused, or would have caused, a wrong action. Detail is in the lin
 
 ## Testing
 
-466 tests. **The default run of every suite is free** — that is deliberate, because a suite that
+510 tests. **The default run of every suite is free** — that is deliberate, because a suite that
 costs money is a suite people avoid, and an avoided test still implies coverage nobody has (ADR-042).
 
 ```bash
 ./scripts/run-tests.sh                    # 376 backend unit                        $0
-cd frontend && npm test                   # 28 component (Vitest + RTL)             $0
+cd frontend && npm test                   # 72 component (Vitest + RTL)             $0
 ./scripts/run-integration.sh              # 56 · DynamoDB Local + deployed dev      $0
 ./scripts/run-integration.sh --bedrock    # + real Haiku round-trips           ~$0.01
 ./scripts/run-integration.sh --expensive  # + a full Sonnet résumé run         ~$0.11

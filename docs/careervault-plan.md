@@ -68,7 +68,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 7 | Chat over your data | FR-6.1 | ✅ | [#29](https://github.com/ocheoche-obe/career-vault/pull/29) |
 | 8 | Check-in emails | FR-4 | ✅ | [#31](https://github.com/ocheoche-obe/career-vault/pull/31) |
 | 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
-| **v1.1-1** | **Redesign — audit, tokens, shell, Home** | **B-001, NFR-6.2, NFR-2.3** | **🔨** | — |
+| v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1164,7 +1164,7 @@ Not dropped — reconsidered when their trigger arrives.
 
 ---
 
-## v1.1 slice 1 — Redesign: audit, tokens, shell, Home 🔨
+## v1.1 slice 1 — Redesign: audit, tokens, shell, Home ✅
 
 **Goal:** land the design system and the two views that carry it — the app shell and a new Home —
 against a measured baseline, fixing the accessibility debt a visual rebuild would otherwise inherit.
@@ -1240,6 +1240,64 @@ endpoint (**B-029**). Voice capture and the résumé-latency workstream — sepa
 - Auth states preserved — the design has no sign-out and we must not lose it.
 - Frontend tests green and updated.
 - Scorecard NFR-6.2 re-measured and re-scored after the fix.
+
+### Completion notes
+
+**Shipped.** The token layer (`index.css` is now the only file defining a colour, both themes per
+ADR-044), a rebuilt shell (banner landmark, six-tab nav with `aria-current`, skip link, account
+disclosure carrying the sign-out the handoff omits), and a new Home deriving every number
+client-side from `GET /entries` (ADR-045). Backend untouched — a pure frontend diff, which is why
+the deployment risk is near zero.
+
+**Two requirements moved off ❓Unverified**, which was the real value of enumerating first:
+
+- **NFR-6.2 was failing, not merely unverified.** 82px of horizontal overflow on all five views at
+  360px. The cause was entirely shell-local — a 241px email string that could not compress and a nav
+  that neither wrapped nor scrolled — so one fix cleared every view. **Now 0px on all six at 375px.**
+  Re-scored ⚠️ rather than ✅: zero overflow is one property of "usable on mobile", and the five
+  views behind the shell keep their pre-redesign internals until slice 2.
+- **NFR-2.3 splits cold/warm.** Cold **3686ms** against a 2s budget; warm ~940ms. Nearly all of it is
+  `GET /entries` (3639ms cold), not rendering. The cold number is the one that counts, and that is
+  the non-obvious part: **FR-4's check-in email is designed to bring the user back weekly-to-monthly,
+  so the Lambda is reliably cold when they arrive.** The cold path is the core loop's *typical* path,
+  not an edge case. Closes B-023's NFR-2.3 half; NFR-2.1 remains open.
+
+**The design shipped two WCAG failures**, neither visible by inspection. `text-faint` failed AA on
+every surface at the design's *smallest* type (10–11px, where no large-text exemption applies), and
+focus was signalled by a 1.68-contrast border swap after `outline: none`. Both fixed using colours
+already in the handoff's own palette (ADR-043), so the deviation is two values — measured,
+minimum-magnitude — and a reviewer can diff `:root` against the token table and find exactly those.
+
+**Gotchas discovered**, roughly by how much they would have cost later:
+
+1. **Unset CSS custom properties resolve to nothing, not to a fallback.** Replacing the token layer
+   while five views still referenced the old names would have rendered them colourless. A marked
+   compatibility shim (5 aliases) covers the gap and dies view-by-view in slice 2.
+2. **A `<header>` inside `<main>` silently loses its banner role, but a `<nav>` keeps its own.** The
+   live accessibility tree was precise about which one degrades — worth knowing, because the failure
+   is invisible by every other means.
+3. **Removing the placeholder logo nearly removed all mobile branding.** The wordmark had been hidden
+   below 768px *specifically* to make room for the square. Exactly the class of silent regression the
+   audit exists to catch — and it was caught only because the audit had been run.
+4. **The frontend CI gate is no longer hollow**, contrary to what `dependabot-triage` asserted. 28
+   Vitest+RTL tests have gated every PR since slice 9; the skill was corrected in this slice.
+5. **Making `main` a plain block broke the five un-redesigned views**, which have no container of
+   their own and were centred by the old `main`'s flexbox. Caught by the code review, not by me.
+
+**Evaluation.** Exit criteria met, with one deliberately unmet: the built bundle was **not deployed**
+to S3/CloudFront. Verification ran against the deployed dev API from a local dev server, so
+API Gateway → Lambda → DynamoDB is exercised end-to-end; the only unverified link is static asset
+hosting. Deferred on purpose — `careervault-dev` *is* the MVP stack (ADR-041), and publishing a
+half-redesigned app to the thing Oche actually uses is worse than waiting for slice 2.
+
+**Cost: $0 added.** No Bedrock calls, no new AWS resources, no schema change. Month-to-date at slice
+start was $0.028.
+
+**One thing to improve.** The code review returned 8 findings on a diff I had already driven in a
+browser at two viewports and two themes — including a layout regression affecting five of six views.
+Browser verification confirmed the views I *built* and never re-checked the ones I merely *touched*.
+The lesson generalises: when a change lands in a shared container, the blast radius is every child,
+and "I looked at it" only covers what was on screen. All 8 were fixed in-slice; none deferred.
 
 ---
 
