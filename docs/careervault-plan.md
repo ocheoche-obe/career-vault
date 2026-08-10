@@ -70,7 +70,8 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
 | v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
-| v1.1-3 | Redesign — Résumés + résumé history | B-028, B-001 | ⏳ | — |
+| v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007 | 🔨 | — |
+| v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ⏳ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1470,6 +1471,298 @@ checked — that each alias belonged to one stylesheet. Thirty seconds of grep a
 have said otherwise. The lesson generalises past this slice: a criterion asserting a fact about the
 codebase should be *verified when written*, not discovered to be wrong at the gate that was supposed
 to enforce it.
+
+---
+
+## v1.1 slice 3 — Redesign: Résumés + résumé history 🔨
+
+**Goal:** give the Résumés view a real data source, then rebuild it — retiring the last of the
+slice-1 scaffolding, so the redesign is complete across all six views.
+
+**Key refs:** [design handoff](design/v1.1-redesign/README.md) §4 · **ADR-046** (this slice's
+decision) · ADR-015 as amended twice (delivery + retention) · ADR-037 (async job, RESUMERUN TTL) ·
+ADR-045 (omit rather than fabricate) · ADR-028 (no GSIs) · B-028, B-036, B-022, B-007
+
+### ⚠ Decisions — resolved before code, as ADR-046
+
+B-028 was the blocker: no list endpoint, and a 30-day TTL on both the `RESUMERUN#` item and the
+`resumes/` S3 objects, so history could not reach back further than a month. **ADR-046 splits a
+durable `RESUME#<run_id>` record (no `expires_at`) from the ephemeral trace (30-day TTL unchanged)
+and removes the `resumes/` lifecycle rule.**
+
+The reasoning worth carrying: the 30-day artifact number was never a retention judgment — ADR-015's
+amendment chose it to stop a trace item outliving the objects it pointed at. It is a coupling fix,
+and once a durable record exists the coupling is gone. This is the revisit ADR-015 explicitly
+anticipated ("*alongside the `GENERATED_RESUME` entity*").
+
+**Voice capture was scoped into this slice and then moved out**, at Oche's call, to **v1.1 slice 4**
+— it is frontend-only with zero backend surface, so it detaches cleanly, and slice 3 already carries
+a data-model change, a new route, a Lambda change and a full view rebuild. Carried into slice 4: the
+provider seam Oche asked for (a `DictationProvider` interface with an **optional** `onInterim`, so a
+buffer-then-POST cloud API can satisfy the same contract as Web Speech's streaming events) becomes an
+**amendment to ADR-014** rather than a new ADR — ADR-014 already chose Web Speech API on cost
+grounds, and its own note that Firefox support is weak is what makes a second provider a known case
+rather than speculative generality. Any paid cloud STT breaks ADR-014's cost premise; the seam is
+where that trade-off gets made explicitly, and nothing paid is wired now.
+
+### Phases
+
+**Phase 0 — deploy current `main` ✅** *(no code; done at slice start)*
+
+Slices 1 and 2 had never been deployed: the live bundle dated **2026-07-28**, pre-redesign. Deploying
+first isolates two slices of undeployed UI risk from slice 3's changes — specifically the one thing
+localhost cannot verify, which is **self-hosted fonts (B-032) under a production build**: asset
+hashing, S3 content-types, CloudFront caching. Verified live: all four woff2 served as `font/woff2`,
+CSS/JS content-types correct, Figtree rendering, one `<h1>`, **zero console errors**. Backend stack
+untouched (last updated 2026-07-29, correctly — slices 1–2 touched no backend).
+
+*Limitation stated honestly:* verification reached the sign-in screen only. The authenticated views
+are unverified on CloudFront until Oche signs in.
+
+**Phase 1 — backend + data model ✅**
+
+Shipped and deployed. **397 → 407 backend tests**, 63 integration, all green; every new assertion
+mutation-verified (six mutations, each caught by exactly one test — the right one). Verified
+end-to-end with a real `--expensive` run: **74s, 20,455 tokens, $0.116, critique=REVISE**.
+
+*Three things the cheap tiers could not have found, recorded because the pattern is the point:*
+
+- **`elapsed_seconds` came back `null` from the deployed run.** `_record_item` wrote it;
+  `_final_item` — the trace the poll actually reads for the first 30 days — did not. The unit test
+  passed because its fake item supplied the field by hand: **a reader test over a hand-built fixture
+  proves nothing about the producer.** The replacement asserts both writers.
+- **Six real résumés had no history record and were 12 days from being unreachable.** Runs that
+  completed before ADR-046 have only a trace, and once its TTL fires the artifacts have no record to
+  list them, no trace to poll, and — since this slice removed the lifecycle rule — nothing to clean
+  them up. Backfilled via `scripts/backfill-resume-records.py` (dry-run first, idempotent via
+  `attribute_not_exists`), 6 written, verified through the deployed endpoint. **B-040** retires it.
+- **Removing the TTL leaked test data.** The `resumes/` rule was also what swept `--expensive`
+  artifacts; the tier gained a cleanup fixture, and 6 objects of slice-9 residue were deleted.
+
+*Two bugs the backfill hit that only a script reading the table could:* `CAREERVAULT_TABLE_NAME` is
+read from the environment by the shared helper (the dry run never reached that code path), and
+DynamoDB returns numbers as `Decimal` while the write helper marshals through `json.dumps`, which
+cannot serialise one. Both are now tested. Neither wrote a partial record — verified at zero before
+re-running.
+
+**Phase 1 scope, as built**
+
+1. `RESUME#<run_id>` written on **successful completion only**, after `RESUMERUN#` is finalized
+   (ADR-046 §3 — ordering chooses which divergence a crash produces).
+2. `GET /resumes` on `resume_agent` — Query `SK begins_with RESUME#`, `ScanIndexForward=False` for
+   newest-first, **projected** to `run_id`/`created_at`/`target_title`/`entry_count`/`status` so a
+   pasted job description is not shipped per row (declining B-013's mistake in advance).
+3. Remove the `ExpireGeneratedResumes` lifecycle rule; `ExpireRawUploads` untouched.
+4. **B-022** — expose the `ResumeDocument` bullets as structured data so plain text is copyable.
+   The last third of FR-5.3, and the only part of this phase that is a feature rather than plumbing.
+5. New `RESUME#`-prefix helpers in `ddb_helpers`, per §4.2.4's SK-scoping invariant.
+
+**Phase 2 — theme selection, the view, and the last of the scaffolding ✅**
+
+Shipped. **139 → 183 frontend tests**; `tsc -b` green (run explicitly — `npm test` does not typecheck).
+**B-036 closed and verified by grep, not assumption:** zero shim aliases, zero `.legacy-view`
+references, **zero raw hex outside `index.css`** — the print white became `--paper`.
+
+*What the browser caught that neither the tests nor the diff could,* the slice-2 lesson repeating
+almost exactly. The Résumés view is behind Cognito and jsdom does no layout, so both rounds needed a
+throwaway static harness against the real stylesheets:
+
+- **The Appearance swatches were invisible.** `--swatch-light` on `--surface-sunken` read as an empty
+  input; Dark would have vanished identically in dark mode. Each swatch now carries an accent wedge
+  and a fixed border.
+- **I invented a parallel button vocabulary.** `.primary`/`.secondary`/`.button` resolve to nothing —
+  the shell already ships `.btn-primary`/`.btn-quiet`, used by all four slice-2 views. The buttons
+  rendered as raw browser defaults.
+- **And a parallel layout vocabulary.** `.resume-view`/`.resume-head` duplicated `.view`/`.view-head`,
+  which own padding precisely so six views cannot drift apart by a few pixels. Now only `max-width`
+  is this view's business.
+- **A nested `<main>`** — App.tsx already wraps the view switch in one.
+
+Three of those four are the same mistake: *building a private copy of something the shell already
+owned*. Worth naming, because a diff cannot show you what you failed to reuse.
+
+**Verified signed-in on the deployed app** (Oche signed the Playwright profile in), which is what the
+static harness could not reach:
+
+- **24 combinations clean** — 6 views × 2 themes × 2 widths (1280px / 360px): exactly one `<h1>`
+  each, **zero horizontal page overflow**, and `.legacy-view` absent everywhere. The elements that do
+  extend past 360px all sit inside the deliberately scrollable nav, not the page.
+- **All six backfilled résumés render** in the history grid, newest-first, correct dates and counts,
+  `LATEST` on the newest only.
+- **B-022 confirmed against real data** — 5,302 characters of plain text, correct `SUMMARY`/bullet
+  structure, clipboard verified by reading it back; the button holds "Copied" for its full 2s window.
+- **B-007 degrades exactly as designed on backfilled records** — they predate the measurement, so the
+  metadata row simply omits elapsed time rather than rendering `undefined`.
+- **Theme selection end-to-end**: applies instantly, persists to `localStorage`, **survives a reload
+  via the pre-paint script** with a live session, and returning to System removes the attribute and
+  restores `color-scheme: light dark`.
+- **Zero console errors** across the entire authenticated session.
+
+**Phase 3 — résumé deletion (added mid-slice, 2026-08-09).** Raised by Oche on seeing the finished
+grid: no way to remove a résumé. Built rather than deferred, because **this slice created the gap** —
+under the old flat 30-day rule everything cleared itself, so nothing ever needed a delete. See the
+second **ADR-046 amendment**: `DELETE /resumes/{run_id}` removes artifacts, record and trace behind
+ADR-027's confirm; S3 goes first so a crash leaves a *visible, retryable* fault rather than
+unreferenced objects nothing will ever expire. New IAM: `dynamodb:DeleteItem`, `s3:DeleteObject` on
+`resumes/*`. **413 → 417 backend, 183 → 188 frontend.** Verified against the deployed stack with a
+seeded throwaway record — record, trace and both objects gone, second delete 404s — deliberately not
+by deleting one of the six real résumés.
+
+*And a test that proved the wrong thing.* Every delete button announced as "Delete", so each got an
+`aria-label` naming its résumé. Titles repeat, so I added the date; a fixture with differing dates
+passed, and **the live page still collapsed two labels into one** — the real vault holds two
+résumés both titled "Databricks", built four minutes apart on the *same afternoon*. The label now
+carries the time, and the test fixture is that exact case rather than the kinder one I had invented.
+A fixture you choose can confirm a fix that does not hold on the data you have.
+
+**One more defect, found only by signing in.** `.btn-primary` and `.btn-quiet` were written for
+`<button>`, which has no default underline — but "Download PDF" must be a real `<a>`, because
+save-to-disk comes from the presigned `Content-Disposition` and a button cannot carry that. The
+anchor rendered underlined and stopped matching the buttons beside it. Fixed at the definition
+(`a.btn-primary, a.btn-quiet`) rather than in `resume.css`, so any future anchor-as-button inherits
+it, and re-verified live.
+
+*Also corrected:* `formatBuiltDate` re-implemented date formatting instead of reusing
+`formatEventDate`, which already pins `timeZone: "UTC"` (the slice-2 fix) **and** `en-GB` day-first
+order — my version used the reader's locale and rendered "Jul 28, 2026" against a design specifying
+"12 Jul 2026".
+
+**Phase 2 scope, as built**
+
+Theme selection was **added mid-slice** (2026-08-09, Oche's call) and is sequenced **first**, ahead of
+the view. Two reasons it belongs here rather than in slice 4: it edits `index.css`, which is exactly
+the file **B-036** closes out this slice — deferring means reopening it immediately after declaring it
+finished — and it makes the slice's own "both themes" exit criterion two clicks instead of an OS
+settings trip, across six views × two themes × two widths. See the **ADR-044 amendment**.
+
+5b. **Theme selection (Light · Dark · System)** on Details, defaulting to System — today's behaviour
+    unchanged for anyone who never opens it. `localStorage`, applied by a pre-paint inline script in
+    `index.html` (a `GET /settings` round-trip cannot beat the first frame, and theme is per-device by
+    nature). One mechanism — an attribute selector beside the existing media query, **not** a
+    `light-dark()` migration, which cannot express the five gradient tokens. The duplicated light block
+    is guarded by a test asserting both definitions declare an identical token set.
+6. Résumés rebuilt against handoff §4 — generator card, résumé grid, both themes, 375px and 1280px.
+7. **B-036 in full, as the completion condition:** the four shim aliases in `index.css`, the
+   `.legacy-view` wrapper in `App.css`, and the `App.test.tsx` carve-out that asserts it are deleted
+   together. `resume.css`'s print `#fff` is tokenised or explicitly exempted as non-theme.
+8. **B-007** — carry final elapsed time into the completed-run metadata row.
+
+**Phase 4 — the wrap reviews.** The security review came back **clean** — no findings at or above
+its confidence threshold. Its rejected-candidates list is the useful part, because the two hazards
+this slice actually introduced were examined and held: a crafted `run_id` cannot escape the S3
+prefix (the user-controlled segment sits *after* the JWT-derived one, and botocore places keys in
+the `DeleteObjects` XML body, escaped, rather than in a normalizable URL path), and it cannot cross
+entity prefixes either, because `run_id` is a *suffix* of a fixed literal — `RESUME#` + anything
+never yields `RESUMERUN#`. One hardening note taken but not treated as a defect: `run_id` is never
+validated with the existing `is_valid_ulid`, which is unreachable today and would become
+load-bearing if the key layout changed.
+
+**The code review returned 14 findings; 13 were fixed in-slice and 1 was backlogged (B-043).**
+Four were genuinely dire, and three of those live in the delete path added in phase 3 — the newest,
+least-exercised code in the slice:
+
+- **`delete_objects` does not raise on a per-key failure.** It returns HTTP 200 with an `Errors`
+  list, so `except ClientError` never fired: a half-failed delete removed the record and stranded
+  the object *permanently*, which is precisely the B-039 orphaning the S3-first ordering was
+  designed to prevent. The ordering was right and the error handling silently opted out of it.
+- **A 404 was a destructive operation.** Artifacts and trace were deleted *before* checking whether
+  the résumé existed, so `DELETE` on a **pending** run destroyed the trace of a live ~$0.31 Sonnet
+  job — the user's poll would then report it expired while it was still running — and destroyed the
+  only diagnostic record of a **failed** one. The record is now read first, which also makes the
+  404 side-effect-free.
+- **The S3 keys were rebuilt from a filename convention** instead of read from the record that
+  stores them. Any record written under a different layout — a backfilled one, or anything after a
+  future path change — would have had its row deleted and its real objects left behind. Reading the
+  record first supplied the fix for all three at once.
+- **The generator claimed a vault size it could not know.** "Pulls the *N* records in your vault"
+  took `N` from the newest history row's `entry_count` — how many entries *that one run retrieved*
+  for *that one target*. With 27 entries and a run that retrieved 13, it told the user their vault
+  held 13. That is the ADR-045 / B-015 failure mode exactly: a fabricated statistic presented
+  authoritatively. The real count was already in the shell (`GET /entries`) and is now passed down.
+
+The rest: **Regenerate** on a history-opened résumé reran the textarea's contents — a different job
+description, or none — spending $0.11–$0.35 against the wrong target, and no endpoint returns the
+original `target_text`, so the button is now simply not offered there; `openRun` had no `catch`, so
+View was a dead button on any network blip; the **Copy** button inside `<summary>` toggled the
+disclosure shut, hiding the very fallback that exists for a blocked clipboard; the durable record
+truncated `target_text` to 4,000 chars — a bound chosen for an item that expires in 30 days, applied
+to one that never does, contradicting ADR-046 §4's own rationale for keeping it (B-030); the backfill
+script never followed `LastEvaluatedKey`, so a migration racing a TTL deadline could have silently
+skipped everything past the first 1 MB page; `resumeText`'s EDUCATION branch emitted a stranded
+" (2018)" for a date-only entry, the dangling-separator case its neighbours both guard; and the
+`watchSystemTheme` subscription was a **no-op** — `setTheme("system")` while already `"system"`, which
+React bails out of — so it and the two theme helpers with no production caller were deleted rather
+than left as tested dead code.
+
+*Two of these were caught by the review and not by a green suite, again.* The `delete_objects`
+partial-failure path passed because the test double returned `None` instead of the API's actual
+dict shape — a fake that was wrong in exactly the way that made the assertion vacuous. Every fix
+above is mutation-verified: reverting the `Errors` check, the record-first read, the stored-key
+lookup, the vault count and the Regenerate gate each fails exactly one test, and the right one.
+
+### Scope — out
+
+- **Voice capture** → slice 4. Its `DictationProvider` seam is now recorded as an **ADR-014
+  amendment**, which the review caught missing — CLAUDE.md was already telling the next session to
+  look for it in the ADL, where it did not exist.
+- **B-030** (gap analysis) — *unblocked* by ADR-046's durable target history, but not built here.
+  Needs an inference design that is not a per-load Bedrock call against the ceiling.
+- **B-006** (gate the debug metadata row) — deliberately kept visible; B-020/B-004 (résumé speed) is
+  the next optimisation work and that row is how runs get compared.
+- ~~**Résumé delete**~~ — **moved into scope mid-slice as phase 3** (Oche's call, 2026-08-09). The
+  original deferral reasoned that ADR-046 "accepts unbounded history for a single user"; what it
+  missed is that removing the lifecycle rule *created* the gap, since nothing clears itself now.
+- **History cap** — still out. ADR-027 stands as the precedent for when multi-tenant needs one.
+- **B-035** (JSON import), **B-038** (CSP), **B-013** (embedding-heavy reads) — consciously left.
+
+### Exit criteria
+
+- `GET /resumes` returns real history, newest-first, projected — verified against a deployed run.
+- A completed run writes both items; a **failed** run writes only the trace. Both asserted in tests.
+- `resumes/` objects no longer carry an expiration rule; `uploads/` still expires at 1 day.
+- **B-022:** tailored bullets copyable as plain text — FR-5.3 fully met for the first time.
+- Résumés rebuilt at ≥1280px and stacked cleanly at 375px, in **both** themes; zero horizontal
+  overflow at 360px, re-measured rather than assumed.
+- **No hex outside `index.css`** — the one surviving exception (`resume.css`'s print white) resolved
+  either way, not left undecided.
+- **B-036 closed and *checked*, not assumed:** the `:root` shim block gone, `.legacy-view` gone from
+  `App.css`, the `App.test.tsx` carve-out gone. Verify with the grep recorded in the `index.css`
+  comment. *(Slice 2's lesson: the "four of five aliases" criterion was written on an unverified
+  assumption. Criteria asserting facts about the codebase get verified when written.)*
+- Exactly one `<h1>`; live region announces generation state.
+- Backend, frontend and integration suites green; new tests **mutation-verified** — break the code,
+  confirm the test notices. `npm run build` run before pushing (`npm test` does not typecheck).
+- Deployed to dev and exercised in a browser **after** the last shared-container change.
+
+### Evaluation
+
+**Every exit criterion above is met**, with two qualifications stated rather than glossed. `GET
+/resumes` returns real projected history verified against a deployed run; both-items-on-success /
+trace-only-on-failure is asserted; the `resumes/` expiry is gone and `uploads/` still expires at one
+day; B-022 completes FR-5.3; the view holds at 1280px and 375px in both themes with zero horizontal
+overflow across 24 measured combinations; B-036 is closed and *grep-verified*, not assumed. The
+qualifications: **B-043** (the 50-row list cap) means "history is permanent" is true of the data and
+not yet of the *list*, and the phase-3 delete fixes are **not yet deployed** — the SSO session
+expired at wrap, so the code review's three delete-path fixes are green locally and untested against
+live AWS. That is the one thing in this slice not verified end-to-end, and it is the newest code in
+it.
+
+**Cost: $0 added infrastructure.** The slice's Bedrock spend was one `--expensive` verification run
+at **$0.116** (74s, 20,455 tokens) plus ~$0.01 of Haiku round-trips. Removing the `resumes/`
+lifecycle rule adds S3 storage that grows without bound, which sounds like a cost change and is not
+at this scale: six résumés are well under a megabyte, against a bucket costing under $0.01/month.
+Bedrock remains ~87% of the bill and the résumé agent remains the only thing that meaningfully
+spends. Deletion, added mid-slice, is now the only mechanism that reclaims any of it.
+
+**One thing to improve.** Three of the four dire findings were in `_delete`, which was added
+mid-slice on the same day it was reviewed — and the tell was visible before the review ran: I wrote
+a docstring arguing carefully for *why* S3 must be deleted first, then wrote code whose error
+handling silently opted out of that argument, and a test double whose return shape made the gap
+invisible. **The reasoning was in the comment and not in the code, and the test agreed with the
+comment.** The generalisable habit is that when a function's docstring makes a safety argument, the
+test for it should be written against the *real* API's response shape — here, one dict key
+(`Errors`) was the entire difference between a correct implementation and a permanent-data-loss
+path that passed a green suite.
 
 ---
 

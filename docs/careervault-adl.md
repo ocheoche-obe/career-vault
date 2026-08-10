@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-08-09 (v1.1 slice 3 — **ADR-046** added [résumé history is a durable, no-TTL `RESUME#` record split from the ephemeral `RESUMERUN#` trace, which keeps its 30-day TTL; the `resumes/` S3 lifecycle rule is removed, **amending ADR-015 a second time** — its flat 30 days was a coupling fix to stop a trace outliving its artifacts, not a judgment about how long a résumé is worth keeping, and the coupling is gone once a durable record exists; **Sent**/**Draft** status badges omitted as having no referent, per ADR-045]; **ADR-046 amended** [`DELETE /resumes/{run_id}` — S3 artifacts, then record, then trace, behind ADR-027's confirm; added mid-slice because removing the lifecycle rule is what created the need, since nothing clears a résumé automatically any more]; **ADR-044 amended** [explicit Light/Dark/System selection on Details, defaulting to System so today's behaviour is unchanged for anyone who never opens it; `localStorage` + a pre-paint inline script, an attribute selector beside the existing media query rather than a `light-dark()` migration, which cannot express the five gradient tokens]) · prior: 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -77,6 +77,9 @@ Each ADR has:
 | ADR-043 | Correct two design-handoff tokens that fail WCAG, from its own palette      | Accepted   |
 | ADR-044 | Keep system-theme support; derive the light palette the handoff omits       | Accepted   |
 | ADR-045 | Home's aggregates derived client-side; "streak" defined                     | Accepted   |
+| ADR-046 | Résumé history is a durable `RESUME#` record split from the 30-day trace    | Accepted   |
+
+**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (a `DictationProvider` seam with an optional `onInterim`; Web Speech still the choice, v1.1 slice 3) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
 
 ---
 
@@ -410,6 +413,32 @@ Defer to v1.1. Use the browser's free Web Speech API when added; do not introduc
 ### Consequences
 - ✅ Keeps MVP scope tight.
 - ⚠️ Some users may find typing tedious until v1.1.
+
+### Amendment (2026-08-10, v1.1 slice 3) — a `DictationProvider` seam, so the choice above stays revisitable
+
+Recorded during slice 3, where voice was scoped in and then moved out to slice 4. Nothing here is
+built yet; this exists so slice 4 starts from a decision rather than re-litigating one.
+
+**The decision above stands unchanged: Web Speech API, not Amazon Transcribe, on cost grounds.**
+What is added is the shape the implementation takes. Oche asked whether a paid API (Wispr Flow's
+Flow API was the specific example) could be swapped in later. The answer is yes, behind an
+interface, and the interface is worth naming now because it is cheap to design and expensive to
+retrofit:
+
+- A **`DictationProvider`** with an **optional `onInterim`** callback. Web Speech emits interim
+  results as you speak; a buffer-then-POST cloud API returns one final transcript and simply never
+  calls `onInterim`. Making it optional is what lets both satisfy the same contract — a required
+  streaming callback would force cloud providers to fake partial results.
+- Whatever the provider, the transcript enters the **existing `POST /chat` path**. Voice is an input
+  method for the composer, not a second ingestion pipeline, so it adds **no backend surface at all**.
+
+**This is a seam, not a plan to use it.** Any paid cloud STT breaks this ADR's own cost premise
+against the $5 ceiling (NFR-1.1), so adopting one is a decision that gets made explicitly, here,
+with numbers — not one that arrives implicitly because the interface allowed it. Nothing paid is
+wired, and the seam does not commit the project to wiring any.
+
+What makes this a known case rather than speculative generality is the ADR's own record: Web Speech
+support is weak in Firefox. A second provider is therefore a foreseeable need, not an imagined one.
 
 ---
 
@@ -2291,12 +2320,65 @@ Home.
   chrome follow along. Dropping it produces the classic bug where a dark page renders white native
   scrollbars and light-mode `<select>` popups.
 
+### Amendment (2026-08-09, v1.1 slice 3) — the user gets an explicit choice, stored per device
+
+This ADR settled *which* themes exist and how the light palette is derived. It left the **selection**
+implicit: the system decides, and the user cannot disagree with it. Raised by Oche — "some people may
+want a different option from what the rest of their system is set to" — which is correct, and is the
+ordinary expectation for any app that ships two themes.
+
+**Amended decision:** Details gains a three-way control — **Light · Dark · System** — defaulting to
+System, which is exactly today's behaviour. Four sub-decisions, each of which has a wrong answer that
+looks fine in review:
+
+1. **Stored in `localStorage`, not on the PROFILE.** Two independent reasons, either sufficient. The
+   preference must apply **before first paint**, and a server round-trip cannot beat the first frame —
+   a `GET /settings` round-trip guarantees the flash it is trying to prevent. And theme is genuinely
+   *per device*: dark on a laptop and light on a phone in daylight is a legitimate configuration, not
+   a sync failure. Costs **$0**, adds no endpoint, and does not touch ADR-040's nested-settings merge.
+2. **Applied by an inline script in `index.html`, before the bundle loads.** Reading the preference in
+   React means the page paints with the system theme and then flips — the flash-of-wrong-theme bug.
+   The script sets `data-theme` on `<html>` synchronously; it is the one piece of app logic that
+   deliberately lives outside the bundle, and the reason is ordering, not preference.
+3. **One mechanism, not two.** The explicit choice is an attribute selector alongside the existing
+   media query — *not* a migration to `light-dark()`. `light-dark()` is the modern answer and was
+   considered first, but it accepts only **colours**, and five tokens (`--grad-primary`, `--grad-logo`,
+   `--grad-user-bubble`, `--grad-bar-fill`, `--grad-streak-bar`) are whole `linear-gradient(…)`
+   strings. Adopting it would convert ~40 tokens and leave the gradients on the old mechanism anyway —
+   two mechanisms in the one file whose entire rule is that colour is defined in exactly one place.
+   Rejected on consistency, not capability.
+4. **`color-scheme` tracks the explicit choice.** This ADR already notes that dropping `color-scheme`
+   gives white scrollbars on a dark page; an explicit override reintroduces the same bug in a new way
+   if the property keeps reporting `dark light` while the page renders light.
+
+**The cost this amendment accepts, and how it is paid.** Keeping one mechanism means the light palette
+is declared **twice** — once under `@media (prefers-color-scheme: light)` and once under
+`:root[data-theme="light"]`. That is a genuine hazard in this specific file: a future palette tweak
+applied to one copy would silently desync the toggle from the system default, and the *system* path is
+the one nobody clicks to check. It is paid for with a **test that parses `index.css` and asserts both
+light definitions declare an identical token set with identical values** — the duplication is
+permitted because it is enforced, not because it is harmless.
+
+**Consequences:** the three-way default (System) means nothing changes for a user who never opens the
+control. The `prefers-color-scheme` listener must stay live so a user on System still follows their OS
+changing at sunset. And the toggle pays for itself immediately inside slice 3 — verifying six views ×
+two themes × two widths becomes two clicks rather than an OS settings trip, which is what the slice's
+own both-themes exit criterion requires anyway.
+
 ### Cross-cloud parallel
 The pattern is **environment-derived configuration resolved at the edge of the system, not threaded
 through it**: one declaration site, everything downstream reads a semantic name and stays ignorant of
 which environment it is in. It is the same discipline as referencing an SSM parameter rather than an
 account-specific ARN, or a CloudFormation `Mapping` keyed on region. The bug in every case is
 identical in shape — a literal that happened to be correct in the environment where it was written.
+
+The amendment adds a second, distinct pattern worth naming: **an explicit override layered over an
+inherited default, with the inherited default preserved as a first-class choice.** "System" is not the
+absence of a setting — it is a setting whose value is "follow that other source", which is why it must
+remain selectable rather than merely being what you get before you choose. The same shape appears in
+`AWS::NoValue` versus an explicitly-set parameter, and in a Lambda env var that overrides an SSM
+lookup: the bug is collapsing "unset" and "inherit" into one state, after which a user who wants to go
+back to following the system has no way to say so.
 
 ---
 
@@ -2400,6 +2482,175 @@ between recomputing an aggregate and maintaining it via a stream. The trap is ma
 you inherit invalidation, staleness and backfill before you have evidence you needed any of it. The
 part worth carrying is the *trigger* — writing down what would have to be true to change the answer,
 at the moment you make it, while the reasoning is still in your head.
+
+---
+
+## ADR-046: Résumé history is a durable record split from the ephemeral run trace
+
+**Status:** Accepted
+**Date:** 2026-08-08 (v1.1 slice 3)
+
+### Context
+
+The Résumés view is the last un-redesigned view, and it is the one that **cannot be built honestly
+from what exists** (B-028). Two facts, both verified in the tree rather than recalled:
+
+1. **There is no list endpoint.** `template.yaml` exposes exactly `POST /resumes/generate` and
+   `GET /resumes/{run_id}`. The designed grid — a card per past résumé, "Built 12 Jul 2026 · 9
+   records drawn" — has nothing to read.
+2. **Everything a list would read expires in 30 days.** `resume_agent/handler.py` stamps
+   `expires_at = now + 30 days` on every `RESUMERUN#` item, and the `ExpireGeneratedResumes`
+   lifecycle rule expires `resumes/` S3 objects on the same clock.
+
+So a naive list endpoint over `RESUMERUN#` would ship a "history" that silently empties itself every
+month — on an app whose entire premise is that your career history is worth keeping.
+
+**ADR-015's own amendment predicted this exact moment.** It set the flat 30-day artifact rule and
+then wrote: *"If 'list past résumés' ships post-MVP, retention gets revisited alongside the
+`GENERATED_RESUME` entity — at which point 'keep the newest N' becomes a query over records, not a
+lifecycle predicate, and is trivial."* This ADR is that revisit.
+
+The reframing that decides it: **the 30-day number was never a judgment about how long a résumé is
+worth keeping.** It was chosen to stop a trace item outliving the artifacts it pointed at (ADR-015's
+amendment, reason 2). It is a *coupling fix*, not a retention policy. Once a durable record exists,
+the coupling that produced the number is gone, and the number has no independent justification.
+
+### Decision
+
+**1. Split the entity in two, along the line of what each thing actually is.**
+
+| | `RESUMERUN#<run_id>` | `RESUME#<run_id>` |
+|---|---|---|
+| What it is | Agent run trace — phase log, token counts, cost, critique verdict | The résumé you built |
+| Written | At `pending`, overwritten at terminal state | Once, **only on successful completion** |
+| `expires_at` | Set — 30-day TTL, unchanged | **Omitted** — durable |
+| Read by | `GET /resumes/{run_id}` poll | `GET /resumes` list |
+
+Nothing about the table changes: the TTL is attribute-driven, so an item that omits `expires_at` is
+simply never a deletion candidate. No GSI either — run IDs are ULIDs, so `RESUME#` items sort
+chronologically under the user's partition and a `Query` with `ScanIndexForward=False` returns
+newest-first for free. **ADR-028 holds comfortably.**
+
+Writing `RESUME#` *only on success* is deliberate: "past résumés" should mean résumés that exist. A
+failed run leaves a trace for debugging and no row in the user's history.
+
+**2. Generated artifacts stop expiring.** The `ExpireGeneratedResumes` lifecycle rule is removed.
+`ExpireRawUploads` (`uploads/`, 1 day) is untouched and unrelated — raw uploads are transient input,
+not output the user made.
+
+At one résumé a week, a year of HTML+PDF is ~5 MB — **under $0.0002/month**. This is the
+CLAUDE.md cost reframing applied directly: the ceiling constrains *Bedrock call volume*, not storage,
+and a decision that makes the app less useful to save $0.0002 is the wrong trade. The alternative —
+durable record, expiring artifacts — was considered and rejected below.
+
+**3. Write ordering, not a transaction.** The worker finalizes `RESUMERUN#` **first**, then writes
+`RESUME#`. These are two `PutItem`s, not a transaction, so they can diverge; ordering chooses *which*
+divergence happens. Finalizing the trace first means a crash between the two leaves the user with a
+working poll, a downloadable résumé, and a missing row in a list — recoverable and cosmetic. The
+reverse order would leave a history row for a run whose poll never reports `completed`, which is the
+worse failure. `TransactWriteItems` would make both atomic for ~2× WCU on an operation that runs a
+few times a month; the trigger to adopt it is a second consumer that must not observe the skew.
+
+**4. `GET /resumes` returns a projection, not whole items.** `target_text` may be an entire pasted
+job description. The list projects `run_id`, `created_at`, `target_title`, `entry_count` and
+`status`; the full target text stays on the item for `GET /resumes/{run_id}` and for the gap analysis
+B-030 will need. This is the B-013 mistake (reading payload a caller discards) declined in advance
+rather than logged afterwards.
+
+### What the design asked for that is *not* built
+
+Per ADR-045's precedent — omit rather than fabricate:
+
+| Design element | This slice |
+|---|---|
+| Status badges **Latest**, **New** | Built — both derivable (newest row; generated this session). |
+| Status badges **Sent**, **Draft** | **Omitted.** Neither has any referent: there is no send path (ADR-015 — in-app download only) and no draft state. A badge that can never appear is decoration that implies a feature. |
+| "Built 12 Jul 2026 · 9 records drawn" | Built — `created_at` and `entry_count` are both real. |
+| Gap-analysis line (B-030) | Still not built, but **no longer blocked** — this ADR supplies the durable target history it needs. |
+
+### Alternatives considered
+
+- **Rolling 30-day window, honestly labelled** ("Your last 30 days"). Genuinely defensible and by far
+  the cheapest — no data-model change at all. Rejected on what it permanently forecloses: a career
+  vault whose résumé history evaporates monthly contradicts the product, and B-030's gap analysis
+  ("three of your last four résumé targets asked for a certification") would be capped at a 30-day
+  sample forever. The saving was one small `PutItem` per successful run.
+- **Durable record, artifacts still expire at 30 days.** Keeps ADR-015's amendment untouched; older
+  cards show "expired — regenerate". Rejected: it buys nothing measurable ($0.0002/month) and pays
+  for it with a conditional UI state on the majority of rows, plus a regenerate that costs
+  $0.11–$0.35 of Bedrock to reproduce a file we deleted to save a fraction of a cent. The cost
+  asymmetry runs backwards.
+- **Extend every TTL to a year instead of splitting.** One-line change, no new entity. Rejected: it
+  keeps 30 days of agent exhaust — token counts, phase logs, critique verdicts — alive for a year
+  alongside the thing worth keeping, and answers "how long is a résumé worth keeping?" with a number
+  that still has no justification. The split is what makes each retention choice defensible on its
+  own terms.
+- **`GENERATED_RESUME` as ADR-015 originally named it.** Same idea; renamed `RESUME#` for consistency
+  with the existing `ENTRY#`/`GOAL#`/`CONVO#` prefixes, none of which carry a verb.
+
+### Consequences
+
+- ✅ The Résumés view becomes buildable from real data, with no invented fields.
+- ✅ **B-030 unblocks.** Durable `target_text` + `created_at` is exactly the substrate a gap analysis
+  needs, and it accumulates from now on whether or not that feature is built.
+- ✅ Retention now has two answers because there are two things: exhaust expires, output persists.
+  Each is justified independently, which the single 30-day number never was.
+- ⚠️ **Résumé history is now unbounded.** Correct for a single-user MVP; a multi-tenant future wants
+  a cap or a user-initiated delete. ADR-027's hard-delete precedent applies when it does — noted, not
+  built.
+- ⚠️ Two writes on the completion path can diverge (see decision 3). Bounded to a missing list row.
+- ⚠️ **ADR-015 is amended a second time.** Its delivery half — in-app HTML preview + PDF download, no
+  email, no Drive — still stands unchanged. Only the retention half moves.
+
+### Amendment (2026-08-09, same slice) — deletion, because this decision removed it
+
+Raised by Oche on seeing the finished history grid: there is no way to remove a résumé. Correct, and
+**this ADR is what created the gap.** Under the flat 30-day rule deletion was implicit — everything
+left on its own — so nothing ever needed a delete affordance. Making résumés permanent silently took
+that away, and "your résumés are kept" is only a feature if the user can also decide one should not
+be. The Consequences section above anticipated it ("*a multi-tenant future wants a cap or a
+user-initiated delete*") but scoped it to multi-tenant; that was wrong. A single user accumulating
+targets they no longer want has the same need immediately.
+
+**Amended decision:** `DELETE /resumes/{run_id}` removes the S3 artifacts, the `RESUME#` record and
+the `RESUMERUN#` trace. **ADR-027 applies unchanged** — hard delete, gated by a UI confirm — so this
+is that decision extended to a second entity, not a new one. Three details carry the weight:
+
+1. **S3 first, then DynamoDB — the mirror image of §3's ordering, for the same reason.** There is no
+   transaction across two services, so ordering chooses which inconsistency a crash leaves:
+   - *Objects first:* the failure leaves a history row whose View/Download 404s — visible, annoying,
+     and **recoverable**, because the row is still there to delete again and S3 deletes are
+     idempotent.
+   - *Record first:* the failure leaves objects nothing references and nothing will ever expire
+     (this ADR removed the lifecycle rule), with no row left for the user to retry from. That is
+     **unrecoverable**, and precisely B-039's failure mode.
+
+   A visible retryable fault beats an invisible permanent one, so the objects go first — and the
+   handler **returns 500 without touching the record** if they fail, rather than pressing on.
+2. **The record delete is conditional; the trace delete is not.** `attribute_exists(SK)` lets a
+   delete of an already-gone résumé answer 404 instead of a misleading success. The trace gets no
+   such condition because its absence is the *normal* case past 30 days, and treating expiry as an
+   error would fail the common path.
+3. **New IAM: `dynamodb:DeleteItem` and `s3:DeleteObject` on `resumes/*`.** The S3 grant is
+   prefix-scoped, so it cannot reach `uploads/`. The DynamoDB grant cannot be scoped at all — §4.2.3
+   again, `LeadingKeys` covers the partition key only — so "this function deletes only `RESUME#` and
+   `RESUMERUN#` items, never an `ENTRY#`" is enforced by there being no code path that builds an
+   `ENTRY#` key, and by `ddb_helpers` owning key construction. A code invariant, stated as one.
+
+**Consequences:** history is now bounded by user intent rather than by nothing at all, which retires
+the "unbounded" caveat above. Deleting the résumé currently on screen resets the view, since its
+presigned URLs point at objects that no longer exist. And B-039 shrinks but does not close: a *failed
+record write* during generation can still orphan objects, which deletion cannot reach because no row
+ever existed to delete from.
+
+### Cross-cloud parallel
+
+This is the **log-versus-record** distinction that every observability stack eventually forces: a
+trace, a metric and a business record have different lifetimes and should not share a retention
+policy just because one process emitted them. Cloud Logging/CloudWatch retention versus the row your
+job wrote is the same split; so is a Kafka topic's `retention.ms` versus the compacted table
+downstream. The failure mode this ADR corrects is the common one — **letting the debugging artifact's
+lifetime set the product's**, because they were convenient to write together.
 
 ---
 
