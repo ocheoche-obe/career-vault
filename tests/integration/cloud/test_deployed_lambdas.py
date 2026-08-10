@@ -211,6 +211,23 @@ class TestResumeAgentRejectionPaths:
 
         assert response["statusCode"] == 404
 
+    def test_listing_history_runs_the_real_projected_query(self, lambda_client, cleanup_user):
+        """`GET /resumes` (ADR-046) against real DynamoDB, for $0 — and this tier is the only one
+        that can prove it.
+
+        The list query uses a ``ProjectionExpression`` naming ``status``, which is a **DynamoDB
+        reserved word**: without the ``#status`` alias the query raises `ValidationException` at
+        runtime, not at deploy time. A unit test with a fake table cannot fail that way — the fake
+        does not parse the expression — so an empty list from the deployed function is a much
+        stronger signal than it looks. A throwaway user has no history, so the assertion is `[]`.
+        """
+        response = invoke(
+            lambda_client, "resume_agent", api_event(method="GET", user_id=cleanup_user, path_params=None)
+        )
+
+        assert response["statusCode"] == 200
+        assert body_of(response)["resumes"] == []
+
 
 class TestCheckinRun:
     """§3.3.3 / §4.5.4 — the scheduled path, invoked without sending anything.

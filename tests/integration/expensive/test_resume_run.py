@@ -51,7 +51,31 @@ POLL_TIMEOUT_SECONDS = 420  # measured ~176s in slice 6b; generous headroom, not
 POLL_INTERVAL_SECONDS = 5
 
 
-def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, cleanup_user, aws_session):
+@pytest.fixture
+def cleanup_resume_artifacts(aws_session, cleanup_user):
+    """Delete this run's S3 artifacts afterwards — they no longer expire on their own (ADR-046).
+
+    Before ADR-046 the `resumes/` lifecycle rule swept anything this test generated within 30 days,
+    so nothing had to be cleaned up. Removing that rule to make *user* résumés durable also made
+    *test* résumés durable, and an opt-in tier that leaks ~100 KB per run into a bucket nobody
+    reviews is exactly the kind of accumulation that is invisible until it isn't. DynamoDB is
+    already handled — `_purge_user` deletes the whole partition, RESUME# records included.
+    """
+    yield cleanup_user
+
+    account = aws_session.client("sts").get_caller_identity()["Account"]
+    s3 = aws_session.client("s3")
+    listed = s3.list_objects_v2(
+        Bucket=f"careervault-data-dev-{account}", Prefix=f"resumes/{cleanup_user}/"
+    )
+    keys = [{"Key": obj["Key"]} for obj in listed.get("Contents", [])]
+    if keys:
+        s3.delete_objects(Bucket=f"careervault-data-dev-{account}", Delete={"Objects": keys})
+
+
+def test_a_tailored_resume_run_completes_and_produces_a_pdf(
+    lambda_client, cleanup_user, aws_session, cleanup_resume_artifacts
+):
     for entry in SEED_ENTRIES:
         created = invoke(
             lambda_client, "career_crud", api_event(method="POST", user_id=cleanup_user, body=entry)
@@ -108,6 +132,33 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(lambda_client, clean
     assert polled.get("html_url"), "a completed run must presign an HTML preview"
 
     _assert_is_a_real_pdf(aws_session, polled["pdf_url"])
+
+    # --- ADR-046 / B-022 / B-007: what the poll now carries -------------------------------------
+    # The structured résumé is what makes plain-text bullets copyable (B-022); elapsed time is what
+    # used to vanish at the moment you'd compare runs (B-007). Structural assertions only.
+    assert polled.get("document"), "a completed run must return the structured résumé (B-022)"
+    assert polled["document"].get("summary"), "the document must carry a summary to copy"
+    assert polled.get("elapsed_seconds"), "a completed run must report its elapsed time (B-007)"
+
+    # --- ADR-046: the durable record, proven by the list endpoint ---------------------------------
+    # This is the assertion the unit tests cannot make: that a *real* worker, finishing a *real*
+    # run, wrote the second item — and that the projected query reads it back.
+    history = body_of(
+        invoke(lambda_client, "resume_agent", api_event(method="GET", user_id=cleanup_user, path_params=None))
+    )
+    rows = {row["run_id"]: row for row in history["resumes"]}
+    assert run_id in rows, f"the completed run is missing from history: {history}"
+
+    row = rows[run_id]
+    # `_target_title` takes the first non-empty *line*, so a pasted JD yields its opening sentence
+    # rather than a bare role. That is the honest behaviour for a paste; the designed input is a
+    # short target ("Senior AI Solutions Manager"), where the same rule gives exactly the title.
+    assert row["target_title"].startswith("Senior Cloud Engineer.")
+    assert len(row["target_title"]) <= 120
+    assert row["entry_count"] >= 1
+    assert row["status"] == "completed"
+    # The list is a projection: the bulky fields must not ride along (B-013 declined in advance).
+    assert "target_text" not in row and "document" not in row
 
 
 def _assert_is_a_real_pdf(aws_session, url: str) -> None:
