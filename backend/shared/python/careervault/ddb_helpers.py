@@ -445,6 +445,103 @@ def get_resume_run(user_id: str, run_id: str) -> dict[str, Any] | None:
     return response.get("Item")
 
 
+# ---------------------------------------------------------------------------
+# Résumé history — RESUME# prefix (resume_agent only, ADR-046)
+#
+# ADR-046 splits what used to be one item in two, because they are two different things with two
+# different lifetimes: RESUMERUN# is the agent's run trace (phase log, tokens, cost) and keeps its
+# 30-day TTL; RESUME# is the résumé the user actually built and carries **no** ``expires_at``, so
+# the table's TTL never considers it.
+#
+# ⚠️ The two prefixes differ only at the 7th character — ``RESUME#`` vs ``RESUMER``. That is close
+# enough to be worth stating: ``begins_with("RESUME#")`` does **not** match ``RESUMERUN#...``,
+# because the ``#`` is part of the prefix. Drop the ``#`` from either call site and the queries
+# silently start returning each other's items.
+# ---------------------------------------------------------------------------
+
+#: Everything the Résumés grid renders — deliberately *not* ``target_text`` (which may be a whole
+#: pasted job description) or ``document`` (the full résumé). Both stay on the item for the detail
+#: read; projecting them into a list read would ship payload every caller discards (cf. B-013).
+_RESUME_LIST_PROJECTION = "run_id, created_at, target_title, entry_count, #status"
+
+
+def create_resume_record(item: Mapping[str, Any]) -> None:
+    """Create the durable RESUME# record for a *successful* run (ADR-046).
+
+    Create-once through :func:`put_item_scoped`, like :func:`create_resume_run`. Only completed runs
+    get one: "past résumés" should mean résumés that exist, so a failed run leaves a trace for
+    debugging and nothing in the user's history.
+    """
+    put_item_scoped(item, "RESUME#")
+
+
+def get_resume_record(user_id: str, run_id: str) -> dict[str, Any] | None:
+    """Fetch one durable RESUME# record, or ``None`` if absent.
+
+    This is the fallback path for ``GET /resumes/{run_id}`` once a run's RESUMERUN# trace has aged
+    out: past 30 days the trace is gone but the résumé is not, and a detail read that 404'd on a
+    row the list still shows would be a bug introduced by ADR-046's own split.
+    """
+    response = get_table().get_item(
+        Key={"PK": pk_for_user(user_id), "SK": f"RESUME#{run_id}"}
+    )
+    return response.get("Item")
+
+
+def delete_resume_record(user_id: str, run_id: str) -> bool:
+    """Hard-delete a RESUME# history record. ``True`` if deleted, ``False`` if it was absent.
+
+    Same shape and same reasoning as :func:`delete_entry` (ADR-027 — hard delete, the UI confirm is
+    the safety net): the ``attribute_exists(SK)`` condition lets the caller tell "deleted" from
+    "never existed", so deleting an already-gone résumé answers ``404`` rather than a misleading
+    success.
+
+    Deleting *history* is not the same as deleting a *run trace* — see
+    :func:`delete_resume_run_trace`, which the same request also calls.
+    """
+    try:
+        get_table().delete_item(
+            Key={"PK": pk_for_user(user_id), "SK": f"RESUME#{run_id}"},
+            ConditionExpression="attribute_exists(SK)",
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def delete_resume_run_trace(user_id: str, run_id: str) -> None:
+    """Best-effort delete of the RESUMERUN# trace that accompanies a deleted résumé.
+
+    Unconditional and silent about absence, unlike :func:`delete_resume_record`: the trace may have
+    already expired under its 30-day TTL, and that is the *normal* case for anything older than a
+    month rather than an error worth reporting.
+    """
+    get_table().delete_item(Key={"PK": pk_for_user(user_id), "SK": f"RESUMERUN#{run_id}"})
+
+
+def query_resumes(user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    """Return a user's résumé history, newest first, projected to the list fields (ADR-046).
+
+    ``run_id`` is a ULID, so SK order is time order and ``ScanIndexForward=False`` gives recency
+    without a sort and **without a GSI** — ADR-028 holds.
+
+    ``status`` is a DynamoDB reserved word, hence the ``#status`` alias; a bare projection naming it
+    fails at query time, not at deploy time.
+    """
+    response = get_table().query(
+        KeyConditionExpression=(
+            Key("PK").eq(pk_for_user(user_id)) & Key("SK").begins_with("RESUME#")
+        ),
+        ScanIndexForward=False,
+        Limit=limit,
+        ProjectionExpression=_RESUME_LIST_PROJECTION,
+        ExpressionAttributeNames={"#status": "status"},
+    )
+    return response.get("Items", [])
+
+
 def delete_entry(user_id: str, entry_id: str) -> bool:
     """Hard-delete an ENTRY item (AP-6 / ADR-027). ``True`` if deleted, ``False`` if absent.
 
