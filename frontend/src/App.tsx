@@ -259,13 +259,7 @@ function App() {
         ) : view === 'details' ? (
           <Settings idToken={idToken} entries={entries} onSaved={refresh} />
         ) : (
-          // TEMPORARY wrapper, and now down to its last occupant. Résumés has no container of its
-          // own — it relied on the old `main`'s flex centering and padding, which the redesign
-          // removed. It is blocked on B-028 (no résumé list endpoint; RESUMERUN TTL'd at 30 days),
-          // so slice 3 rebuilds it and deletes this wrapper along with the final shim alias.
-          <div className="legacy-view">
-            <Resume idToken={idToken} />
-          </div>
+          <Resume idToken={idToken} entries={entries} />
         )}
       </main>
     </>

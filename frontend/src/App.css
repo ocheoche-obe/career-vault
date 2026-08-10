@@ -427,6 +427,17 @@ main:focus {
   cursor: default;
 }
 
+/* Both classes were written for `<button>`, which has no default underline. Résumés uses one on an
+   `<a>` — "Download PDF" has to be a real link, because the save-to-disk comes from the presigned
+   `Content-Disposition` and a button cannot carry that. Without this the anchor renders underlined
+   and stops looking like the button beside it. */
+a.btn-primary,
+a.btn-quiet {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 /* Padding lives on `.view` alone, at every breakpoint. Views layer `max-width` and their own
    internals on top; padding is the shell's, so the six views cannot drift apart by a few pixels.
    (App.css is imported first in App.tsx — see the note there — so a view stylesheet that genuinely
@@ -451,27 +462,6 @@ main:focus {
 
   .view-head h1 {
     font-size: 26px;
-  }
-}
-
-/* TEMPORARY — DELETE AS EACH VIEW IS REDESIGNED (v1.1 slice 2).
-   The five un-redesigned views set a width (`.dashboard` is `width: min(720px, 100%)`) but no
-   margin or padding of their own: they were centred by the old `main`'s `align-items: center` and
-   padded by its `24px 20px`. The redesign replaced that with a plain block `main`, so without this
-   wrapper they render flush against the left edge, touching the sticky header. */
-.legacy-view {
-  max-width: var(--w-wide);
-  margin: 0 auto;
-  padding: 28px 32px 60px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-}
-
-@media (max-width: 768px) {
-  .legacy-view {
-    padding: 24px 16px 40px;
   }
 }
 
