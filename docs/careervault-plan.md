@@ -1741,11 +1741,27 @@ lookup, the vault count and the Regenerate gate each fails exactly one test, and
 trace-only-on-failure is asserted; the `resumes/` expiry is gone and `uploads/` still expires at one
 day; B-022 completes FR-5.3; the view holds at 1280px and 375px in both themes with zero horizontal
 overflow across 24 measured combinations; B-036 is closed and *grep-verified*, not assumed. The
-qualifications: **B-043** (the 50-row list cap) means "history is permanent" is true of the data and
-not yet of the *list*, and the phase-3 delete fixes are **not yet deployed** — the SSO session
-expired at wrap, so the code review's three delete-path fixes are green locally and untested against
-live AWS. That is the one thing in this slice not verified end-to-end, and it is the newest code in
-it.
+qualification: **B-043** (the 50-row list cap) means "history is permanent" is true of the data and
+not yet of the *list*.
+
+**The review's delete-path fixes were deployed and verified against live AWS**, after an expired SSO
+session briefly held them at wrap. Two invocations of the deployed Lambda, chosen to exercise the
+fix rather than the happy path only:
+
+- `DELETE` an unknown `run_id` → **404 with the partition byte-identical before and after** (14
+  items). Before the fix that same call would have deleted S3 objects and a trace.
+- `DELETE` a seeded throwaway record → 200, record and both objects gone, **second delete 404s**
+  (idempotent), and the six real résumés untouched. Deliberately not tested by deleting real data.
+
+Signed-in browser re-verification after the frontend redeploy: all six résumés listed with `Latest`
+on the newest only, `.legacy-view` absent, Regenerate **correctly not offered** on a history-opened
+résumé, the plain-text panel **staying open** through Copy, and zero console errors.
+
+*One honest limit on the live check:* the vault currently holds 13 entries and the newest run also
+retrieved 13, so the generator copy reads "Pulls the 13 records in your vault" either way — live data
+cannot distinguish the fixed code from the bug. The unit test can, and does, with 27 entries against
+a 13-entry run. This is the same shape as the aria-label lesson earlier in the slice, seen from the
+other side: *production data can be too kind to falsify a fix*.
 
 **Cost: $0 added infrastructure.** The slice's Bedrock spend was one `--expensive` verification run
 at **$0.116** (74s, 20,455 tokens) plus ~$0.01 of Haiku round-trips. Removing the `resumes/`
