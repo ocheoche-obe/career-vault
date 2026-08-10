@@ -128,7 +128,7 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**v1.1 slice 3 complete (Résumés + résumé history — PR #49). Next: v1.1 slice 4 — voice capture.**
+**v1.1 slice 3 complete (Résumés + résumé history — PR #50). Next: v1.1 slice 4 — voice capture.**
 Slices 1 and 2 shipped as PR #43 and PR #48. **The redesign is now complete across all six views**,
 and the scaffolding that carried it is gone: **B-036 is closed** — zero shim aliases in `index.css`,
 no `.legacy-view` in `App.css`, and no raw hex outside `index.css`. Phase 2 / MVP was declared

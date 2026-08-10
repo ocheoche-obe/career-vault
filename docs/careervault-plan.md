@@ -70,7 +70,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | 9 | Hardening & MVP close | NFRs, coverage audit | ✅ | [#32](https://github.com/ocheoche-obe/career-vault/pull/32) |
 | v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
-| v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007 | 🔨 | — |
+| v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
 | v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ⏳ | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
@@ -1474,7 +1474,7 @@ to enforce it.
 
 ---
 
-## v1.1 slice 3 — Redesign: Résumés + résumé history 🔨
+## v1.1 slice 3 — Redesign: Résumés + résumé history ✅
 
 **Goal:** give the Résumés view a real data source, then rebuild it — retiring the last of the
 slice-1 scaffolding, so the redesign is complete across all six views.
