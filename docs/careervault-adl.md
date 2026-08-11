@@ -79,7 +79,7 @@ Each ADR has:
 | ADR-045 | Home's aggregates derived client-side; "streak" defined                     | Accepted   |
 | ADR-046 | Résumé history is a durable `RESUME#` record split from the 30-day trace    | Accepted   |
 
-**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (a `DictationProvider` seam with an optional `onInterim`; Web Speech still the choice, v1.1 slice 3) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
+**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (twice — a `DictationProvider` seam with an optional `onInterim`, v1.1 slice 3; then mic on both composers, dictation fills but never sends, v1.1 slice 4) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
 
 ---
 
@@ -439,6 +439,71 @@ wired, and the seam does not commit the project to wiring any.
 
 What makes this a known case rather than speculative generality is the ADR's own record: Web Speech
 support is weak in Firefox. A second provider is therefore a foreseeable need, not an imagined one.
+
+### Amendment 2 (2026-08-10, v1.1 slice 4) — where the mic lives, and the review gate that makes it safe
+
+Amendment 1 recorded the seam. This records what gets built on it. These are details of the decision
+above rather than a new one, which is why they are an amendment and not ADR-047 — and it follows the
+slice-2 precedent, where the identical single-line-pill override on Log was recorded as a code
+comment rather than an ADR.
+
+**The mic goes on both composers, not just Log.** The narrower option was on the table and was
+rejected by Oche: voice exists to remove capture friction, and Home is the view users land on —
+especially on mobile. A mic that requires navigating to a second view first has given back the thing
+it was added to save.
+
+**Home's `<input>` becomes an auto-growing `<textarea>` to make that safe.** There was never a
+principled reason for the single line; it is an `<input>` because the design handoff *drew* a
+one-liner pill, and until now nothing on Home produced multi-sentence text. Dictation does, and a
+dictated paragraph in a single-line control scrolls out of view horizontally. That matters because
+of the next decision.
+
+**Dictation fills the field and never sends.** The transcript lands in the composer; the user reads,
+edits, and submits deliberately. This is the mitigation for the thing this ADR already knew about
+speech-to-text — it is messier than typing, with filler words, no punctuation and garbled proper
+nouns. Auto-send-on-silence was rejected: an unreviewed send costs ~$0.006 *and* deposits a garbled
+entry in the corpus, so it fails on both the cost axis and the data-quality one.
+
+Note the interaction the review gate has with the existing hand-off, because it reads like a hole and
+is not one: `Start logging` on Home navigates to Log, and Chat **auto-sends** the carried text. The
+review step is not missing — it sits on Home, *before* the button. Read the transcript in the field,
+then press. One deliberate review per path, on both paths.
+
+**Where the API is absent, no mic renders at all.** Feature-detect at mount. Typing already works and
+is the default, so a hidden control leaves no broken affordance and nothing to explain. This ADR's
+own record of weak Firefox support is what makes the fallback a requirement rather than a nicety.
+
+**The mic lives inside the field's box** — added after seeing it on screen. Placed beside the field
+it reads as a peer of the submit button; placed inside, it reads as what it is, an input method for
+that field. Log's pill already had this shape, so this is Home matching Log rather than a new idea.
+
+**Consequence worth stating plainly:** the cost premise is unchanged and load-bearing. Voice adds
+**$0** — the transcript enters `POST /chat` and costs exactly what a typed message costs. If a
+future change makes voice cost money, it has contradicted this ADR and needs a new one.
+
+#### The trigger to revisit is broader than amendment 1 recorded
+
+Amendment 1 justified the `DictationProvider` seam on one fact: Web Speech support is weak in
+Firefox. Raised by Oche at slice-4 kickoff, and correct — **that understates the case, because the
+support matrix is the least of it.** Web Speech is inconsistent *where it is supported*:
+
+- **Continuous mode stops on its own.** Recognition ends on a silence timeout the page does not
+  control and cannot configure, so "keep listening until I stop" is something the app has to
+  reconstruct by restarting a session that ended without being asked to.
+- **Final results arrive more than once.** The same utterance can be emitted as a final result
+  repeatedly, so naive accumulation duplicates text.
+- **Chrome and Safari differ in the details** — event timing, interim granularity, and what happens
+  on restart — so "works in Chrome" is not evidence it works.
+
+This makes the seam load-bearing in a way a support gap alone would not. A support gap is closed by
+someone else shipping a feature; **behavioural inconsistency is not, and the state machine papering
+over it is the part most likely to break.** So the presumption that this project eventually moves off
+Web Speech is recorded here as reasonable rather than speculative — while noting the constraint that
+has not moved: any *paid* replacement contradicts this ADR's cost premise against NFR-1.1 and needs
+its own decision with numbers. A free, better browser API would not.
+
+**What this does not license:** building for the second provider now. One implementation, behind the
+interface, with the quirks handled in the Web Speech implementation and not leaked into the contract.
 
 ---
 

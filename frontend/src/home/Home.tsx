@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { deriveHomeStats, CADENCE_NOUN, type Cadence } from '../lib/aggregates'
 import { CHIPS, MAX_MESSAGE_CHARS, isoWeek } from '../lib/composer'
+import { MicButton } from '../components/MicButton'
 import type { Entry } from '../lib/api'
 import './home.css'
 
@@ -100,19 +101,37 @@ export function Home({
           <label className="sr-only" htmlFor="home-composer">
             What did you accomplish?
           </label>
-          <input
-            id="home-composer"
-            value={draft}
-            maxLength={MAX_MESSAGE_CHARS}
-            placeholder="What did you accomplish? — a line is enough"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                start()
-              }
-            }}
-          />
+          {/*
+            A `<textarea>`, not an `<input>` — the same override Log made, now for the same reason
+            (ADR-014 amendment 2). Dictation produces multi-sentence text, and a single-line control
+            scrolls it out of view horizontally. That breaks the one gate this flow depends on:
+            `Start logging` hands off to Log, which *sends immediately*, so this field is where the
+            user reviews. You cannot review what you cannot see.
+
+            Enter sends and Shift+Enter breaks a line, matching Log rather than inventing a second
+            convention for the same gesture.
+          */}
+          {/*
+            The mic sits *inside* the field's box, as it does on Log — it is an input affordance for
+            this control, and placing it outside read as a third sibling of the field and the button.
+          */}
+          <div className="composer-field">
+            <textarea
+              id="home-composer"
+              rows={1}
+              value={draft}
+              maxLength={MAX_MESSAGE_CHARS}
+              placeholder="What did you accomplish? — a line is enough"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  start()
+                }
+              }}
+            />
+            <MicButton value={draft} onChange={setDraft} maxLength={MAX_MESSAGE_CHARS} />
+          </div>
           <button type="button" className="btn-primary" onClick={start}>
             Start logging
           </button>

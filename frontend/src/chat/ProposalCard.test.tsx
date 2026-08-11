@@ -133,6 +133,79 @@ describe("failure modes leave the card usable", () => {
     expect(screen.getByText(/fix the highlighted fields/i)).toBeInTheDocument();
   });
 
+  it("highlights the field a model-prefixed error names", async () => {
+    // The entry schema is a discriminated union, so Pydantic's `loc` is ("PROJECT", "start_date")
+    // and `career_crud` joins it to "PROJECT.start_date". Matching that on equality against the
+    // client's `start_date` key silently failed: the card said "fix the highlighted fields" and
+    // highlighted nothing. Found by Oche dictating an entry, 2026-08-11.
+    stubFetch({
+      status: 422,
+      body: { errors: [{ field: "PROJECT.start_date", error: "Input should be a valid date" }] },
+    });
+    const onSaved = vi.fn();
+    render(
+      <ProposalCard
+        idToken="tok"
+        candidate={{
+          entry_type: "PROJECT",
+          title: "XRM Agentic Workflow",
+          content: "Built the review matcher.",
+          entry_id: "01JQ2222222222222222222222",
+          start_date: "August 3, 2026",
+        } as EntryCandidate}
+        onSaved={onSaved}
+      />,
+    );
+    const user = userEvent.setup();
+
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    const field = screen.getByLabelText(/start date/i);
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Input should be a valid date")).toBeInTheDocument();
+  });
+
+  it("does not also repeat a matched error in the catch-all line", async () => {
+    stubFetch({
+      status: 422,
+      body: { errors: [{ field: "PROJECT.start_date", error: "Input should be a valid date" }] },
+    });
+    render(
+      <ProposalCard
+        idToken="tok"
+        candidate={{
+          entry_type: "PROJECT",
+          title: "XRM Agentic Workflow",
+          content: "Built the review matcher.",
+          entry_id: "01JQ2222222222222222222222",
+          start_date: "August 3, 2026",
+        } as EntryCandidate}
+        onSaved={vi.fn()}
+      />,
+    );
+    const user = userEvent.setup();
+
+    await user.click(confirmButton());
+
+    // Inline *or* in the fallback, never both — the fallback exists for errors that reach no field.
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(screen.queryByText(/PROJECT\.start_date:/)).not.toBeInTheDocument();
+  });
+
+  it("still reports an error that matches no field on the card", async () => {
+    stubFetch({
+      status: 422,
+      body: { errors: [{ field: "some_unknown_field", error: "not permitted" }] },
+    });
+    const { user } = renderCard();
+
+    await user.click(confirmButton());
+
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    expect(screen.getByText(/some_unknown_field: not permitted/)).toBeInTheDocument();
+  });
+
   it("a 500 re-enables the button and shows the server message", async () => {
     stubFetch({ status: 500, body: { message: "Bedrock unavailable" } });
     const { onSaved, user } = renderCard();

@@ -71,7 +71,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
 | v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
-| v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ⏳ | — |
+| v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | 🔨 | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1779,6 +1779,134 @@ comment.** The generalisable habit is that when a function's docstring makes a s
 test for it should be written against the *real* API's response shape — here, one dict key
 (`Errors`) was the entire difference between a correct implementation and a permanent-data-loss
 path that passed a green suite.
+
+---
+
+## v1.1 slice 4 — Voice capture for entry logging 🔨
+
+**Goal:** let a user speak an accomplishment instead of typing it, on both composers, at **$0** added
+AWS cost — closing the one capture affordance the MVP always intended to add.
+
+**Key refs:** ADR-014 + both amendments · FR-2, FR-2.4 · NFR-1.1 (the cost ceiling this must not
+touch) · NFR-6.2 (mobile — where voice matters most) · [design handoff](design/v1.1-redesign/README.md)
+
+### ⚠ Decisions — resolved with Oche before code, 2026-08-10
+
+Recorded as a **second ADR-014 amendment** rather than a new ADR: ADR-014 already owns the approach
+(Web Speech, not Transcribe) and the shape (the `DictationProvider` seam, amendment 1). These are
+details of that decision, not a new one. Slice 2's precedent applies to the textarea question — it
+overrode the handoff's single-line pill on Log with a code comment, not an ADR.
+
+1. **Mic on both composers**, not Log only. The proposal on the table was Log-only, for the smaller
+   surface. Rejected by Oche: voice's entire premise is removing capture friction, and Home is the
+   view users land on — especially on mobile. Optimising for a small diff is the wrong thing to
+   optimise when the feature exists to shorten the path to a logged entry.
+2. **Home's `<input>` becomes an auto-growing `<textarea>`.** There was never a principled reason
+   for the single line — it is an `<input>` because the handoff *drew* a one-liner pill, and nothing
+   on Home had yet produced multi-sentence text. Dictation does. A dictated paragraph in a
+   single-line control scrolls out of view horizontally, which breaks the review gate the next
+   decision depends on: **you cannot review what you cannot see.** Log already made exactly this
+   override for exactly this reason (`Chat.tsx`, "a `<textarea>`, not an `<input>`, despite the
+   handoff drawing a single-line pill").
+3. **Dictation fills the field; it never sends.** The transcript lands in the composer and the user
+   reviews, edits, and submits deliberately. This matches the chip precedent (`composer.ts`: "chips
+   seed the composer rather than sending") and it is the mitigation for speech-to-text being messy —
+   filler words, absent punctuation, garbled proper nouns. Auto-send-on-silence was rejected: every
+   unreviewed send costs ~$0.006 and puts a garbled entry in the corpus.
+   - **The Home hand-off does not weaken this.** `Start logging` navigates to Log and Chat
+     *auto-sends* the carried text (`Chat.tsx` `autoSent` effect) — so it looks like Home has no
+     review step. It does: the gate sits on Home, before the button. Read the transcript in the
+     field, then press. Exactly one deliberate review per path, same as pressing Send on Log.
+4. **An unsupported browser shows no mic at all.** Feature-detect at mount; render nothing when
+   absent. Typing is the default path and already works, so there is no broken affordance and no
+   explanation to write. ADR-014 already records Firefox as the known-weak case — this is why the
+   fallback is a requirement rather than a nicety.
+5. **Prompt tolerance is verified, not assumed.** The graduated-scope note says the work is *likely*
+   frontend capture plus prompt tolerance "rather than a new backend path — worth verifying rather
+   than assuming." So: feed genuinely dictated text through the deployed chat Lambda and see whether
+   `ask_clarification` (FR-2.4) already absorbs it. **Touch the chat prompt only if the evidence says
+   to.** In the likely case the slice stays frontend-only; pre-emptive hardening was rejected as
+   changing a working prompt on a guess.
+
+   > **Resolved 2026-08-11 — no prompt change needed.** Oche dictated a deliberately messy entry
+   > against the deployed stack. `ask_clarification` absorbed it, asked clarifying questions, and the
+   > resulting entry read as usable career history. The *likely* case held, so the slice stays
+   > frontend-only and **zero backend surface** is now a measured fact rather than a prediction.
+
+### ⚠ Decisions taken mid-slice, after seeing it on screen
+
+Both came from Oche exercising the real thing, and neither was visible from the tests.
+
+6. **The mic sits inside the field's box, not beside it.** First built as a third sibling in Home's
+   row — field, mic, `Start logging` — which read as a peer of the button rather than an affordance
+   of the input. Log already had it right, because the pill *is* a box. Home's composer gained a
+   `.composer-field` wrapper so both views now say the same thing.
+7. **The mic is a drawn microphone, not a text glyph.** `●` rendered as a grey dot that read as a
+   disabled status indicator. The accessible name was always correct — this was purely the visual
+   affordance, and it is the class of defect only screen time finds.
+
+### Scope added mid-slice — the entry card's validation feedback
+
+**Oche's call, 2026-08-11**, after dictating an entry and hitting a wall the voice work merely
+*surfaced*: he typed `August 3, 2026` into `start_date` and was told the value was invalid, with no
+statement of what format would be valid, and with nothing highlighted despite the card saying "fix
+the highlighted fields". Two defects, one of them a real bug:
+
+- **Nothing was ever highlighted.** `career_crud` builds each error's `field` by joining the whole
+  Pydantic `loc` tuple, and the entry schema is a discriminated union — so the error arrives as
+  `PROJECT.start_date` while the card's key is `start_date`. `e.field === key` never matched, so
+  *every* field-level 422 fell through to the "unknown field" catch-all. The card had been promising
+  a highlight it could not deliver for as long as both have existed.
+- **The accepted format was never stated.** The fields are Pydantic `date`, i.e. ISO `YYYY-MM-DD`.
+  The rejection ("invalid character in year") says what is wrong and never what would be right.
+
+Fixed in the frontend rather than the backend, deliberately: matching on the last `loc` segment
+leaves the API contract untouched, keeps the genuinely-unknown-field path working, and — the reason
+that matters here — **keeps this slice frontend-only, with no Lambda redeploy.**
+
+### Scope — in
+
+- A **`DictationProvider`** interface with an optional `onInterim`, per ADR-014 amendment 1, plus its
+  Web Speech implementation. The interface is the deliverable; Web Speech is one implementation of it.
+- Mic control on **both** composers — Home and Log — with recording/idle state, feature detection,
+  and a permission-denied path that fails back to typing without trapping the user.
+- Home's composer rebuilt as an auto-growing textarea matching Log's, including the
+  **Enter sends / Shift+Enter newline** behaviour change and the `.composer-row` layout fix
+  (`align-items: stretch` currently stretches the `Start logging` button to the field's height).
+- Live-region announcement of dictation state — a mic that silently starts and stops is unusable
+  without sight of it.
+- Verification at **375px and 1280px in both themes**, re-measured rather than assumed (slice 3's
+  standing bar), and a real device check since voice is a mobile-first affordance.
+- The prompt-tolerance probe in decision 5 (~$0.01 of Haiku).
+- **The entry card's validation feedback** — the mid-slice addition above: match field errors through
+  the model prefix, mark the offending field, and state the accepted date format up front.
+
+### Scope — out
+
+- **Anything paid.** No Transcribe, no cloud STT. It breaks ADR-014's own cost premise against
+  NFR-1.1, and the seam existing does not license using it — that decision gets made explicitly,
+  with numbers, or not at all.
+- **Résumé speed (B-023 → B-020/B-004)** and the **UI/mobile pass (B-001, NFR-6.2)** — the other two
+  v1.1 workstreams. Voice touches mobile only insofar as its own control must work there.
+- **Backlog groomed, nothing pulled in.** 30 open items reviewed; none is a prerequisite. B-001 is
+  adjacent and consciously left, narrowed to verifying this slice's own control.
+
+### Exit criteria
+
+- A spoken accomplishment reaches an `ENTRY#` item **without the keyboard**, from Home and from Log.
+- Dictation **never** POSTs on its own — asserted by test, not by inspection.
+- No mic renders when the API is absent; a denied permission leaves a usable typing path.
+- Home's textarea preserves newlines through the hand-off, sends on Enter, breaks on Shift+Enter.
+- Decision 5 answered **with evidence**: either the existing prompt absorbed dictated text, or it did
+  not and the change is recorded. "Assumed fine" is not an acceptable outcome.
+- Zero horizontal overflow at 360px; both composers hold in both themes.
+- **A field-level 422 marks its own field**, including the `MODEL.field` form the server actually
+  sends — mutation-verified by reverting the match and watching the original bug reappear.
+- **The date format is stated before a value is rejected**, not only after.
+- **No hex outside `index.css`** — the standing rule, now enforceable since B-036 closed.
+- Backend, frontend and integration suites green; new tests **mutation-verified** (break the code,
+  confirm the test notices). `npm run build` run before pushing — `npm test` does not typecheck.
+- **AWS bill unchanged.** Voice adds $0; if it does not, something was wired that should not have been.
 
 ---
 

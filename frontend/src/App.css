@@ -338,6 +338,41 @@ main:focus {
   border-color: var(--border-active);
 }
 
+/* Label row: the field name, and the accepted format where one is not self-evident. */
+.field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.field-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+/*
+ * The actual highlight. The card has always said "fix the highlighted fields"; until now nothing
+ * was highlighted, because the server's error named `PROJECT.start_date` and no field key matched.
+ * `aria-invalid` carries the same fact to assistive tech, so the cue is not colour-only.
+ */
+.entry-fields input[aria-invalid="true"],
+.entry-fields textarea[aria-invalid="true"] {
+  border-color: var(--danger-border);
+  background: var(--danger-wash);
+}
+
+.entry-fields input[aria-invalid="true"]:focus,
+.entry-fields textarea[aria-invalid="true"]:focus {
+  border-color: var(--danger);
+}
+
+.entry-fields label.invalid .field-name {
+  color: var(--danger);
+}
+
 .field-error {
   color: var(--danger);
   font-size: 13px;
