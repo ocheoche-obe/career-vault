@@ -65,6 +65,10 @@ function Harness({
       <label htmlFor="field">What did you accomplish?</label>
       <textarea id="field" value={value} onChange={(e) => setValue(e.target.value)} />
       <MicButton value={value} onChange={setValue} maxLength={maxLength} provider={provider} />
+      {/* Mimics `Chat.submit`: clears the field and leaves the session running. */}
+      <button type="button" onClick={() => setValue("")}>
+        Send
+      </button>
     </form>
   );
 }
@@ -77,8 +81,11 @@ describe("browser support", () => {
     render(<Harness provider={provider} />);
 
     // Not a disabled button and not a tooltip (ADR-014 amendment 2): typing already works, so an
-    // absent control is better than one that exists only to be refused.
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    // absent control is better than one that exists only to be refused. Named rather than "any
+    // button", so the harness's own controls cannot make this pass or fail for the wrong reason.
+    expect(screen.queryByRole("button", { name: /dictate your entry/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /stop dictation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByText(/dictat/i)).not.toBeInTheDocument();
   });
 
@@ -253,6 +260,64 @@ describe("recording state", () => {
 
     // A recognizer left running after the view is gone is a privacy problem, not just a leak.
     expect(fake.stop).toHaveBeenCalled();
+  });
+});
+
+describe("the composer changing underneath a live session", () => {
+  it("does not put a sent message back in the box", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+    fake.transcript("I shipped the parser rewrite");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // `Chat.submit` clears the draft and leaves dictation running. Recomposing from the base
+    // captured at start() would refill the field with the text that was just sent — and a second
+    // Enter would re-send it, costing another Bedrock call and depositing a duplicate entry.
+    fake.transcript("I shipped the parser rewrite");
+    expect(field()).toHaveValue("");
+  });
+
+  it("ends the session rather than appending to text that is gone", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+    fake.transcript("I shipped the parser rewrite");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(fake.stop).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Dictate your entry" })).toBeInTheDocument();
+  });
+
+  it("ignores a final that settles after the field was cleared", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+    fake.transcript("I shipped the parser");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // The provider uses `stop()` rather than `abort()` so a half-spoken word still settles — which
+    // means one more result can legitimately arrive after the field was emptied.
+    fake.transcript("I shipped the parser rewrite");
+    fake.end();
+
+    expect(field()).toHaveValue("");
+  });
+
+  it("does not discard text typed while recording", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+    fake.transcript("I shipped");
+    await userEvent.type(field(), " and documented it");
+
+    // Recomposing from the stale base would throw the typed words away on the next result.
+    fake.transcript("I shipped the parser");
+    expect(field()).toHaveValue("I shipped and documented it");
   });
 });
 

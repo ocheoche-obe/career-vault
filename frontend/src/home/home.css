@@ -322,6 +322,11 @@
 
   .composer-row {
     flex-direction: column;
+    /* `align-items` governs the *horizontal* axis once this is a column, so the row's `flex-end`
+       would shrink the field and `Start logging` to their content width and right-align them —
+       a full-width CTA collapsing to a small button hugging the right edge. Restated, not
+       inherited, because the value that is correct in a row is wrong in a column. */
+    align-items: stretch;
   }
 
   .stat-trio {

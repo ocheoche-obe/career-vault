@@ -70,6 +70,22 @@ export function MicButton({
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  /**
+   * The exact string this component last wrote, so a change made by anyone else is detectable.
+   *
+   * `null` until the first emission of a session.
+   */
+  const lastEmittedRef = useRef<string | null>(null);
+
+  /**
+   * Set once the composer's text has moved out from under this session.
+   *
+   * Guards the window between asking the recognizer to stop and it actually stopping: `stop()` uses
+   * the API's `stop()` (not `abort()`) so a half-spoken word still settles into a final result, and
+   * that result can land *after* the field was cleared. Without this it would repopulate the box.
+   */
+  const abandonedRef = useRef(false);
+
   // Stop the microphone if the composer unmounts mid-sentence. Without this the recognizer keeps
   // listening after the view is gone, which is both a privacy problem and a battery one.
   useEffect(() => {
@@ -78,8 +94,11 @@ export function MicButton({
 
   const compose = useCallback(
     (transcript: string) => {
+      if (abandonedRef.current) return;
       const composed = joinTranscript([baseRef.current, transcript]);
-      onChangeRef.current(maxLength ? composed.slice(0, maxLength) : composed);
+      const next = maxLength ? composed.slice(0, maxLength) : composed;
+      lastEmittedRef.current = next;
+      onChangeRef.current(next);
     },
     [maxLength],
   );
@@ -87,6 +106,8 @@ export function MicButton({
   const start = useCallback(() => {
     setError(null);
     baseRef.current = value;
+    lastEmittedRef.current = value;
+    abandonedRef.current = false;
     setRecording(true);
 
     sessionRef.current = provider.start({
@@ -108,6 +129,27 @@ export function MicButton({
     sessionRef.current = null;
     setRecording(false);
   }, []);
+
+  /**
+   * End the session when the composer's text changes underneath it.
+   *
+   * `baseRef` is captured once at `start()`, so every later transcript recomposes from it. If the
+   * field is emptied while the session runs — which is exactly what submitting does, since
+   * `Chat.submit` calls `setDraft("")` and leaves dictation running — the next result rebuilds
+   * `base + transcript` and **puts the just-sent message back in the box**. A second Enter then
+   * re-sends it, costing another Bedrock call and depositing a duplicate entry. The same stale base
+   * would also silently discard anything typed into the field while recording.
+   *
+   * Stopping is the honest response: the text this session was appending to no longer exists, so
+   * the session's premise is gone. The user presses the mic again and dictates onto whatever is
+   * there now.
+   */
+  useEffect(() => {
+    if (!recording || lastEmittedRef.current === null) return;
+    if (value === lastEmittedRef.current) return;
+    abandonedRef.current = true;
+    stop();
+  }, [value, recording, stop]);
 
   // Feature detection at render, per ADR-014 amendment 2. Nothing renders — not a disabled button,
   // not a tooltip — when the browser cannot do this.
