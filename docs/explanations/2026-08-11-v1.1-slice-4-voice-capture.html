@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speaking into the vault: voice capture, and four bugs a green test suite could not see</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Speaking into the vault: voice capture, and four bugs a green test suite could not see</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">Prepared 2026-08-11 · v1.1 slice 4 · PR #51 · ADR-014 amendments 1-3</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+<p>This slice adds one thing a user can see — a microphone button — and in doing so it disturbs four things nobody could see. That ratio is the reason it is worth explaining rather than merely merging.</p>
+
+<h3>The deep background <span style='font-weight:400;opacity:0.7'>(skip if you already know how browser speech recognition works)</span></h3>
+
+<p>Speech recognition in a browser is exposed through the <strong>Web Speech API</strong>. You construct a recognizer, set a couple of flags, attach event handlers, and call <code>start()</code>. Audio from the microphone is then turned into text, and the text arrives as a stream of events rather than a single answer at the end.</p>
+
+<p>Those events carry two kinds of result. An <strong>interim</strong> result is the recognizer's current best guess, and it is allowed to change — you say <em>"I led the"</em> and it might show <em>"I lead the"</em> until more context arrives. A <strong>final</strong> result is one the recognizer has committed to and will not revise. A single utterance typically produces a run of interims followed by one final.</p>
+
+<div class='callout'><strong>The crucial thing the name hides:</strong> "browser API" describes where the <em>interface</em> lives, not where the <em>work</em> happens. In Chrome and Safari the captured audio is streamed to the browser vendor's speech service and transcribed on their servers. The API even tells on itself — it defines a <code>"network"</code> error code, which would make no sense for on-device processing. Hold on to this; it becomes the most consequential paragraph in the slice.</div>
+
+<p>The API's ergonomics are, to put it gently, of their era. Three behaviours matter here:</p>
+
+<ul>
+<li><strong>Continuous mode stops on its own.</strong> Even with <code>continuous = true</code>, recognition ends after a silence the page cannot configure. "Keep listening until I say stop" is not something you request; it is something you reconstruct by restarting a session that ended without being asked to.</li>
+<li><strong>Finals can arrive more than once.</strong> The same settled utterance may be reported repeatedly, so anything that naively appends will duplicate text.</li>
+<li><strong>Chrome and Safari disagree on the details</strong> — event timing, and notably whether fragments carry a leading space. "Works in Chrome" is not evidence it works.</li>
+</ul>
+
+<h3>The narrow background: where this lands in CareerVault</h3>
+
+<p>CareerVault already had a complete text ingestion path, and the whole design goal of this slice was to add <em>nothing</em> to it. A message travels:</p>
+
+<div class='diagram'>
+<div class='flow'>
+<div class='box'>Composer<br><span style='opacity:0.7'>Home or Log</span></div>
+<div class='arrow'>→</div>
+<div class='box'>POST /chat<br><span style='opacity:0.7'>API Gateway</span></div>
+<div class='arrow'>→</div>
+<div class='box'>chat_lambda<br><span style='opacity:0.7'>Claude Haiku, tool use</span></div>
+<div class='arrow'>→</div>
+<div class='box'>Proposal card<br><span style='opacity:0.7'>you review + edit</span></div>
+<div class='arrow'>→</div>
+<div class='box'>career_crud<br><span style='opacity:0.7'>DynamoDB ENTRY#</span></div>
+</div>
+</div>
+
+<p>Haiku either proposes a structured entry, or — when your message is too vague to parse — routes to <code>ask_clarification</code> and asks a follow-up (FR-2.4). That fallback turns out to matter a great deal for speech, which is messier than typing: filler words, absent punctuation, mangled proper nouns.</p>
+
+<p>There were <em>two</em> composers, and they were not the same shape. Log had a real conversation input: a <code>&lt;textarea&gt;</code> inside a bordered pill, next to a send button. Home had a single-line <code>&lt;input&gt;</code> whose submit navigates to Log carrying the text, which Log then <em>sends immediately</em>. That asymmetry — one box, one line — is where a surprising amount of this slice's work ended up.</p>
+
+<h3>What ADR-014 had already decided, in 2026-05-31</h3>
+
+<p>Voice was not a new idea; it was a parked one. <strong>ADR-014</strong> deferred it to v1.1 and chose the approach in advance: the browser's free Web Speech API, explicitly <em>not</em> Amazon Transcribe, on cost grounds. Against a $5/month ceiling (NFR-1.1) where Bedrock is ~87% of the bill, an API that adds $0 is a strong default.</p>
+
+<p>Slice 3 added <strong>amendment 1</strong>: a <code>DictationProvider</code> interface with an <em>optional</em> <code>onInterim</code> callback, so that a hypothetical cloud provider — which buffers audio and returns one final transcript — could satisfy the same contract without faking partial results. A <em>required</em> streaming callback would have quietly excluded every non-streaming provider, which is how a seam stops being a seam.</p>
+
+<div class='callout'><strong>Cross-cloud parallel.</strong> The Transcribe-vs-Web-Speech choice has direct analogues: <strong>Azure AI Speech</strong> and <strong>Google Cloud Speech-to-Text</strong> are the managed, paid, server-side options. All three would keep audio inside your cloud account and bill per minute. The browser API is the only one that costs nothing — and, as this slice discovered, the only one where you cannot say where the audio went.</div>
+
+<h2 id="intuition">Intuition</h2>
+<h3>Voice is an input method, not a pipeline</h3>
+
+<p>The single most important design decision is a negative one: <strong>dictation adds no backend surface at all.</strong> No route, no Lambda, no schema change. The transcript is simply text that arrives in the composer by a different route, and from there it is indistinguishable from typing.</p>
+
+<div class='diagram'>
+<div class='flow'>
+<div class='box'>🎙️ Speech</div>
+<div class='arrow'>→</div>
+<div class='box'>DictationProvider<br><span style='opacity:0.7'>browser</span></div>
+<div class='arrow'>→</div>
+<div class='box'>Composer text<br><span style='opacity:0.7'>you review here</span></div>
+<div class='arrow'>→</div>
+<div class='box'>POST /chat<br><span style='opacity:0.7'>unchanged</span></div>
+</div>
+<p style='margin-top:14px;opacity:0.75'>Everything left of the third box is new. Everything right of it already existed.</p>
+</div>
+
+<p>That framing is what makes the cost claim true, and it is also why the slice could be shipped without a Lambda redeploy.</p>
+
+<h3>The review gate, and why it is load-bearing</h3>
+
+<p>Dictation <strong>fills the field and never sends</strong>. You speak, you read what appeared, you edit it, and only then do you submit. This is not politeness — it is the mitigation for speech being messy. An unreviewed send costs a real Bedrock call and deposits a garbled entry in a corpus whose entire value is being trustworthy later.</p>
+
+<p>Once you take that gate seriously, a chain of consequences follows that has nothing to do with speech recognition:</p>
+
+<div class='diagram'>
+<div class='flow'>
+<div class='box'>Review before sending</div>
+<div class='arrow'>⇒</div>
+<div class='box'>You must see the text</div>
+<div class='arrow'>⇒</div>
+<div class='box'>A paragraph must fit</div>
+<div class='arrow'>⇒</div>
+<div class='box'>Home needs a textarea</div>
+</div>
+</div>
+
+<p>Home's single-line <code>&lt;input&gt;</code> had never been a problem, because nothing on Home had ever produced multi-sentence text. Dictation does. A spoken paragraph in a one-line box scrolls horizontally out of view, and <em>you cannot review what you cannot see</em>. So Home's input became an auto-growing textarea — the same override Log had already made for the same reason.</p>
+
+<h3>Whole transcripts, not deltas</h3>
+
+<p>Here is the neatest idea in the implementation. The provider's callback does not hand you "the new words since last time". It hands you <strong>the complete transcript so far, every time</strong>.</p>
+
+<p>Why? Because finals can re-fire. Watch what happens to a naive delta-based consumer when the recognizer reports the same settled utterance twice:</p>
+
+<table>
+<tr><th>Event</th><th>Delta-based consumer</th><th>Whole-transcript consumer</th></tr>
+<tr><td>final: "promoted to senior"</td><td>"promoted to senior"</td><td>"promoted to senior"</td></tr>
+<tr><td>final: "promoted to senior" <em>(again)</em></td><td>"promoted to senior promoted to senior" ❌</td><td>"promoted to senior" ✓</td></tr>
+</table>
+
+<p>The delta consumer appends and doubles. The whole-transcript consumer <em>replaces</em>, so a duplicate produces an identical string — the bug becomes a no-op. The contract is idempotent by construction, and no consumer has to know the quirk exists.</p>
+
+<h3>Base + transcript, and the trap inside it</h3>
+
+<p>The composer may already contain typed text when you press the mic, so the component records a <strong>base</strong> at <code>start()</code> and composes <code>base + transcript</code> on every update.</p>
+
+<div class='diagram'>
+<p style='margin:0 0 10px'><strong>base</strong> = <code>"I shipped"</code> (captured when you press 🎙️)</p>
+<div class='flow'>
+<div class='box'>transcript: "the"<br>→ "I shipped the"</div>
+<div class='arrow'>→</div>
+<div class='box'>transcript: "the parser"<br>→ "I shipped the parser"</div>
+<div class='arrow'>→</div>
+<div class='box'>transcript: "the parser rewrite"<br>→ "I shipped the parser rewrite"</div>
+</div>
+</div>
+
+<p>Elegant — and it contains a trap that a code review caught and the tests did not. <strong>What if the field changes while the session is running?</strong> Pressing Enter on Log calls <code>setDraft("")</code> and leaves dictation live. The next result recomposes <code>base + transcript</code> and cheerfully puts the message you <em>just sent</em> back into the box. Press Enter again and you have sent it twice, paid twice, and stored a duplicate entry.</p>
+
+<div class='callout'>The fix is to notice that the premise expired. If the field's text is no longer what this component last wrote, the text the session was appending to is gone — so the session ends. Say-then-send-then-keep-talking now starts a fresh dictation onto whatever is there, which is also what a user would expect.</div>
+
+<h3>Pauses, and a bound that only looked like one</h3>
+
+<p>Because continuous mode stops on its own, the implementation restarts it — otherwise thinking mid-sentence would end your dictation. But an unconditional restart is a hot loop when the microphone is dead in a way that fires <code>end</code> without ever firing <code>error</code>. So restarts are bounded: three consecutive restarts that capture nothing, and the session gives up.</p>
+
+<p>The counter resets when you speak. Or rather — it was <em>supposed</em> to. The original check was <code>if (settled) silentRestarts = 0</code>, which reads as "reset when there is speech" and means "reset whenever a transcript exists":</p>
+
+<div class='diagram'>
+<div class='flow'>
+<div class='box'>You say one word<br><span style='opacity:0.7'>transcript is now non-empty</span></div>
+<div class='arrow'>→</div>
+<div class='box'>…for the rest of the session<br><span style='opacity:0.7'><code>settled</code> is truthy on every event</span></div>
+<div class='arrow'>→</div>
+<div class='box fail'>Any stray result resets the bound<br><span style='opacity:0.7'>mic stays live indefinitely</span></div>
+</div>
+</div>
+
+<p>Background noise producing an interim that never settles is enough. You walk away, the room is not silent, and the microphone stays open. Keying the reset on the transcript having <em>actually grown</em> makes the bound mean what it always claimed to.</p>
+
+<h2 id="code">Code walkthrough</h2>
+<h3>1. The contract, and the quirks it refuses to leak</h3>
+
+<p><a href='../../frontend/src/lib/dictation.ts'>frontend/src/lib/dictation.ts</a> is deliberately two things in one file: a small interface, and a messy implementation of it.</p>
+
+<pre><code>export interface DictationCallbacks {
+  /** The complete final transcript since start() — not a delta. */
+  onTranscript(transcript: string): void;
+  /** Optional. Providers that cannot stream never call it. */
+  onInterim?(preview: string): void;
+  onError(code: DictationErrorCode): void;
+  onEnd(): void;
+}
+
+export interface DictationProvider {
+  readonly isSupported: boolean;
+  start(callbacks: DictationCallbacks): DictationSession;
+}</code></pre>
+
+<p>Note what is <em>absent</em>: no mention of restarts, vendor prefixes, interim revision, or silence timeouts. All of that lives below, in <code>webSpeechProvider</code>. That split is the entire point — ADR-014 amendment 3 records that the browser API is inconsistent <em>where it is supported</em>, not merely missing in Firefox, so this file is the one most likely to be replaced.</p>
+
+<p>A small typing detail worth noticing: TypeScript 6's <code>lib.dom</code> types <code>SpeechRecognitionEvent</code>, <code>SpeechRecognitionErrorEvent</code> and the <code>SpeechRecognitionErrorCode</code> union — but <strong>not the recognizer itself</strong>, presumably because it is still vendor-prefixed in shipping browsers. So the file declares only the missing piece and reuses the built-in event types rather than hand-rolling shapes that could drift.</p>
+
+<p>The result handler writes each final into its own slot rather than appending:</p>
+
+<pre><code>for (let i = 0; i &lt; event.results.length; i += 1) {
+  const result = event.results[i];
+  const text = result[0]?.transcript ?? "";
+  if (result.isFinal) {
+    sessionFinals[i] = text;   // re-fired final overwrites, never doubles
+  } else {
+    interimTail = ...;
+  }
+}</code></pre>
+
+<p>Restarting after a silence timeout is where the two-level accumulation earns its keep. A restarted recognizer starts with an empty <code>results</code> list, so anything already said must be banked first:</p>
+
+<pre><code>// A silence timeout, not a request to stop.
+committed = joinTranscript([committed, ...sessionFinals]);
+sessionFinals = [];</code></pre>
+
+<p><code>joinTranscript</code> exists purely to absorb the Chrome/Safari spacing disagreement — trim each fragment, drop empties, join with a single space — so no consumer has to tidy text it did not produce.</p>
+
+<p>Two error codes are deliberately <em>not</em> errors. <code>no-speech</code> is the silence timeout and <code>aborted</code> is what your own stop button produces; surfacing either would show "something went wrong" to a user who merely paused.</p>
+
+<h3>2. The button, and the guarantee it makes structurally</h3>
+
+<p><a href='../../frontend/src/components/MicButton.tsx'>frontend/src/components/MicButton.tsx</a> is shared by both composers. Its most interesting property is something it <em>lacks</em>: it has no access to a submit handler. "Dictation never sends" is therefore not a promise the code keeps by being careful — it is a thing the component cannot do.</p>
+
+<p>Feature detection is a plain early return, and it renders <em>nothing</em> — not a disabled button, not a tooltip:</p>
+
+<pre><code>if (!provider.isSupported) return null;</code></pre>
+
+<p>Typing already works and is the default path, so an absent control leaves no broken affordance and nothing to explain to a Firefox user.</p>
+
+<p>The expired-premise fix from the Intuition section:</p>
+
+<pre><code>useEffect(() => {
+  if (!recording || lastEmittedRef.current === null) return;
+  if (value === lastEmittedRef.current) return;
+  abandonedRef.current = true;   // guard the not-yet-stopped window
+  stop();
+}, [value, recording, stop]);</code></pre>
+
+<p>The second flag is subtler than it looks. <code>stop()</code> deliberately calls the API's <code>stop()</code> rather than <code>abort()</code>, so a half-spoken word still settles into a final — which means <strong>one more result can legitimately arrive after the field was cleared</strong>. Without <code>abandonedRef</code> that straggler would repopulate the box, and the fix would have looked correct while remaining broken in exactly the original way.</p>
+
+<h3>3. Two composers, one shape</h3>
+
+<p>Home's <code>&lt;input&gt;</code> became an auto-growing <code>&lt;textarea&gt;</code> inside a new <code>.composer-field</code> box that also holds the mic — so the mic reads as an affordance <em>of the input</em> rather than a peer of the submit button. Enter sends and Shift+Enter breaks a line, matching Log instead of inventing a second convention for the same keystroke.</p>
+
+<p>That restructure produced two layout bugs, and the pair is instructive because <strong>neither was visible to 253 passing tests</strong>.</p>
+
+<p>The first was a CSS specificity collision. <code>.input-pill button</code> has specificity (0,1,1); <code>.mic-button</code> has (0,1,0). The descendant selector wins, so the mic silently rendered as a second gradient send button beside the real one:</p>
+
+<pre><code>/* `&gt; button`, not `button`: the mic also lives inside the pill, and a
+   descendant selector here outranks its own class rule. */
+.input-pill &gt; button { ... }</code></pre>
+
+<p>The second was subtler and got past a mobile check. <code>.composer-row</code> moved from <code>align-items: stretch</code> to <code>flex-end</code> — correct in a row, because buttons should track the last line of a growing field. But the <code>@media (max-width: 768px)</code> block flips to <code>flex-direction: column</code>, and in a column <code>align-items</code> governs the <em>horizontal</em> axis. The full-width "Start logging" CTA collapsed to its content width and hugged the right edge.</p>
+
+<div class='callout'><strong>Why the mobile pass missed it.</strong> The check asserted <em>zero horizontal overflow</em> at 375px, and that assertion was true — a button that has shrunk overflows nothing. The invariant held and the layout was still wrong. The lesson recorded for the next UI slice: compare geometry against the <em>pre-change</em> layout, not only against invariants.</div>
+
+<h3>4. The entry card: an error that named a field nobody had</h3>
+
+<p>Dictating a real entry surfaced a bug that predates this slice entirely. Typing <code>August 3, 2026</code> into a date field produced a rejection saying "fix the highlighted fields" — with nothing highlighted.</p>
+
+<p>The cause is a lovely little impedance mismatch. <a href='../../backend/functions/career_crud/handler.py'>career_crud/handler.py:74</a> builds each error's field name by joining Pydantic's whole <code>loc</code> tuple:</p>
+
+<pre><code>{"field": ".".join(str(part) for part in err["loc"]), "error": err["msg"]}</code></pre>
+
+<p>The entry schema is a <strong>discriminated union</strong> over <code>entry_type</code>, so <code>loc</code> for a bad project date is <code>("PROJECT", "start_date")</code> → <code>"PROJECT.start_date"</code>. The client's field key is plain <code>start_date</code>. The comparison was <code>e.field === key</code>, which never matched — so <em>every</em> field-level 422 fell through to the "unknown field" catch-all, for as long as both have existed.</p>
+
+<pre><code>export function fieldMatches(errorField: string, key: string): boolean {
+  return errorField === key || errorField.split(".").at(-1) === key;
+}</code></pre>
+
+<p>Fixed on the client rather than the server, deliberately: matching the last segment leaves the API contract untouched, keeps the genuinely-unknown-field path working, and kept the slice frontend-only with no Lambda redeploy. The card's catch-all uses the <em>same</em> predicate, so an error is reported inline or in the fallback — never both.</p>
+
+<p>The date fields also now state <code>YYYY-MM-DD</code> up front, because Pydantic's rejection ("invalid character in year") says what is wrong and never what would be right.</p>
+
+<h3>5. The correction that mattered most</h3>
+
+<p>The security review returned one finding, and it was a documentation defect rather than a code one. <strong>ADR-014 had described Web Speech as "browser-side" since the day it was written</strong>, and repeated it in both amendments.</p>
+
+<p>That phrasing is true of the API and false of the processing. Chrome and Safari stream audio to the vendor's speech service. Before this slice, no audio left the device; after it, speech containing employers, dates, project detail and colleague names is transmitted to a third party — outside the SSE-S3/DynamoDB boundary every other part of the system is designed around.</p>
+
+<div class='callout'><strong>The decision survived; the reasoning did not.</strong> The "$0" claim was always about <em>AWS spend</em>, and it is still exactly right — nothing bills to the account. What was wrong was an <em>implied</em> containment guarantee the ADR never had grounds to make. Rejecting Amazon Transcribe on cost reads, in hindsight, as though the browser option were also the more contained one. It is the opposite: Transcribe would have kept the audio inside the AWS account.</div>
+
+<p>Two mitigations shipped. The recording status line now says where the audio goes, <em>while it is going there</em> — an undisclosed data flow was the actual defect, since the flow itself is inherent to the chosen API. And the capture window got the bound described earlier, so a live microphone cannot outlive the user's attention indefinitely.</p>
+
+<p>The general habit worth taking from this: <strong>a cost argument is not a privacy argument</strong>, and an ADR that settles one should not be read as having settled the other.</p>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>Why does the DictationProvider contract emit the entire transcript on every update instead of just the newly recognized words?</strong></p>
+<button class="quiz-opt" data-correct="false">Because interim results and final results arrive on different event handlers, and only whole transcripts can be compared across the two.</button>
+<button class="quiz-opt" data-correct="true">Because the Web Speech API can report the same final result more than once; emitting the whole transcript makes the consumer replace rather than append, so a duplicate becomes a harmless no-op.</button>
+<button class="quiz-opt" data-correct="false">Because sending deltas would require the provider to buffer previous results, and browsers cap the memory available to a recognizer.</button>
+<button class="quiz-opt" data-correct="false">Because React state updates are asynchronous, so a delta could be applied to a stale value and produce out-of-order text.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The original give-up check was `if (settled) silentRestarts = 0`. Why did that fail to bound how long the microphone could stay open?</strong></p>
+<button class="quiz-opt" data-correct="false">The counter was incremented in the result handler rather than the end handler, so restarts were never counted at all.</button>
+<button class="quiz-opt" data-correct="false">Restarting the recognizer created a new object whose event handlers pointed at a fresh copy of the counter variable.</button>
+<button class="quiz-opt" data-correct="true">Once the user has said a single word the accumulated transcript is non-empty for the rest of the session, so the condition is true on every subsequent event — and any stray result, including background noise producing an interim, resets the counter.</button>
+<button class="quiz-opt" data-correct="false">`settled` was never assigned before the first restart, so the comparison always evaluated against undefined and short-circuited.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The mic button rendered as a second gradient send button in the browser, yet all 253 frontend tests passed. What explains the gap?</strong></p>
+<button class="quiz-opt" data-correct="false">The tests asserted on `className` strings rather than rendered output, which is correct behaviour but insensitive to specificity.</button>
+<button class="quiz-opt" data-correct="true">`.input-pill button` has higher specificity than `.mic-button` and overrode it — and the tests run in jsdom, which builds the DOM but does not apply the CSS cascade, so no assertion could observe the styling at all.</button>
+<button class="quiz-opt" data-correct="false">Vitest replaces CSS imports with empty stubs unless a css option is enabled, so the tests were correct and the bundle was not.</button>
+<button class="quiz-opt" data-correct="false">The stylesheet was imported lazily, so it was present in the browser bundle but absent from the module graph the tests loaded.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Pressing Enter on Log while dictation was still running caused the just-sent message to reappear in the composer. What was the underlying cause?</strong></p>
+<button class="quiz-opt" data-correct="false">The recognizer replays its full session history whenever a restart occurs, which re-emitted the earlier utterance after submission.</button>
+<button class="quiz-opt" data-correct="true">The component captures a `base` string once at `start()` and recomposes `base + transcript` on every result; `Chat.submit` clears the draft but leaves the session live, so the next result rebuilt the sent text from the stale base.</button>
+<button class="quiz-opt" data-correct="false">React batched the `setDraft("")` call with the subsequent transcript update, and the batching applied them in the wrong order.</button>
+<button class="quiz-opt" data-correct="false">The send request failed and the component's error path restored the previous draft value from a backup ref.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The security review found that Web Speech transcribes on the vendor&#x27;s servers, not on-device. Why did ADR-014&#x27;s &quot;$0 added cost&quot; conclusion survive that discovery unchanged?</strong></p>
+<button class="quiz-opt" data-correct="false">Because the transcription happens inside the CloudFront edge cache, which is already paid for by the existing distribution.</button>
+<button class="quiz-opt" data-correct="false">Because the audio is transmitted only after the user stops speaking, so the volume of data is too small to affect any bill.</button>
+<button class="quiz-opt" data-correct="true">Because the cost claim was always about AWS spend, and server-side transcription by the browser vendor still bills nothing to the account; what the discovery invalidated was an implied containment guarantee, not the economics.</button>
+<button class="quiz-opt" data-correct="false">Because the $5 ceiling in NFR-1.1 covers only Bedrock inference, and speech recognition falls outside the metered services.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

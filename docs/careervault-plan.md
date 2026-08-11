@@ -71,7 +71,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | v1.1-1 | Redesign — audit, tokens, shell, Home | B-001, NFR-6.2, NFR-2.3 | ✅ | [#43](https://github.com/ocheoche-obe/career-vault/pull/43) |
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
 | v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
-| v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | 🔨 | — |
+| v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ✅ | [#51](https://github.com/ocheoche-obe/career-vault/pull/51) |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1782,7 +1782,7 @@ path that passed a green suite.
 
 ---
 
-## v1.1 slice 4 — Voice capture for entry logging 🔨
+## v1.1 slice 4 — Voice capture for entry logging ✅
 
 **Goal:** let a user speak an accomplishment instead of typing it, on both composers, at **$0** added
 AWS cost — closing the one capture affordance the MVP always intended to add.
@@ -1907,6 +1907,69 @@ that matters here — **keeps this slice frontend-only, with no Lambda redeploy.
 - Backend, frontend and integration suites green; new tests **mutation-verified** (break the code,
   confirm the test notices). `npm run build` run before pushing — `npm test` does not typecheck.
 - **AWS bill unchanged.** Voice adds $0; if it does not, something was wired that should not have been.
+
+### Completion notes
+
+**Shipped:** a `DictationProvider` seam and its Web Speech implementation, a shared `MicButton` on
+both composers, Home's composer rebuilt around an auto-growing textarea, and — added mid-slice — the
+entry card's field-error highlighting and date-format hint. **Zero backend surface, zero added AWS
+cost**, both measured rather than predicted.
+
+**Deployed and exercised on the real thing.** `make deploy-frontend` twice (the second after the
+review fixes), each with the CloudFront invalidation driven to `Completed` and the *served* bundle
+checked for the code that was supposed to be in it — the check that catches a stale-cache "deploy"
+that changed nothing. Oche dictated end-to-end against the deployed stack: interim text appearing
+while speaking, pauses surviving, stop → review → send, and a deliberately messy dictation absorbed
+by `ask_clarification` into a usable entry.
+
+**Every exit criterion met.** Decision 5 is the one worth calling out: it was written as a question
+("does the existing prompt tolerate dictated text?") and closed with evidence rather than an
+assumption, which is what kept the slice frontend-only.
+
+**Four things this slice learned, all of which cost something to find:**
+
+1. **A green suite says nothing about CSS.** `.input-pill button` (0,1,1) outranks `.mic-button`
+   (0,1,0), so the mic rendered as a second gradient send button — with all 253 tests passing, because
+   jsdom applies no cascade. Found only by measuring computed styles in a real browser.
+2. **"No overflow" is not "no regression".** The mobile CTA collapse got past a 375px pass that
+   asserted zero horizontal overflow — a button that has shrunk to its content overflows nothing.
+   The assertion was true and the layout was still broken. Comparing against the *previous* geometry
+   is the check that would have caught it.
+3. **A bound keyed on the wrong condition is not a bound.** `if (settled) silentRestarts = 0` reads
+   like "reset when the user speaks" and means "reset whenever a transcript exists" — true on every
+   event after the first word, so background noise could hold the microphone open indefinitely.
+4. **zsh does not word-split unquoted variables.** A mutation sweep passing test paths via `$T` ran
+   *nothing* and printed nothing, which looks identical to "no mutations caught". Mutation harnesses
+   need a positive signal that the tests actually ran.
+
+**Cost:** **$0 added.** Voice is browser-side in billing terms — the transcript enters `POST /chat`
+and costs what a typed message costs. The only spend was the ~$0.01 prompt-tolerance probe. August
+month-to-date was **$0.44** at the time of the slice, against the $5 ceiling (NFR-1.1).
+
+**Deferred:** **B-044** (projects never linked to the role they were done under — `related_job_id`
+exists on the schema and is wired to nothing at three points), raised by Oche after logging a real
+work project. Also carried: a persistent privacy note in Details rather than only the in-context
+disclosure, and a real-device (phone) check — the 360/375/1280 measurements were browser-emulated.
+
+**One thing to improve:** the browser pass should compare geometry against the pre-change baseline,
+not just assert invariants. Two of this slice's four findings were layout regressions that satisfied
+every invariant being checked.
+
+### Evaluation
+
+Exit criteria: **all met**, with the deployed-behaviour ones verified against CloudFront rather than
+localhost. NFR-1.1 (cost) is untouched by design and confirmed by the absence of any new AWS call.
+NFR-6.2 (mobile) is *advanced* but not closed — the mic and both composers now hold at 360px in both
+themes, on emulated viewports; the scorecard's ❓Unverified stands until a real device is used.
+
+Both reviews ran. The security review returned one finding, and it was the most valuable thing the
+slice produced: **ADR-014 had described Web Speech as "browser-side" since it was written, which is
+true of the API and false of the processing.** Chrome and Safari stream audio to the vendor's speech
+service. The decision survives — the $0 claim was about AWS spend — but the ADR was implying a
+containment guarantee it never had, and this app's whole subject matter is the kind of PII that
+makes that matter. Corrected in the ADL, disclosed in the UI, and the capture window given a bound
+that actually holds. The code review returned two findings, both fixed in-slice: one that would have
+re-sent a message and charged for it, one layout regression.
 
 ---
 
