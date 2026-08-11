@@ -98,6 +98,7 @@ Single table: `CareerVaultTable-${Environment}`
 | Entry (any subtype) | `USER#<user_id>` | `ENTRY#<entry_id>` |
 | Goal | `USER#<user_id>` | `GOAL#<goal_id>` |
 | Conversation message | `USER#<user_id>` | `CONVO#<session_id>#<message_id>` |
+| Résumé (history record) | `USER#<user_id>` | `RESUME#<run_id>` (**no TTL** — ADR-046) |
 | Resume run trace | `USER#<user_id>` | `RESUMERUN#<run_id>` (TTL 30 days) |
 | Check-in audit log | `USER#<user_id>` | `CHECKINLOG#<run_id>` |
 
@@ -127,45 +128,54 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**v1.1 slice 2 complete (redesign: Log, Timeline, Import, Details — PR #48). Next: v1.1 slice 3 —
-Résumés + B-028.** Slice 1 (audit, tokens, shell, Home) shipped as PR #43. Five of six views are now
-redesigned; **Résumés is the last**, and it is blocked on **B-028** (no résumé list endpoint;
-`RESUMERUN` TTL'd at 30 days, which ADR-015 was amended to match — so changing it reopens that
-decision). Slice 3 owes an ADR before any code. Phase 2 / MVP was declared 2026-07-29 (slice 9,
-PR #32).
+**v1.1 slice 3 complete (Résumés + résumé history — PR #50). Next: v1.1 slice 4 — voice capture.**
+Slices 1 and 2 shipped as PR #43 and PR #48. **The redesign is now complete across all six views**,
+and the scaffolding that carried it is gone: **B-036 is closed** — zero shim aliases in `index.css`,
+no `.legacy-view` in `App.css`, and no raw hex outside `index.css`. Phase 2 / MVP was declared
+2026-07-29 (slice 9, PR #32).
 
-**Slice 3 also retires the last scaffolding (B-036):** `resume.css` is the only remaining consumer
-of the four shim aliases in `index.css`, and Résumés is the only remaining occupant of
-`.legacy-view` in `App.css`. Both blocks, plus the `App.test.tsx` carve-out that asserts them, are
-deleted together — that is the completion condition, not a nice-to-have.
+**What slice 3 changed that outlives it (ADR-046):** résumés are now a **durable** `RESUME#<run_id>`
+record, split from the 30-day `RESUMERUN#<run_id>` trace, and the `resumes/` S3 lifecycle rule is
+gone. Three consequences a future session will trip over:
+
+- **Nothing expires résumé artifacts any more.** That is the point, but it means a failed record
+  write orphans S3 objects permanently (**B-039**), and the `--expensive` tier needs its cleanup
+  fixture or it leaks test data into the bucket.
+- **`DELETE /resumes/{run_id}`** exists and is the only thing that clears a résumé (ADR-046
+  amendment 2). It removes S3 artifacts first, then the record, then the trace.
+- **`GET /resumes` returns a projection**, not whole items — deliberately, so a pasted job
+  description is not shipped on every row.
 
 **Read before touching the frontend:**
 [`docs/design/v1.1-redesign/README.md`](docs/design/v1.1-redesign/README.md) (the design handoff) and
-[`pre-redesign-audit.md`](docs/design/v1.1-redesign/pre-redesign-audit.md) (18 ranked findings; the
-ones marked "next slice" are slice 2's list). Three things that will bite:
+[`pre-redesign-audit.md`](docs/design/v1.1-redesign/pre-redesign-audit.md) (18 ranked findings, all
+addressed or backlogged). Two things that still bite:
 
 - **The handoff is a proposal, not a contract.** Claude Design was given the repo and filled gaps
-  with plausible features that do not exist — a résumé history grid, gap analysis, streak-break
-  reminders, JSON export, account deletion. Build what exists, defer the rest, **never fabricate the
-  data in between** (B-015 is the precedent). Amending the design where it does not work is
-  explicitly sanctioned; record the reasoning.
-- **`index.css` is the only file that may define a colour.** A raw hex in a feature stylesheet is a
-  light-mode bug that dark-mode review cannot see. Both themes ship (ADR-044).
-- **A temporary compatibility shim** in `index.css` aliases 5 old token names, and `.legacy-view` in
-  `App.css` wraps the un-redesigned views. Both exist only because slice 1 redesigned the shell
-  ahead of the views. **Delete each alias and drop each view out of the wrapper as it is rebuilt** —
-  when both are empty, slice 2 is done.
+  with plausible features that do not exist — gap analysis, streak-break reminders, JSON export,
+  account deletion. Build what exists, defer the rest, **never fabricate the data in between**
+  (ADR-045; B-015 is the precedent). Slice 3 applied this to the **Sent** and **Draft** résumé
+  badges: no send path and no draft state exist, so only *Latest* and *New* shipped.
+- **`index.css` is the only file that may define a colour** — now enforceable, since the shim is
+  gone. A raw hex in a feature stylesheet is a light-mode bug that dark-mode review cannot see.
+  Both themes ship (ADR-044), and users can now pick one explicitly: Light/Dark/System on Details,
+  persisted to `localStorage` and applied by a **pre-paint inline script in `index.html`** that must
+  stay synchronous and outside the bundle, or the first frame flashes the wrong theme.
 
 Remaining v1.1 scope in `docs/careervault-plan.md` § "v1.1 — graduated scope":
 
-1. **Résumé speed + usability** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and optimising
-   without a baseline ships changes that only *feel* faster), then B-020/B-004 (one mechanism — the
-   retrieval loop's growing history drives both cost and latency), then B-022 (copyable plain-text
-   bullets, the cheapest real win).
-2. **UI + mobile pass** — B-001 plus NFR-6.2, which the scorecard marks ❓Unverified, not ✅. Start by
-   *enumerating* with Playwright MCP, not styling.
-3. **Voice capture** — ADR-014, already decided: browser Web Speech API, explicitly not Amazon
-   Transcribe. Adds **$0**; the transcript enters the existing `POST /chat` path.
+1. **Voice capture (slice 4, next)** — ADR-014, already decided: browser Web Speech API, explicitly
+   not Amazon Transcribe. Adds **$0**; the transcript enters the existing `POST /chat` path.
+   Frontend-only, zero backend surface. Slice 3 recorded the seam Oche asked for — a
+   `DictationProvider` interface with an **optional** `onInterim`, so a buffer-then-POST cloud API
+   could satisfy the same contract later — as an **amendment to ADR-014**, not a new ADR. Nothing
+   paid is wired now, and anything paid breaks ADR-014's cost premise.
+2. **Résumé speed** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and optimising without a
+   baseline ships changes that only *feel* faster), then B-020/B-004 (one mechanism — the retrieval
+   loop's growing history drives both cost and latency). ~~B-022~~ closed in slice 3.
+3. **UI + mobile pass** — B-001 plus NFR-6.2. Slice 3 measured **24 combinations** (6 views × 2
+   themes × 2 widths) with zero horizontal overflow, so this is now narrower than the ❓Unverified
+   scorecard entry suggests. Enumerate with Playwright MCP before styling.
 
 **Read at session start:** the plan doc's status board + current slice section. Per-slice history,
 completion notes, and the reasoning behind every past decision live there and in the ADL — not here.
@@ -186,13 +196,13 @@ Each of these caused, or would have caused, a wrong action. Detail is in the lin
 
 ## Testing
 
-574 tests. **The default run of every suite is free** — that is deliberate, because a suite that
+663 tests. **The default run of every suite is free** — that is deliberate, because a suite that
 costs money is a suite people avoid, and an avoided test still implies coverage nobody has (ADR-042).
 
 ```bash
-./scripts/run-tests.sh                    # 376 backend unit                        $0
-cd frontend && npm test                   # 139 component (Vitest + RTL)            $0
-./scripts/run-integration.sh              # 59 · DynamoDB Local + deployed dev      $0
+./scripts/run-tests.sh                    # 417 backend unit                        $0
+cd frontend && npm test                   # 189 component (Vitest + RTL)            $0
+./scripts/run-integration.sh              # 57 · DynamoDB Local + deployed dev      $0
 ./scripts/run-integration.sh --bedrock    # + real Haiku round-trips           ~$0.01
 ./scripts/run-integration.sh --expensive  # + a full Sonnet résumé run         ~$0.11
 ```

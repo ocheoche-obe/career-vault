@@ -233,6 +233,22 @@ export type StartRunResult =
   | { status: "started"; runId: string }
   | { status: "failed"; message: string };
 
+/**
+ * The structured résumé the agent produced (B-022).
+ *
+ * Returned on a completed poll so bullets can be copied as plain text. Formatting stays client-side
+ * — the API returns data, not a rendering, which is ADR-045's derive-don't-endpoint rule applied
+ * again. Every field is optional because a résumé for a thin corpus legitimately omits sections.
+ */
+export type ResumeDocument = {
+  summary?: string;
+  skills?: string[];
+  experience?: { title?: string; employer?: string; dates?: string; bullets?: string[] }[];
+  projects?: { name?: string; description?: string; bullets?: string[] }[];
+  education?: { degree?: string; institution?: string; dates?: string; details?: string[] }[];
+  certs?: { name?: string; issuer?: string; date?: string }[];
+};
+
 /** A poll result. `failed` carries the backend's already-friendly message — render it as-is. */
 export type RunStatus =
   | { status: "pending"; runId: string }
@@ -245,9 +261,59 @@ export type RunStatus =
       retrievedCount?: number;
       costUsd?: number;
       tokens?: number;
+      /** B-007 — wall-clock seconds the run took. Absent on records backfilled by ADR-046. */
+      elapsedSeconds?: number;
+      document?: ResumeDocument;
     }
   | { status: "failed"; runId: string; message: string }
   | { status: "notfound"; runId: string };
+
+/** One row of résumé history (ADR-046). Projected server-side — no target text, no document. */
+export type ResumeSummary = {
+  runId: string;
+  createdAt: string;
+  targetTitle: string;
+  entryCount: number;
+  status: string;
+};
+
+/**
+ * `GET /resumes` — the user's résumé history, newest first (ADR-046).
+ *
+ * Returns `[]` rather than throwing on failure: history is a secondary panel beside the generator,
+ * and a list that cannot load must not stop someone building a new résumé. The caller distinguishes
+ * "empty" from "broken" via the thrown-free `ok` flag.
+ */
+export async function listResumes(idToken: string): Promise<{ ok: boolean; resumes: ResumeSummary[] }> {
+  const res = await fetch(`${apiBaseUrl}/resumes`, { headers: authHeaders(idToken) });
+  if (!res.ok) return { ok: false, resumes: [] };
+  const b = await jsonOf(res);
+  const rows = Array.isArray(b.resumes) ? (b.resumes as Record<string, unknown>[]) : [];
+  return {
+    ok: true,
+    resumes: rows.map((r) => ({
+      runId: String(r.run_id ?? ""),
+      createdAt: String(r.created_at ?? ""),
+      targetTitle: String(r.target_title ?? "Untitled target"),
+      entryCount: Number(r.entry_count ?? 0),
+      status: String(r.status ?? "completed"),
+    })),
+  };
+}
+
+/**
+ * `DELETE /resumes/{run_id}` — remove a résumé, its run trace and its S3 artifacts (ADR-046).
+ *
+ * `404` counts as success for the same reason `deleteEntry` treats it that way: the caller asked
+ * for the résumé to be gone, and it is. Racing two deletes should not surface an error.
+ */
+export async function deleteResume(idToken: string, runId: string): Promise<boolean> {
+  const res = await fetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
+    method: "DELETE",
+    headers: authHeaders(idToken),
+  });
+  return res.status === 200 || res.status === 404;
+}
 
 export async function startResumeRun(idToken: string, target: string): Promise<StartRunResult> {
   const res = await fetch(`${apiBaseUrl}/resumes/generate`, {
@@ -282,6 +348,8 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
       retrievedCount: b.retrieved_count as number | undefined,
       costUsd: b.cost_usd as number | undefined,
       tokens: b.tokens as number | undefined,
+      elapsedSeconds: b.elapsed_seconds as number | undefined,
+      document: b.document as ResumeDocument | undefined,
     };
   }
   if (b.status === "failed") {

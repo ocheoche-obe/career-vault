@@ -8,6 +8,7 @@ import {
   type FieldError,
   type Profile,
 } from "../lib/api";
+import { applyThemeChoice, readThemeChoice, THEME_CHOICES, type ThemeChoice } from "../lib/theme";
 import "./settings.css";
 
 /**
@@ -42,6 +43,18 @@ const CADENCE_COPY: Record<CheckinCadence, { label: string; description: string 
   biweekly: { label: "Biweekly", description: "Every 14 days. Enough to stay honest." },
   monthly: { label: "Monthly", description: "Every 30 days. Lightest touch." },
   quarterly: { label: "Quarterly", description: "Every 91 days. A periodic sweep." },
+};
+
+/**
+ * Copy set by Oche (2026-08-09). The first draft had these two closing phrases the wrong way round:
+ * "whatever your device says" reads as a description of *following* the device, so it belongs to
+ * System, and "including at sunset" is the useful promise about Light — that it will not flip when
+ * the OS switches. Both drafts were literally true; only this one is read correctly at a glance.
+ */
+const THEME_COPY: Record<ThemeChoice, { label: string; description: string }> = {
+  light: { label: "Light", description: "Always light, including at sunset." },
+  dark: { label: "Dark", description: "Always dark. The original design." },
+  system: { label: "System", description: "Your system settings. Whatever your device says." },
 };
 
 /** Render a stored UTC timestamp in the reader's own zone, or null if it isn't usable. */
@@ -164,6 +177,23 @@ export function Settings({
     if (!paused) setCadence(next);
   });
 
+  // Theme (ADR-044 amendment). Unlike everything else on this page it is *not* part of the profile
+  // save — it applies on click and persists to localStorage, so there is no unsaved state to lose
+  // and no reason to make the user press Save to see a theme change.
+  const [theme, setTheme] = useState<ThemeChoice>(readThemeChoice);
+  const onThemeKeyDown = useRovingRadio(THEME_CHOICES, theme, (next) => chooseTheme(next));
+
+  function chooseTheme(next: ThemeChoice) {
+    setTheme(next);
+    applyThemeChoice(next);
+  }
+
+  // No OS-change subscription here, deliberately. A user on "System" does follow their OS at
+  // sunset — but the CSS media query performs that repaint entirely on its own, and nothing in this
+  // component renders the *resolved* theme. The subscription this replaced called
+  // `setTheme("system")` while `theme` was already `"system"`, which React bails out of: a listener
+  // allocated per render for no observable effect. Restore it only alongside a consumer that
+  // actually displays which theme is in force.
   useEffect(() => {
     let cancelled = false;
     getSettings(idToken)
@@ -378,6 +408,34 @@ export function Settings({
             to skip that.
           </small>
         </label>
+      </section>
+
+      <section className="card" aria-labelledby="appearance-heading">
+        <h2 id="appearance-heading">Appearance</h2>
+        <p className="muted">
+          System follows your device. Pick Light or Dark to override it just on this device.
+        </p>
+
+        <div className="theme-grid" role="radiogroup" aria-labelledby="appearance-heading">
+          {THEME_CHOICES.map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={theme === option}
+              // Same roving-tabindex contract as the cadence picker above: one tab stop, arrows
+              // move within the group.
+              tabIndex={theme === option ? 0 : -1}
+              className={`theme-option${theme === option ? " selected" : ""}`}
+              onKeyDown={onThemeKeyDown}
+              onClick={() => chooseTheme(option)}
+            >
+              <span className={`theme-swatch theme-swatch-${option}`} aria-hidden="true" />
+              <span className="theme-label">{THEME_COPY[option].label}</span>
+              <span className="theme-desc">{THEME_COPY[option].description}</span>
+            </button>
+          ))}
+        </div>
       </section>
 
       <section className="card" aria-labelledby="reminders-heading">

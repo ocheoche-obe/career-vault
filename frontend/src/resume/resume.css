@@ -1,158 +1,264 @@
-/* Résumé generation + preview — theme-aware via the CSS custom properties in index.css.
-   Mirrors the upload/review visual language: dashed panel, accent primary, neutral secondary. */
+/**
+ * Résumés (v1.1 slice 3, handoff §4).
+ *
+ * Rebuilt on the slice-1 token layer. This file previously held the last four compatibility shim
+ * aliases (`--text-h`, `--text`, `--accent-border`, `--accent-bg`) and the app's last raw hex — the
+ * preview's paper white, now `--paper` in `index.css`. All five are gone, which is what closes
+ * B-036 along with the `.legacy-view` wrapper.
+ *
+ * No colour is defined here. Every value below is a token.
+ */
 
-.resume {
-  width: min(720px, 100%);
-  text-align: left;
-  display: flex;
-  flex-direction: column;
+/* Only the width is this view's business. Padding, gap, the header and the button vocabulary all
+   come from `.view` / `.view-head` / `.btn-primary` / `.btn-quiet` in App.css, exactly as the other
+   five views take them — a private copy here is how six views drift apart by a few pixels. */
+.resumes {
+  max-width: var(--w-resumes);
+}
+
+/* ---- Generator ------------------------------------------------------------------------------- */
+
+.generator {
   gap: 16px;
 }
 
-/* The preview needs more room than the input flow does. */
-.resume-wide {
-  width: min(980px, 100%);
-}
-
-.resume-panel {
-  border: 1px dashed var(--border);
-  border-radius: 12px;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.resume-panel h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--text-h);
-}
-.resume-lead {
-  margin: 0;
-  color: var(--text);
-  line-height: 1.5;
-  max-width: 56ch;
-}
-
-/* ---- Target input ---- */
-.resume-target {
-  font: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  min-height: 180px;
+.generator-input {
+  width: 100%;
+  min-height: 96px;
   resize: vertical;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-h);
-}
-.resume-target:focus {
-  outline: none;
-  border-color: var(--accent-border);
+  font: inherit;
+  font-size: 16px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-sunken);
+  color: var(--text-body);
 }
 
-/* ---- Generating ---- */
-.resume-progress {
+.generator-input::placeholder {
+  color: var(--text-faint);
+}
+
+.generator-input:focus-visible {
+  border-color: var(--border-active);
+}
+
+.generator-input:disabled {
+  opacity: 0.6;
+}
+
+.generator-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.generator-help {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Empty until a run starts. It still occupies the live region so the announcement has a stable
+   home, but collapses to nothing so the card does not reserve a blank strip. */
+.generator-status:not(:empty) {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--accent);
   font-size: 14px;
+  color: var(--text-secondary);
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--accent-wash-note);
+  border: 1px solid var(--border-subtle);
 }
-.resume-spinner {
+
+.spinner {
   width: 14px;
   height: 14px;
+  flex-shrink: 0;
   border-radius: 50%;
-  border: 2px solid var(--accent-border);
+  border: 2px solid var(--border-strong);
   border-top-color: var(--accent);
-  animation: resume-spin 0.9s linear infinite;
+  animation: resume-spin 0.8s linear infinite;
 }
+
 @keyframes resume-spin {
   to {
     transform: rotate(360deg);
   }
 }
+
+/* Honour a reduced-motion preference: the spinner is decorative, and the live region already
+   carries the information. */
 @media (prefers-reduced-motion: reduce) {
-  .resume-spinner {
+  .spinner {
     animation: none;
   }
 }
-.resume-runid {
+
+.generator-error {
   margin: 0;
-  font-size: 12px;
-  color: var(--text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+  color: var(--danger);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-wash);
 }
 
-/* ---- Result ---- */
-.resume-result-head {
+/* ---- Completed run --------------------------------------------------------------------------- */
+
+.result {
+  gap: 16px;
+}
+
+.result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.result-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.result-text > summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
-.resume-result-head h2 {
-  margin: 0;
-  font-size: 18px;
-  color: var(--text-h);
+
+.copy-button {
+  margin-left: auto;
 }
-.resume-meta {
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  font-size: 13px;
-  color: var(--text);
+
+.result-plaintext {
+  width: 100%;
+  height: 260px;
+  margin-top: 12px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text-body);
 }
-.resume-preview {
+
+.result-preview {
   width: 100%;
   height: 78vh;
   min-height: 520px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff; /* the résumé is print-styled — always render it on paper white */
+  border-radius: 12px;
+  /* The résumé is a print-styled document, so it renders on paper white in both themes. */
+  background: var(--paper);
 }
 
-.resume-note {
+/* ---- History (ADR-046) ------------------------------------------------------------------------ */
+
+.history {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  color: var(--text-h);
-}
-.resume-note.error p {
-  margin: 0;
-  color: crimson;
+  gap: 12px;
 }
 
-/* ---- Buttons (accent primary / neutral secondary, matching review + chat) ---- */
-.resume-actions {
+.history h2 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.history-card {
+  gap: 12px;
+  padding: 20px;
+}
+
+.history-title-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
 }
-.resume button,
-.resume .button {
-  font: inherit;
-  font-size: 14px;
-  padding: 7px 16px;
-  border-radius: 8px;
-  border: 1px solid var(--accent-border);
-  background: var(--accent-bg);
-  color: var(--accent);
-  cursor: pointer;
-  text-decoration: none;
-  display: inline-block;
+
+.history-card h3 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  /* A target title is the first line of whatever was pasted, so it can be a full sentence. Clamp
+     rather than truncate mid-card: two lines keep the grid rows even. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.resume button.secondary {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--text-h);
+
+.badge {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--accent-text);
+  background: var(--accent-wash);
+  border-radius: 5px;
+  padding: 4px 8px;
 }
-.resume button:disabled {
-  opacity: 0.5;
-  cursor: default;
+
+.history-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.history-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+@media (max-width: 768px) {
+  .history-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .result-preview {
+    height: 60vh;
+    min-height: 380px;
+  }
 }

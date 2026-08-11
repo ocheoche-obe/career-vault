@@ -126,6 +126,28 @@
      grepping for it later. */
   --on-accent: #ffffff;
 
+  /* Theme-preview swatches for the Appearance picker (ADR-044 amendment). Theme-*invariant* for the
+     same reason `--on-accent` is, but inverted in motive: these must show what each option *gives
+     you*, so a swatch that restyled itself with the active theme would make all three look alike and
+     preview nothing. They are the page backgrounds of the two palettes — `--bg` from the dark block
+     and `--bg` from the light one — held as literals here because they cannot reference a token
+     whose value changes underneath them. Deliberately absent from both light blocks; the sync test
+     only compares tokens the light blocks declare, so an invariant belongs on bare `:root` alone. */
+  --swatch-light: #f7f6fb;
+  --swatch-dark: #0b0b12;
+  /* A flat page-background swatch is nearly invisible against the card that matches it — the Light
+     chip disappeared into a light-mode card, and Dark would do the same in dark mode. Each swatch
+     therefore also carries a wedge of the accent (visible on both grounds) and a fixed mid-tone
+     border, both theme-invariant for the same reason the two above are. */
+  --swatch-accent: #7c6cff;
+  --swatch-border: #9a97ab;
+
+  /* The generated résumé is print-styled — it is a document rendered on paper, not a surface in
+     this app — so its preview background stays white in both themes. Theme-invariant like the two
+     above, and a token rather than a literal `#fff` in `resume.css` so this file remains the only
+     place a colour is written (B-036 closes on that criterion). */
+  --paper: #ffffff;
+
   /* ---- Status ------------------------------------------------------------------------------ */
   --success: #8ad6b0;
   --danger: #ff9d9d;
@@ -180,9 +202,19 @@
  * text and >= 3.0 for the focus ring. Structure transfers cleanly (elevated is lighter than the
  * page, sunken is darker than its card); the accent washes and the heatmap ramp do not, and are
  * re-derived rather than re-tinted.
+ *
+ * ⚠️ DECLARED TWICE — here for "System", and again under `:root[data-theme="light"]` below for an
+ * explicit choice (ADR-044 amendment). The two MUST stay identical. They are not merged because the
+ * only ways to do so are worse: `light-dark()` cannot express the five `--grad-*` tokens (it takes
+ * colours, not gradient strings), which would leave two mechanisms in the one file whose whole rule
+ * is that colour is defined once. The duplication is instead **enforced by a test** —
+ * `theme-tokens.test.ts` parses this file and fails if the two blocks disagree on a single value.
+ * If you edit one block, edit the other; the test will tell you if you forget.
+ *
+ * `:root:not([data-theme="dark"])` is what makes an explicit dark choice survive a light OS setting.
  */
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #f7f6fb;
     --surface: #ffffff;
     --surface-sunken: #f1f0f7;
@@ -240,31 +272,75 @@
 }
 
 /**
- * TEMPORARY compatibility aliases — DELETE AS EACH VIEW IS REDESIGNED.
- *
- * Slice 1 replaced the token layer while five feature stylesheets still referenced the old Vite-era
- * names. Unset custom properties resolve to nothing rather than to a fallback, so without these
- * lines those views would have rendered with no colour at all, in both themes.
- *
- * **Slice 2 emptied four of the five.** `resume.css` is the only remaining consumer, and the Résumés
- * view is blocked on B-028 (no résumé list endpoint; `RESUMERUN` TTL'd at 30 days), so it is rebuilt
- * in slice 3 — at which point this whole block and the `.legacy-view` wrapper in App.css are deleted
- * together. `--code-bg` went with the chat/entries/upload/settings rebuilds and has no consumers.
- *
- * Verify before deleting, rather than assuming:
- *     grep -rnoE 'var\(--(text-h|text|accent-border|accent-bg)\)' src --include='*.css' \
- *       | grep -v src/index.css
- *
- * (Note: `--surface`, `--scroll-thumb`, `--border-strong` and `--text-primary` were already
- * referenced by feature CSS *before* slice 1 despite never being defined — those usages were
- * silently resolving to nothing and started working then.)
+ * Light theme, chosen explicitly (ADR-044 amendment). Byte-for-byte the same tokens as the media
+ * query above — see the warning there. `theme-tokens.test.ts` fails if these two ever disagree.
  */
-:root {
-  --text-h: var(--text-primary);
-  --text: var(--text-secondary);
-  --accent-border: var(--border-active);
-  --accent-bg: var(--accent-wash-soft);
+:root[data-theme="light"] {
+  --bg: #f7f6fb;
+  --surface: #ffffff;
+  --surface-sunken: #f1f0f7;
+  --surface-raised: #f4f2fd;
+
+  --border: #e4e2ee;
+  --border-strong: #d3d0e0;
+  --border-subtle: #edecf3;
+  --border-dashed: #c5c1d8;
+  --border-active: #7c6cff;
+  --border-selected: #b9aef0;
+  --border-raised: #ded9f0;
+  --bar-miss: #ddd9ea;
+
+  --text-primary: #14121f;
+  --text-body: #2a2740;
+  --text-secondary: #55516e;
+  --text-muted: #615d7c;
+  --text-faint: #6a6682;
+
+  --accent: #5b48d6;
+  --accent-light: #7057e6;
+  --accent-lighter: #8a6ef0;
+  --accent-text: #5b3fd4;
+  --accent-hover: #3f2ba8;
+  /* Alphas are lower than dark's: the same wash that whispers over near-black shouts over white. */
+  --accent-wash: rgba(91, 72, 214, 0.1);
+  --accent-wash-soft: rgba(91, 72, 214, 0.09);
+  --accent-wash-faint: rgba(91, 72, 214, 0.08);
+  --accent-wash-note: rgba(91, 72, 214, 0.06);
+
+  --success: #1d7a4f;
+  --danger: #c2354a;
+  --danger-border: #f0cdd4;
+  --danger-border-hover: #e0a9b5;
+  --danger-wash: #fdf2f4;
+
+  --grad-primary: linear-gradient(145deg, #6a57e0, #8a6ef0);
+  --grad-logo: linear-gradient(145deg, #6a57e0, #a17cf5);
+  --grad-user-bubble: linear-gradient(145deg, #6a57e0, #8264f0);
+  --grad-bar-fill: linear-gradient(90deg, #7c6cff, #5b45c4);
+  --grad-streak-bar: linear-gradient(180deg, #7c6cff, #5b45c4);
+
+  /* Inverted: intensity reads as "brighter" in dark and must read as "deeper" in light, or an
+     empty period becomes the loudest cell on Home. */
+  --heat-0: #eae7f6;
+  --heat-1: #c9bff0;
+  --heat-2: #a08fe4;
+  --heat-3: #7c6cff;
+  --heat-4: #5b45c4;
+
+  --header-fill: rgba(247, 246, 251, 0.88);
+  --scroll-thumb: #d3d0e0;
+  color-scheme: light;
 }
+
+/**
+ * Dark, chosen explicitly. The dark values already live on bare `:root`, so this block only has to
+ * exist to pin `color-scheme` — the media query above is guarded by `:not([data-theme="dark"])`,
+ * which is what actually keeps a light OS setting from overriding this choice.
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
 
 * {
   box-sizing: border-box;

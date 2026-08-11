@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CareerVault</title>
+    <!--
+      Theme, applied before first paint (ADR-044 amendment).
+
+      This is the one piece of app logic that deliberately lives outside the bundle, and the reason
+      is ordering, not preference: anything that runs after the module loads paints the system theme
+      first and then flips — the flash-of-wrong-theme bug. It must be inline and synchronous.
+
+      "system" (and any unreadable/absent value) leaves the attribute off entirely, which is what
+      hands control back to `@media (prefers-color-scheme)`. Wrapped in try/catch because
+      localStorage throws on access in Safari private mode, and a theme preference must never be
+      the reason the app fails to start.
+
+      Keep the key in sync with THEME_STORAGE_KEY in src/lib/theme.ts — theme.test.ts asserts it.
+    -->
+    <script>
+      try {
+        var t = localStorage.getItem("careervault:theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {
+        /* storage unavailable — fall through to the system preference */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

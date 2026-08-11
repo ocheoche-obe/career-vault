@@ -167,6 +167,9 @@ class AgentResult:
     retrieval_iterations: int
     revisions_used: int
     trace: list[dict]
+    #: Wall-clock seconds the agent ran (B-007). Defaulted so a partial result can still be built
+    #: in tests; ``run_agent`` always populates it, including on every failure path.
+    elapsed_seconds: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -649,4 +652,5 @@ def run_agent(
         retrieval_iterations=run.retrieval_iterations,
         revisions_used=run.revisions_used,
         trace=run.trace,
+        elapsed_seconds=round(run.elapsed(), 1),
     )

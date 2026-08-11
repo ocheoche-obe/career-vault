@@ -616,14 +616,12 @@ Resources:
             Status: Enabled
             Prefix: uploads/
             ExpirationInDays: 1
-          # Generated resumes expire with their RESUMERUN trace item (ADR-037's 30-day DDB TTL) so a
-          # run's record and its artifacts die together — ADR-015 as amended 2026-07-27. The original
-          # "keep the newest indefinitely, 7 days for the rest" is not expressible here: lifecycle
-          # filters on prefix/tag/age, with no "except the newest object" predicate.
-          - Id: ExpireGeneratedResumes
-            Status: Enabled
-            Prefix: resumes/
-            ExpirationInDays: 30
+          # NOTE: there is deliberately NO rule for resumes/. ADR-046 removed the 30-day
+          # `ExpireGeneratedResumes` rule: that number existed only to stop a RESUMERUN trace item
+          # outliving the objects it pointed at (ADR-015 as amended 2026-07-27), and the durable
+          # RESUME# record retired that coupling. A generated résumé is output the user made, not
+          # exhaust — at ~5 MB/year it costs under $0.0002/month to keep, against $0.11–$0.35 of
+          # Bedrock to regenerate one we deleted. Only the trace still expires, in DynamoDB.
       Tags:
         - { Key: Project, Value: CareerVault }
         - { Key: Environment, Value: !Ref Environment }
@@ -700,13 +698,16 @@ Resources:
   # ---------------------------------------------------------------------------
   # Compute — resume_agent (the payoff feature, Section 3.2 / FR-5 / ADR-010 / ADR-036 / ADR-037).
   #
-  # ONE function, THREE roles (ADR-037): POST /resumes/generate starts an async job (writes a
-  # `pending` RESUMERUN item, self-invokes asynchronously, returns 202); the async worker runs the
-  # six-phase Sonnet loop + renders HTML/PDF (WeasyPrint layer) + finalizes the item; GET
-  # /resumes/{run_id} polls status and presigns fresh download URLs. Résumé runs take 40–120s, far
-  # past API Gateway's 29s ceiling — hence async (ADR-037).
+  # ONE function, FOUR roles (ADR-037 + ADR-046): POST /resumes/generate starts an async job (writes
+  # a `pending` RESUMERUN item, self-invokes asynchronously, returns 202); the async worker runs the
+  # six-phase Sonnet loop + renders HTML/PDF (WeasyPrint layer) + finalizes the item and writes the
+  # durable RESUME# record; GET /resumes/{run_id} polls status and presigns fresh download URLs; GET
+  # /resumes lists history. Résumé runs take 40–120s, far past API Gateway's 29s ceiling — hence
+  # async (ADR-037).
   #
-  # IAM: Query+GetItem (entries+profile) + PutItem (RESUMERUN trace); S3 Put/Get on resumes/*;
+  # IAM: Query+GetItem (entries+profile) + PutItem (RESUMERUN trace + RESUME# record — one table
+  # grant covers both; per §4.2.3 IAM cannot scope a sort-key prefix, so the RESUME#/RESUMERUN#
+  # split is a *code* invariant enforced by ddb_helpers, never an IAM one); S3 Put/Get on resumes/*;
   # Bedrock Sonnet+Haiku profiles (+regional foundation-model ARNs, ADR-031/036) + Titan; and
   # lambda:InvokeFunction on its OWN ARN (constructed by name, not GetAtt, to dodge a circular dep).
   # ---------------------------------------------------------------------------
@@ -748,17 +749,25 @@ Resources:
         - Statement:
             # Read entries + profile for retrieval; write the RESUMERUN job/trace item. No
             # ENTRY/PROFILE write — the agent is read-only over user data (§3.2.7).
+            # DeleteItem is for DELETE /resumes/{run_id} (ADR-046 amendment) and reaches RESUME# +
+            # RESUMERUN# only — but IAM cannot say that, since `LeadingKeys` scopes the partition
+            # key alone (§4.2.3). The restriction is a code invariant in ddb_helpers, as always.
+            # It notably does NOT let the agent delete an ENTRY: that is enforced by there being no
+            # code path here that builds an ENTRY# key, not by this policy.
             - Effect: Allow
               Action:
                 - dynamodb:Query
                 - dynamodb:GetItem
                 - dynamodb:PutItem
+                - dynamodb:DeleteItem
               Resource: !GetAtt CareerVaultTable.Arn
-            # Store + read back the generated HTML/PDF. Scoped to resumes/* (never uploads/*).
+            # Store + read back the generated HTML/PDF, and delete them when the user deletes the
+            # résumé. Scoped to resumes/* (never uploads/*), so DeleteObject cannot reach an upload.
             - Effect: Allow
               Action:
                 - s3:PutObject
                 - s3:GetObject
+                - s3:DeleteObject
               Resource: !Sub '${DataBucket.Arn}/resumes/*'
             # Async self-invocation (ADR-037). ARN built by name to avoid a self-referential
             # GetAtt circular dependency.
@@ -799,6 +808,22 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /resumes/{run_id}
             Method: get
+        # Résumé history (ADR-046). Same handler, distinguished by the absence of `run_id` in
+        # pathParameters — API Gateway populates it only for the `{run_id}` resource.
+        GetResumeList:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /resumes
+            Method: get
+        # Hard delete behind a UI confirm (ADR-027 applied to résumés). Needed because ADR-046 made
+        # them permanent — the flat 30-day rule used to do this job by expiry.
+        DeleteResume:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /resumes/{run_id}
+            Method: delete
 
   ResumeAgentLogGroup:
     Type: AWS::Logs::LogGroup

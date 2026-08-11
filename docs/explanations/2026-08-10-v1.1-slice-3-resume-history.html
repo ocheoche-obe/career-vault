@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Two items, two lifetimes: how a résumé stopped expiring</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Two items, two lifetimes: how a résumé stopped expiring</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">v1.1 slice 3 · ADR-046 · prepared 2026-08-10</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+<p>This slice is about a single, deceptively small question: <em>how long does a résumé live?</em> Answering it properly required a new DynamoDB entity, a new API route, deleting an S3 lifecycle rule, and — a day later — adding a delete button that the answer itself made necessary. It is a good example of how one retention decision ripples outward through a system.</p>
+
+<h3>Skippable background: the three AWS pieces in play</h3>
+<p>If you already know DynamoDB TTL, S3 lifecycle rules, and why a long job can't be a normal HTTP request, skip to the next heading.</p>
+
+<p><strong>DynamoDB TTL</strong> is a per-table setting that names one attribute — here <code>expires_at</code> — holding a Unix timestamp. A background process sweeps the table and deletes items whose timestamp has passed. The crucial detail, and the hinge of this entire slice: <strong>TTL only ever deletes items that actually carry the attribute.</strong> An item without <code>expires_at</code> is not "an item with an infinite expiry" — it is invisible to the sweeper. So "make this durable" is not a configuration change. It is an <em>omitted field</em>.</p>
+
+<div class="callout"><strong>Cross-cloud parallel.</strong> Azure Cosmos DB has the same mechanism with the opposite default: a container-level <code>DefaultTimeToLive</code> plus a per-item <code>ttl</code> override, where <code>-1</code> means "never expire". Google Firestore uses a TTL policy on a timestamp field, much like DynamoDB. In all three the pattern is identical — expiry is data, not schema.</div>
+
+<p><strong>S3 lifecycle rules</strong> are the object-storage equivalent, but they are coarser. A rule matches on prefix, tag, size, or age — and that is the whole vocabulary. It cannot express "keep the newest one, expire the rest", which is exactly the rule this project originally wrote down and later discovered was unimplementable (that correction is the first ADR-015 amendment, from slice 6b).</p>
+
+<p><strong>Asynchronous jobs.</strong> API Gateway caps a REST integration at <strong>29 seconds</strong>. A résumé run takes about <strong>176 seconds</strong> — six sequential Bedrock round-trips through Claude Sonnet. So generation cannot be a request/response call. Instead (ADR-037): <code>POST /resumes/generate</code> writes a <code>pending</code> item, invokes the same Lambda asynchronously, and returns <code>202 {run_id}</code>. The browser then polls <code>GET /resumes/{run_id}</code> every 3 seconds until the status turns terminal.</p>
+
+<h3>The narrow background: what the trace was for</h3>
+<p>That polling design produced an item called <code>RESUMERUN#&lt;run_id&gt;</code> — the <em>run trace</em>. It holds the job status plus the agent's exhaust: which entries were retrieved, how many retrieval iterations ran, how many revisions the critique forced, token counts, cost, and a phase-by-phase log. It exists so a run can be polled and, afterwards, debugged. It carries a 30-day TTL.</p>
+
+<p>Here is where the trouble started. The generated HTML and PDF live in S3 under <code>resumes/&lt;user_id&gt;/&lt;run_id&gt;/</code>. If the trace vanished at 30 days but the objects lingered, you would have artifacts nothing referenced. So slice 6b added an S3 lifecycle rule expiring <code>resumes/</code> at 30 days too — <strong>not</strong> because 30 days was the right lifespan for a résumé, but to stop a pointer outliving the thing it pointed at.</p>
+
+<p>That is a <em>coupling fix</em> masquerading as a retention policy, and it quietly capped the product: the Résumés view could never show you anything you built last quarter. The backlog called this <strong>B-028</strong>, and it blocked the last un-redesigned view.</p>
+
+<h2 id="intuition">Intuition</h2>
+<p>The insight in ADR-046 is that <code>RESUMERUN#</code> was doing two unrelated jobs at once. It was the <em>job record</em> a client polls, and it was the <em>résumé</em> the user owns. Those two things have genuinely different lifetimes, and the moment you notice that, the 30-day number stops being a policy and starts being an accident.</p>
+
+<p>So the slice splits them. One run now writes two items:</p>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box"><strong>One completed run</strong><br><small>run_id = 01JB…</small></div>
+    <div class="arrow">→</div>
+    <div class="box"><strong>RESUMERUN#01JB</strong><br><small>agent exhaust: trace,<br>retrieved_ids, iterations</small><br><small><code>expires_at</code> set → <strong>gone in 30 days</strong></small></div>
+  </div>
+  <div class="flow">
+    <div class="arrow">↳</div>
+    <div class="box"><strong>RESUME#01JB</strong><br><small>the résumé: target_title,<br>created_at, document, S3 keys</small><br><small><em>no</em> <code>expires_at</code> → <strong>durable</strong></small></div>
+  </div>
+</div>
+
+<p>Same run, seen twice: <em>the résumé you built</em>, and <em>the machinery that built it</em>. The exhaust is allowed to expire on schedule. The résumé is not.</p>
+
+<div class="callout"><strong>The prefix hazard, and why the <code>#</code> is load-bearing.</strong> <code>RESUME#</code> and <code>RESUMERUN#</code> differ at the seventh character. Listing history queries <code>begins_with("RESUME#")</code> — and that correctly excludes traces <em>only because the <code>#</code> is part of the prefix string</em>. Drop it and <code>begins_with("RESUME")</code> silently matches every trace too. One character separates a correct query from one that returns twice the rows it should.</div>
+
+<h3>Listing history without a secondary index</h3>
+<p>The obvious way to fetch "my résumés, newest first" is a GSI sorted by date. This project has <strong>no GSIs</strong> (ADR-028), and did not need one here. The reason is in the ID format: every ID is a <strong>ULID</strong>, which begins with a 48-bit timestamp, so ULIDs sort lexicographically in the order they were created. The sort key <em>already is</em> a time index.</p>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box">SK: RESUME#01JA…<br><small>22 Jul</small></div>
+    <div class="arrow">&lt;</div>
+    <div class="box">SK: RESUME#01JB…<br><small>28 Jul</small></div>
+    <div class="arrow">&lt;</div>
+    <div class="box">SK: RESUME#01JC…<br><small>03 Aug</small></div>
+  </div>
+  <div class="flow">
+    <div class="box"><strong>ScanIndexForward=False</strong> reads that same range backwards → newest first, one Query, no index</div>
+  </div>
+</div>
+
+<p>The query is also <strong>projected</strong>: it asks for five attributes rather than whole items. This is not micro-optimisation. A <code>RESUME#</code> item stores the full pasted job description and the entire structured résumé — potentially tens of kilobytes — and the history grid renders none of it. Fetching it all would bill read capacity and transfer megabytes to draw a list of cards.</p>
+
+<h3>The bug the split would have shipped</h3>
+<p>Making artifacts durable while the trace still expires creates a gap that only appears after 30 days:</p>
+
+<div class="diagram">
+  <div class="flow">
+    <div class="box">Day 29<br><small>list shows the row</small></div>
+    <div class="arrow">→</div>
+    <div class="box">View → <code>GET /resumes/{run_id}</code><br><small>reads the trace → 200 OK</small></div>
+  </div>
+  <div class="flow">
+    <div class="box">Day 31<br><small>list <em>still</em> shows the row</small></div>
+    <div class="arrow">→</div>
+    <div class="box fail">View → trace has TTL'd<br><small>→ <strong>404</strong>, on a résumé that plainly exists</small></div>
+  </div>
+</div>
+
+<p>The fix is a fallback: when the trace is gone, the status endpoint reads the durable record instead. A list must never offer a row whose button fails.</p>
+
+<h3>The consequence nobody asked for</h3>
+<p>Removing the lifecycle rule removed the only thing that ever cleaned up a résumé. Under the old regime you never needed a delete button, because everything left on its own. Making résumés permanent quietly created that gap — which is why <strong>deletion was added mid-slice</strong>, as a second amendment to the same ADR that had just been accepted.</p>
+
+<p>And deletion across two services has no transaction. S3 and DynamoDB cannot be updated atomically, so a crash between them leaves an inconsistency; the only choice is <em>which</em> inconsistency:</p>
+
+<table>
+  <tr><th>Order</th><th>If it crashes halfway</th><th>Recoverable?</th></tr>
+  <tr><td><strong>Record first</strong>, then S3</td><td>Objects nothing references, and nothing will ever expire them. The user cannot even see the résumé to retry.</td><td>❌ Invisible and permanent</td></tr>
+  <tr><td><strong>S3 first</strong>, then record</td><td>A history row whose View fails — annoying, obvious, and deletable again (S3 deletes are idempotent).</td><td>✅ Visible and retryable</td></tr>
+</table>
+
+<p>A visible, retryable fault beats an invisible, permanent one. So objects go first — the exact inverse of the write path, and for the exact same reason.</p>
+
+<h2 id="code">Code walkthrough</h2>
+<h3>1. The durable item is defined by what it omits</h3>
+<p><a href="backend/functions/resume_agent/handler.py#L195">backend/functions/resume_agent/handler.py:195</a> builds the record. The whole of ADR-046 is the absent line:</p>
+<pre><code>return {
+    "PK": f"USER#{user_id}",
+    "SK": f"RESUME#{run_id}",
+    "entity_type": "RESUME",
+    "target_text": target_text,          # full, not truncated — see below
+    "target_title": _target_title(target_text),
+    "html_key": keys.get("html_key"),
+    "pdf_key": keys.get("pdf_key"),
+    "document": …,
+    # No `expires_at`. That omission *is* the durability.
+}</code></pre>
+<p>The title is derived deterministically — the first non-empty line of the pasted target, which is the job title in every realistic paste. No Bedrock call to label a row; against a $5/month ceiling, spending money to generate a card heading would be absurd.</p>
+
+<div class="callout"><strong>A bug the code review caught here.</strong> The record originally stored <code>target_text[:4000]</code>, copied from the trace. But 4,000 characters was chosen for an item that <em>expires in 30 days</em>. Applying it to a permanent record silently discards two-thirds of a long job description — irreversibly, and in direct contradiction of ADR-046 §4, which keeps the full text precisely because the planned gap-analysis feature will read it. Truncation on a permanent record is unrecoverable; the trace keeps its bound, the record does not.</div>
+
+<h3>2. Write ordering, and why it is not a transaction</h3>
+<p>DynamoDB offers <code>TransactWriteItems</code>, and this deliberately does not use it. The worker finalizes the trace first, then writes the record inside its own <code>try/except</code>: a failed history write must never turn a <em>completed</em> run into a failed one for the user. The run succeeded; the user has their résumé. The cost of that choice is a possible orphan, logged honestly as <strong>B-039</strong>.</p>
+
+<h3>3. The list query</h3>
+<p><a href="backend/shared/python/careervault/ddb_helpers.py#L409">ddb_helpers.py:409</a>:</p>
+<pre><code>response = get_table().query(
+    KeyConditionExpression=(
+        Key("PK").eq(pk_for_user(user_id)) &amp; Key("SK").begins_with("RESUME#")
+    ),
+    ScanIndexForward=False,        # newest first — ULIDs make SK order time order
+    Limit=limit,
+    ProjectionExpression="run_id, created_at, target_title, entry_count, #status",
+    ExpressionAttributeNames={"#status": "status"},
+)</code></pre>
+<p>Note <code>#status</code>. <code>status</code> is a DynamoDB <strong>reserved word</strong>, so naming it directly in a projection is a syntax error; you alias it. There are several hundred such words, and this is the everyday way you meet them.</p>
+
+<div class="callout"><strong>Known limit, logged not hidden.</strong> This caps at 50 rows and discards <code>LastEvaluatedKey</code>. Past 50 résumés a row becomes not merely unlisted but <em>unreachable</em> — both View and Delete need a <code>run_id</code> the UI can only learn from the list. At roughly one résumé a week that is about a year away, so it ships as <strong>B-043</strong> rather than being patched at wrap time.</div>
+
+<h3>4. Deletion, and three bugs worth studying</h3>
+<p><a href="backend/functions/resume_agent/handler.py#L446">handler.py:446</a> is the newest code in the slice and produced three of the four serious review findings. All three were fixed by one structural change: <strong>read the record before destroying anything.</strong></p>
+
+<pre><code>record = get_resume_record(user_id, run_id)
+if record is None:
+    return _response(404, {"message": "That résumé no longer exists."})
+
+keys = [k for k in (record.get("html_key"), record.get("pdf_key")) if k]
+result = _s3().delete_objects(Bucket=bucket, Delete={"Objects": [{"Key": k} for k in keys]})
+errors = result.get("Errors") or []
+if errors:
+    return _response(500, {"message": "Couldn't delete that résumé — please try again."})</code></pre>
+
+<p><strong>Bug one: a 404 that destroyed things.</strong> The original deleted objects and the trace <em>before</em> discovering the record was absent. So <code>DELETE</code> on a run that was still <code>pending</code> destroyed the trace of a live ~$0.31 Sonnet job — the user's poll would then report "expired" while the job merrily continued — and for a <code>failed</code> run it destroyed the only diagnostic record, while replying "no longer exists".</p>
+
+<p><strong>Bug two: <code>delete_objects</code> does not raise.</strong> This is the one worth carrying to other projects. The S3 batch-delete API returns <strong>HTTP 200 with a per-key <code>Errors</code> list</strong>. A failure on one key is not an exception:</p>
+<pre><code>{"Deleted": [{"Key": "…/resume.html"}],
+ "Errors":  [{"Key": "…/resume.pdf", "Code": "InternalError"}]}</code></pre>
+<p>So <code>except ClientError</code> never fired, the record was deleted anyway, and the PDF was stranded forever — precisely the orphaning the S3-first ordering exists to prevent. The careful docstring argued for the right ordering; the code silently opted out of the argument.</p>
+
+<div class="callout"><strong>Why the test did not catch it.</strong> The fake S3 client returned <code>None</code> from <code>delete_objects</code>. The handler's error check therefore had nothing to check and passed vacuously. <em>A test double that is wrong in the same way as the code proves nothing.</em> The double now returns the API's real shape, and reverting the check fails exactly one test.</div>
+
+<p><strong>Bug three: reconstructed keys.</strong> The keys were rebuilt as <code>resumes/{user}/{run}/resume.html</code> from today's naming convention, while the record already stored the authoritative ones. Any record written under a different layout — a backfilled one, or anything after a future path change — would have had its row deleted and its real objects left behind. Reading the record supplies them.</p>
+
+<h3>5. The frontend, and one honesty rule</h3>
+<p><a href="frontend/src/resume/Resume.tsx#L1">Resume.tsx</a> was rebuilt against the design handoff. The handoff specified four status badges — Latest, New, <em>Sent</em>, <em>Draft</em>. There is no send path (ADR-015 is in-app download only) and no draft state, so two of the four describe features that do not exist. Under <strong>ADR-045</strong> they are omitted rather than faked.</p>
+
+<p>The same rule caught a subtler violation in review. The generator card read <em>"Pulls the 13 records in your vault…"</em>, where 13 came from the newest history row's <code>entry_count</code> — which is how many entries <em>that one run retrieved for that one target</em>, a subset that changes with every unrelated run. A user with 27 entries was told they had 13. The number was real; the sentence it appeared in was false. The true count already existed in the app shell and is now passed down.</p>
+
+<div class="callout"><strong>A $0.31 button.</strong> <em>Regenerate</em> reran whatever sat in the target textarea. Open a three-month-old résumé from history and press it, and you would spend $0.11–$0.35 of Sonnet against an unrelated job description while the screen showed the old résumé. No endpoint returns the original <code>target_text</code>, so there is nothing to regenerate <em>from</em> — the button is simply not offered on a history-opened résumé.</div>
+
+<h3>6. Theme selection, and the first-frame problem</h3>
+<p>Users can now pick Light, Dark, or System. The interesting part is <em>where</em> the code runs. A stored preference read by React arrives after the bundle parses and the first frame paints — so the app would flash the wrong theme on every load. The read therefore happens in a synchronous inline script in <a href="frontend/index.html#L15">index.html</a>, before first paint:</p>
+<pre><code>&lt;script&gt;
+  try {
+    var t = localStorage.getItem("careervault:theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+  } catch (e) { /* storage unavailable — fall through to the system preference */ }
+&lt;/script&gt;</code></pre>
+<p>"System" is represented by the <em>absence</em> of the attribute, letting the existing <code>prefers-color-scheme</code> media query take over — the same omission-as-mechanism idea as the missing <code>expires_at</code>, one layer up the stack. A test asserts this script and the TypeScript module agree on the storage key, because they are two copies of one contract that no compiler checks.</p>
+
+<h3>7. Migrating the résumés that already existed</h3>
+<p>Six real résumés predated ADR-046: they had traces but no records, and their traces were due to expire between 21 and 28 August. After that their S3 objects would have had nothing to list them, nothing to poll, and — since this slice removed the lifecycle rule — nothing to clean them up. <a href="scripts/backfill-resume-records.py#L1">scripts/backfill-resume-records.py</a> builds the missing records, dry-run by default and idempotent via <code>attribute_not_exists(SK)</code>.</p>
+<p>Two failures it hit are worth knowing because only a script that actually reads the table can hit them: the table name is read from the environment by the shared helper (the dry run never reached that code path), and <strong>DynamoDB returns numbers as <code>Decimal</code></strong>, which <code>json.dumps</code> cannot serialise — so values must be converted before being written back. The review added a third: the query never followed <code>LastEvaluatedKey</code>, so a migration <em>racing a TTL deadline</em> could have silently skipped everything past the first 1 MB page and still exited 0.</p>
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>What actually makes a RESUME# item durable while RESUMERUN# expires after 30 days?</strong></p>
+<button class="quiz-opt" data-correct="true">The RESUME# item omits the expires_at attribute entirely, and DynamoDB TTL only deletes items that carry it.</button>
+<button class="quiz-opt" data-correct="false">RESUME# items live in a different DynamoDB table that has TTL disabled.</button>
+<button class="quiz-opt" data-correct="false">RESUME# items are written with expires_at set to -1, which DynamoDB interprets as 'never expire'.</button>
+<button class="quiz-opt" data-correct="false">A separate TTL policy is configured for each sort-key prefix on the table.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why does listing résumé history newest-first need no GSI?</strong></p>
+<button class="quiz-opt" data-correct="false">DynamoDB Query sorts results by an item's creation time automatically when no index is specified.</button>
+<button class="quiz-opt" data-correct="true">IDs are ULIDs, which begin with a timestamp and therefore sort lexicographically in creation order, so ScanIndexForward=False on the sort key already reads newest-first.</button>
+<button class="quiz-opt" data-correct="false">The handler fetches every item for the user and sorts them by created_at in Python before responding.</button>
+<button class="quiz-opt" data-correct="false">The projection expression includes created_at, and DynamoDB orders results by any projected timestamp attribute.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The delete path removes S3 objects before the DynamoDB record. What does that ordering buy?</strong></p>
+<button class="quiz-opt" data-correct="false">S3 deletes are slower than DynamoDB deletes, so starting them first lets the two run concurrently.</button>
+<button class="quiz-opt" data-correct="false">S3 requires an object to be deleted before any database row that references it can be removed.</button>
+<button class="quiz-opt" data-correct="false">It lets DynamoDB and S3 participate in a single distributed transaction that rolls back on failure.</button>
+<button class="quiz-opt" data-correct="true">A crash between the two leaves a visible history row whose View fails — which the user can simply delete again — rather than orphaned objects that nothing references and nothing will ever expire.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>A batch delete of two S3 keys fails on one of them. What does boto3&#x27;s delete_objects do?</strong></p>
+<button class="quiz-opt" data-correct="true">Returns HTTP 200 with the failed key listed under 'Errors' — no exception is raised, so code relying only on except ClientError treats the partial failure as success.</button>
+<button class="quiz-opt" data-correct="false">Rolls back the successful delete so the batch is all-or-nothing.</button>
+<button class="quiz-opt" data-correct="false">Retries the failed key automatically and raises only if every retry is exhausted.</button>
+<button class="quiz-opt" data-correct="false">Raises a ClientError describing the failed key, which except ClientError catches normally.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The generator card said &#x27;Pulls the 13 records in your vault&#x27; for a user with 27 entries. What was the underlying mistake?</strong></p>
+<button class="quiz-opt" data-correct="false">The list projection dropped entries, so the count reflected only the attributes DynamoDB returned.</button>
+<button class="quiz-opt" data-correct="false">GET /entries was paginated at 13 items and the UI never requested the next page.</button>
+<button class="quiz-opt" data-correct="false">The count excluded entry types the résumé agent cannot use, such as HOBBY and VOLUNTEER.</button>
+<button class="quiz-opt" data-correct="true">It used the newest run's entry_count — how many entries that one run retrieved for that one target — as if it were the size of the whole vault.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>

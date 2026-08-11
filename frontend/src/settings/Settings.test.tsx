@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -218,7 +218,11 @@ describe("slice 2 review regressions", () => {
     renderDetails();
     await screen.findByRole("heading", { name: /check-in cadence/i });
 
-    const radios = screen.getAllByRole("radio");
+    // Scoped to the cadence group specifically: the page now has a second radiogroup (Appearance),
+    // and an unscoped `getAllByRole("radio")` would count both groups' selected options and read
+    // "one tab stop" as broken when it is correct.
+    const cadenceGroup = screen.getByRole("radiogroup", { name: /check-in cadence/i });
+    const radios = within(cadenceGroup).getAllByRole("radio");
     expect(radios.filter((r) => r.getAttribute("tabindex") === "0")).toHaveLength(1);
     expect(screen.getByRole("radio", { name: /^Weekly/ })).toHaveAttribute("tabindex", "0");
 
@@ -283,5 +287,78 @@ describe("slice 2 review regressions", () => {
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:fake"));
     // Cleaned up rather than left in the document.
     expect(document.querySelector("a[download]")).toBeNull();
+  });
+});
+
+/**
+ * Appearance — the Light/Dark/System picker (ADR-044 amendment).
+ *
+ * `theme.test.ts` covers the storage and document mechanics; these cover the *wiring* — that the
+ * control reaches that module at all, and that it did not repeat the accessibility mistake the
+ * cadence picker had to be corrected for in slice 2.
+ */
+describe("the theme picker", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    delete document.documentElement.dataset.theme;
+  });
+
+  it("defaults to System, so nothing changes for a user who never opens it", async () => {
+    renderDetails();
+    await screen.findByRole("heading", { name: /appearance/i });
+
+    expect(screen.getByRole("radio", { name: /^System/ })).toHaveAttribute("aria-checked", "true");
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+  });
+
+  it("applies and persists a choice immediately, without pressing Save", async () => {
+    // Deliberately not part of the profile save: there is no unsaved state to lose, and making a
+    // user press Save to see a theme change would be its own small bug.
+    const user = renderDetails();
+    await screen.findByRole("heading", { name: /appearance/i });
+
+    await user.click(screen.getByRole("radio", { name: /^Dark/ }));
+
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(window.localStorage.getItem("careervault:theme")).toBe("dark");
+  });
+
+  it("returns to System by removing the attribute, not by writing one", async () => {
+    const user = renderDetails();
+    await screen.findByRole("heading", { name: /appearance/i });
+
+    await user.click(screen.getByRole("radio", { name: /^Light/ }));
+    expect(document.documentElement.dataset.theme).toBe("light");
+
+    await user.click(screen.getByRole("radio", { name: /^System/ }));
+    // Anything other than *absent* here silently pins the palette and stops the OS being followed.
+    expect(document.documentElement.dataset.theme).toBeUndefined();
+    expect(window.localStorage.getItem("careervault:theme")).toBe("system");
+  });
+
+  it("is one tab stop and responds to arrow keys, like the cadence group", async () => {
+    // The same contract slice 2's review found missing on the cadence picker. Repeating the
+    // radiogroup pattern without repeating its bug is the point of the test.
+    const user = renderDetails();
+    await screen.findByRole("heading", { name: /appearance/i });
+
+    const group = screen.getByRole("radiogroup", { name: /appearance/i });
+    const radios = within(group).getAllByRole("radio");
+    expect(radios.filter((r) => r.getAttribute("tabindex") === "0")).toHaveLength(1);
+
+    await user.click(within(group).getByRole("radio", { name: /^Light/ }));
+    await user.keyboard("{ArrowRight}");
+    expect(within(group).getByRole("radio", { name: /^Dark/ })).toHaveAttribute("aria-checked", "true");
+
+    await user.keyboard("{End}");
+    expect(within(group).getByRole("radio", { name: /^System/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("restores a previously stored choice on mount", async () => {
+    window.localStorage.setItem("careervault:theme", "light");
+    renderDetails();
+    await screen.findByRole("heading", { name: /appearance/i });
+
+    expect(screen.getByRole("radio", { name: /^Light/ })).toHaveAttribute("aria-checked", "true");
   });
 });

@@ -162,27 +162,17 @@ describe("shell accessibility (pre-redesign audit §A1, §A2, §A10)", () => {
     expect(screen.getByText("CareerVault")).toBeInTheDocument();
   });
 
-  it("wraps the not-yet-redesigned view in a container so it is not flush to the edge", async () => {
-    // The redesign made `main` a plain block, but an un-redesigned view sets a width and relies on
-    // a parent for centring and padding — without this wrapper it sits against the viewport edge,
-    // under the sticky header. Résumés is the last one left (blocked on B-028); when slice 3
-    // rebuilds it, this test and the wrapper are deleted together.
+  it("renders every view without the retired legacy wrapper (B-036)", async () => {
+    // This test used to have a twin asserting that Résumés was *still* wrapped, because it was the
+    // last un-redesigned view. Slice 3 rebuilt it, so the wrapper, the four shim aliases in
+    // index.css and that twin were deleted together — which is what B-036 defined as done.
+    //
+    // What survives is the half that stays true forever: no view is inside `.legacy-view`. Kept
+    // rather than deleted with the rest so a future revert of the class cannot go unnoticed.
     const user = userEvent.setup();
     const { container } = render(<App />);
 
-    await user.click(screen.getByRole("button", { name: "Résumés" }));
-
-    expect(container.querySelector(".legacy-view")).not.toBeNull();
-  });
-
-  it("renders the redesigned views without the legacy wrapper", async () => {
-    // The other half of the invariant, and the one that actually retires the scaffolding: a
-    // rebuilt view must not still be inside `.legacy-view`, whose padding would double up on the
-    // `.view` padding it now brings itself.
-    const user = userEvent.setup();
-    const { container } = render(<App />);
-
-    for (const name of ["Log", "Timeline", "Import", "Details"]) {
+    for (const name of ["Log", "Timeline", "Résumés", "Import", "Details"]) {
       await user.click(screen.getByRole("button", { name }));
       expect(container.querySelector(".legacy-view")).toBeNull();
     }
