@@ -196,6 +196,30 @@ describe("recording state", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/listening/i);
   });
 
+  it("discloses that audio leaves the device, while it is leaving", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+
+    // Web Speech is not on-device in Chrome or Safari (ADR-014 correction). The user is holding a
+    // corpus of employers and project detail; an undisclosed third-party data flow is the defect,
+    // and the honest place to say so is the moment the microphone is live.
+    expect(screen.getByRole("status")).toHaveTextContent(/sent to your browser's speech service/i);
+  });
+
+  it("does not show the disclosure when nothing is being captured", async () => {
+    const fake = fakeProvider();
+    render(<Harness provider={fake.provider} />);
+
+    expect(screen.queryByText(/speech service/i)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Dictate your entry" }));
+    fake.end();
+
+    expect(screen.queryByText(/speech service/i)).not.toBeInTheDocument();
+  });
+
   it("stops the session when the user presses stop", async () => {
     const fake = fakeProvider();
     render(<Harness provider={fake.provider} />);

@@ -505,6 +505,43 @@ its own decision with numbers. A free, better browser API would not.
 **What this does not license:** building for the second provider now. One implementation, behind the
 interface, with the quirks handled in the Web Speech implementation and not leaked into the contract.
 
+#### Correction (2026-08-11, slice 4 security review) — "browser-side" is true of the API, not of the processing
+
+**This ADR has been describing Web Speech in a way that is materially wrong, and the error runs
+through every version of it.** The original decision says the browser API avoids "added cost and
+complexity"; amendment 1 says recognition is "browser-side, so voice capture adds **$0**"; amendment
+2 repeats the cost premise. All of that is true about the *bill*. None of it is true about *where the
+audio goes*.
+
+**In Chrome and Safari, Web Speech is not on-device.** Captured audio is streamed to the browser
+vendor's speech service and transcribed there. The implementation quietly corroborates this — it
+maps a `"network"` error code, which exists only because recognition needs a server round-trip.
+
+The decision itself **stands**: Web Speech is still the right choice, and the $5 ceiling (NFR-1.1)
+argument is untouched, because the cost claim was about AWS spend and remains exactly right. What
+changes is a claim this ADR should never have implied:
+
+- **Before slice 4, no audio left the device. Now it does** — to a third party, outside the SSE-S3 /
+  DynamoDB boundary every other part of this system is designed around, carrying precisely the PII
+  the app exists to hold: employers, dates, project detail, colleague references.
+- **The Transcribe comparison was never a privacy comparison.** Rejecting Amazon Transcribe on cost
+  reads, in hindsight, as though the browser option were also the more contained one. It is not.
+  Transcribe would have kept the audio inside the AWS account. That is not a reason to reverse the
+  decision at $0 vs paid, but it is a reason the trade-off should be recorded honestly.
+
+**Consequences accepted, with two mitigations built in slice 4:**
+
+1. **The user is told, at the moment it applies.** The recording status line states that audio is
+   sent to the browser's speech service. An undisclosed data flow is the actual defect here; the
+   flow itself is inherent to the chosen API.
+2. **The capture window is genuinely bounded.** The give-up counter now resets on *new speech*
+   rather than on "a transcript exists" — which, after the first word, was true on every event, so
+   ambient noise could have held the microphone open indefinitely. Pause tolerance is unchanged.
+
+**If this trade ever stops being acceptable** — a corpus with client-confidential detail, say — the
+replacement is not a different browser API but on-device STT or Transcribe, and that decision gets
+made here, with numbers, as amendment 1 already requires of any paid provider.
+
 ---
 
 ## ADR-015: Output delivery for MVP — in-app download only

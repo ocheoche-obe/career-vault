@@ -163,7 +163,26 @@ export function MicButton({
         state a voice feature must never leave ambiguous.
       */}
       <span className="mic-status" role="status">
-        {error ? ERROR_TEXT[error] : recording ? "Listening — speak, then press stop to review." : ""}
+        {error ? (
+          ERROR_TEXT[error]
+        ) : recording ? (
+          <>
+            Listening — speak, then press stop to review.
+            {/*
+              Where the audio goes, said while it is going there.
+              Web Speech is *not* on-device in Chrome or Safari: audio is streamed to the browser
+              vendor's speech service. ADR-014 chose this API on cost grounds and described it as
+              "browser-side", which is true of the API and not of the processing — so a user could
+              reasonably assume their speech never leaves the machine. It does, and for a corpus of
+              employer names and project detail that is worth one sentence at the moment it matters.
+            */}
+            <span className="mic-note">
+              Audio is sent to your browser's speech service for transcription.
+            </span>
+          </>
+        ) : (
+          ""
+        )}
       </span>
     </span>
   );

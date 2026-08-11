@@ -252,6 +252,26 @@ describe("the silence timeout", () => {
     expect(callbacks.onEnd).not.toHaveBeenCalled();
   });
 
+  it("still gives up when results keep arriving but say nothing new", () => {
+    install();
+    const callbacks = spyCallbacks();
+    webSpeechProvider.start(callbacks);
+
+    current().emit([{ text: "I mentored two engineers", isFinal: true }]);
+
+    // The user has walked away and the room is noisy: the recognizer keeps firing *interim* results
+    // that never settle into text, so the transcript does not grow. A counter keyed on "a
+    // transcript exists" resets forever here — after the first word `committed` is non-empty on
+    // every event — and the microphone stays live indefinitely. Keyed on *new speech*, the bound
+    // still applies.
+    for (let i = 0; i < 6; i += 1) {
+      current().emit([{ text: "mm", isFinal: false }]);
+      current().timeout();
+    }
+
+    expect(callbacks.onEnd).toHaveBeenCalledTimes(1);
+  });
+
   it("ends cleanly when the browser refuses the restart", () => {
     install();
     const callbacks = spyCallbacks();

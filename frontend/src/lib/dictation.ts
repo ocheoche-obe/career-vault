@@ -182,6 +182,16 @@ export const webSpeechProvider: DictationProvider = {
     let fatal = false;
     let ended = false;
     let silentRestarts = 0;
+    /**
+     * The transcript as of the last time it actually grew.
+     *
+     * The give-up counter resets on *new speech*, not on "a transcript exists". Those look the same
+     * until the user has said one word: after that, `committed` is non-empty for the rest of the
+     * session, so a check like `if (settled)` is true on every subsequent event — and any stray
+     * result from background noise would reset the counter and keep the microphone live
+     * indefinitely. Comparing against the previous value is what makes the bound mean something.
+     */
+    let lastSettled = "";
 
     const finish = () => {
       if (ended) return;
@@ -209,7 +219,10 @@ export const webSpeechProvider: DictationProvider = {
       }
 
       const settled = joinTranscript([committed, ...sessionFinals]);
-      if (settled) silentRestarts = 0;
+      if (settled !== lastSettled) {
+        lastSettled = settled;
+        silentRestarts = 0;
+      }
 
       callbacks.onTranscript(settled);
       callbacks.onInterim?.(joinTranscript([settled, interimTail]));

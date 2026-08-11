@@ -101,3 +101,12 @@
 .mic-status:empty {
   display: none;
 }
+
+/* The where-the-audio-goes line. Quieter than the state line above it, but not hidden — a
+   disclosure styled to be overlooked is not a disclosure. */
+.mic-note {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
