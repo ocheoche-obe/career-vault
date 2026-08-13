@@ -349,7 +349,12 @@
   color: var(--text-faint);
 }
 
-.input-pill button {
+/*
+ * `> button`, not `button`: the mic control (`.mic-button`) also lives inside the pill, and a
+ * descendant selector here outranks its own class rule — which rendered it as a second gradient
+ * send button. The child combinator scopes this to the submit control it was written for.
+ */
+.input-pill > button {
   flex-shrink: 0;
   width: 40px;
   height: 40px;
@@ -362,7 +367,7 @@
   place-items: center;
 }
 
-.input-pill button:disabled {
+.input-pill > button:disabled {
   opacity: 0.45;
   cursor: default;
 }

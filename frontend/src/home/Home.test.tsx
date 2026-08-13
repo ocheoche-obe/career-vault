@@ -113,6 +113,47 @@ describe("Home navigation", () => {
     expect(onNavigate).toHaveBeenCalledWith("log");
   });
 
+  it("hands off on Enter", async () => {
+    const onNavigate = vi.fn();
+    const onDraft = vi.fn();
+    const user = userEvent.setup();
+    render(<Home {...props} entries={[]} onNavigate={onNavigate} onDraft={onDraft} />);
+
+    await user.type(screen.getByLabelText(/what did you accomplish/i), "I ran the workshop{Enter}");
+
+    expect(onDraft).toHaveBeenCalledWith("I ran the workshop");
+    expect(onNavigate).toHaveBeenCalledWith("log");
+  });
+
+  it("breaks a line on Shift+Enter instead of handing off", async () => {
+    const onNavigate = vi.fn();
+    const user = userEvent.setup();
+    render(<Home {...props} entries={[]} onNavigate={onNavigate} />);
+
+    const field = screen.getByLabelText(/what did you accomplish/i);
+    await user.type(field, "I ran the workshop{Shift>}{Enter}{/Shift}and wrote it up");
+
+    // The field became a textarea for dictation (ADR-014 amendment 2), which makes a multi-line
+    // gesture meaningful here for the first time. It matches Log rather than inventing a second
+    // convention for the same keystroke.
+    expect(field).toHaveValue("I ran the workshop\nand wrote it up");
+    expect(onNavigate).not.toHaveBeenCalled();
+  });
+
+  it("carries newlines through the hand-off rather than flattening them", async () => {
+    const onDraft = vi.fn();
+    const user = userEvent.setup();
+    render(<Home {...props} entries={[]} onDraft={onDraft} />);
+
+    const field = screen.getByLabelText(/what did you accomplish/i);
+    await user.type(field, "Line one{Shift>}{Enter}{/Shift}line two");
+    await user.click(screen.getByRole("button", { name: /start logging/i }));
+
+    // The reason the control had to stop being an `<input>`: a single-line control silently
+    // collapses newlines, so what reaches `POST /chat` is not what the user wrote or dictated.
+    expect(onDraft).toHaveBeenCalledWith("Line one\nline two");
+  });
+
   it("seeds the composer from a prompt chip", async () => {
     const user = userEvent.setup();
     render(<Home {...props} entries={[]} />);

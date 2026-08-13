@@ -128,11 +128,28 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**v1.1 slice 3 complete (Résumés + résumé history — PR #50). Next: v1.1 slice 4 — voice capture.**
-Slices 1 and 2 shipped as PR #43 and PR #48. **The redesign is now complete across all six views**,
-and the scaffolding that carried it is gone: **B-036 is closed** — zero shim aliases in `index.css`,
-no `.legacy-view` in `App.css`, and no raw hex outside `index.css`. Phase 2 / MVP was declared
+**v1.1 slice 4 complete (Voice capture — PR #51). Next: v1.1 slice 5 — résumé speed (B-023 first).**
+Slices 1–3 shipped as PR #43, #48 and #50. **The redesign is complete across all six views**, and the
+scaffolding that carried it is gone: **B-036 is closed** — zero shim aliases in `index.css`, no
+`.legacy-view` in `App.css`, and no raw hex outside `index.css`. Phase 2 / MVP was declared
 2026-07-29 (slice 9, PR #32).
+
+**What slice 4 changed that outlives it (ADR-014 amendments 1–3):** dictation exists on **both**
+composers via a `DictationProvider` seam, and Home's composer is now an auto-growing `<textarea>`
+inside a `.composer-field` box rather than a single-line `<input>`. Three things a future session
+will trip over:
+
+- **Web Speech is not on-device.** ADR-014 called it "browser-side" from the day it was written; that
+  is true of the API and **false of the processing** — Chrome and Safari stream audio to the vendor's
+  speech service. The $0 claim was always about *AWS spend* and still holds. The UI discloses this
+  while recording; do not remove that line without replacing the disclosure.
+- **Dictation fills the field and never sends.** `MicButton` has no access to a submit handler, and
+  the session **stops when the field's text stops being what it last wrote** — because `Chat.submit`
+  clears the draft mid-session, and recomposing from the stale base re-sent the message and charged
+  for it. Both are asserted by tests; neither is incidental.
+- **`related_job_id` is a live trap (B-044).** It exists on `ProjectEntry`/`MilestoneEntry` and is
+  described to Haiku, but the parse turn never sees the user's entries (so no JOB ULID is available),
+  the résumé agent never reads it, and no UI sets it. It looks supported and is wired to nothing.
 
 **What slice 3 changed that outlives it (ADR-046):** résumés are now a **durable** `RESUME#<run_id>`
 record, split from the 30-day `RESUMERUN#<run_id>` trace, and the `resumes/` S3 lifecycle rule is
@@ -164,18 +181,19 @@ addressed or backlogged). Two things that still bite:
 
 Remaining v1.1 scope in `docs/careervault-plan.md` § "v1.1 — graduated scope":
 
-1. **Voice capture (slice 4, next)** — ADR-014, already decided: browser Web Speech API, explicitly
-   not Amazon Transcribe. Adds **$0**; the transcript enters the existing `POST /chat` path.
-   Frontend-only, zero backend surface. Slice 3 recorded the seam Oche asked for — a
-   `DictationProvider` interface with an **optional** `onInterim`, so a buffer-then-POST cloud API
-   could satisfy the same contract later — as an **amendment to ADR-014**, not a new ADR. Nothing
-   paid is wired now, and anything paid breaks ADR-014's cost premise.
-2. **Résumé speed** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and optimising without a
-   baseline ships changes that only *feel* faster), then B-020/B-004 (one mechanism — the retrieval
-   loop's growing history drives both cost and latency). ~~B-022~~ closed in slice 3.
-3. **UI + mobile pass** — B-001 plus NFR-6.2. Slice 3 measured **24 combinations** (6 views × 2
-   themes × 2 widths) with zero horizontal overflow, so this is now narrower than the ❓Unverified
-   scorecard entry suggests. Enumerate with Playwright MCP before styling.
+1. ~~**Voice capture**~~ — **closed in slice 4.** Frontend-only and $0, both measured. The paid-provider
+   constraint stands: anything paid breaks ADR-014's cost premise and needs its own decision.
+2. **Résumé speed (slice 5, next)** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and
+   optimising without a baseline ships changes that only *feel* faster), then B-020/B-004 (one
+   mechanism — the retrieval loop's growing history drives both cost and latency). ~~B-022~~ closed
+   in slice 3. **Sequence B-044 after this**, not before: linking projects to roles changes résumé
+   *content*, and changing content while latency is unmeasured confounds both.
+3. **UI + mobile pass** — B-001 plus NFR-6.2. Slices 3 and 4 measured **28 combinations** with zero
+   horizontal overflow, so this is narrower than the ❓Unverified scorecard entry suggests — but
+   every one was an *emulated* viewport, and NFR-6.2 does not close until a real device is used.
+   Enumerate with Playwright MCP before styling, and **compare geometry against the pre-change
+   layout**: slice 4 shipped a collapsed mobile CTA that satisfied every zero-overflow assertion,
+   because a button shrunk to its content overflows nothing.
 
 **Read at session start:** the plan doc's status board + current slice section. Per-slice history,
 completion notes, and the reasoning behind every past decision live there and in the ADL — not here.

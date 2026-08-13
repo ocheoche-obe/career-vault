@@ -1,0 +1,112 @@
+/*
+ * Dictation control. Every colour here is a token from `index.css` — the standing rule since B-036
+ * closed, and the reason is that a raw hex is a light-mode bug dark-mode review cannot see.
+ */
+
+/*
+ * The wrapper is the single flex item both composers see. Log's row is `align-items: flex-end` so
+ * the send button tracks the last line of a growing textarea; the mic sits on that same baseline.
+ */
+.mic {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
+/* 40px matches Log's send button, so the two circles read as a pair rather than as a mismatch. That
+   clears WCAG 2.2 AA target size (24px) comfortably; 44px is the AAA/HIG figure, not a floor. */
+.mic-button {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.mic-button:hover:not(:disabled) {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.mic-button:disabled {
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+
+.mic-button.recording {
+  border-color: var(--danger-border);
+  background: var(--danger-wash);
+  color: var(--danger);
+  animation: mic-pulse 1.6s ease-in-out infinite;
+}
+
+.mic-glyph {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+@keyframes mic-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/*
+ * The pulse is decoration; the `role="status"` text below is what actually reports the microphone
+ * is live. Removing the animation therefore costs nothing a user depends on.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .mic-button.recording {
+    animation: none;
+  }
+}
+
+/*
+ * Out of flow, anchored under the button and to its right edge.
+ *
+ * `right: 0` plus a viewport-relative cap is what keeps this off the horizontal-overflow list at
+ * 360px (the standing measurement bar): the message grows leftward and downward, never past the
+ * right edge it is pinned to. A `white-space: nowrap` tooltip here would overflow the moment the
+ * permission-denied string rendered.
+ */
+.mic-status {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 2;
+  width: max-content;
+  max-width: min(280px, 68vw);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+/* Empty most of the time — collapse it so an invisible box does not sit under the composer. */
+.mic-status:empty {
+  display: none;
+}
+
+/* The where-the-audio-goes line. Quieter than the state line above it, but not hidden — a
+   disclosure styled to be overlooked is not a disclosure. */
+.mic-note {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-faint);
+}

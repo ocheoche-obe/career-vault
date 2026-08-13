@@ -44,27 +44,57 @@
 
 .composer-row {
   display: flex;
-  align-items: stretch;
+  /* `flex-end`, not `stretch`: the field is now an auto-growing textarea, and stretch made the mic
+     and `Start logging` grow to match it — a button that gets taller as you dictate. Matches Log. */
+  align-items: flex-end;
   gap: 10px;
 }
 
-.composer-row input {
+/* The bordered box. It holds the field and the mic, so the mic reads as belonging to the input
+   rather than as a third sibling between the field and `Start logging` — matching Log's pill. */
+.composer-field {
   flex: 1;
   min-width: 0;
-  font-size: 16px;
-  padding: 15px 18px;
+  display: flex;
+  /* `flex-end` so the mic tracks the last line as the field grows, rather than drifting to the
+     vertical middle of a tall message. Same rule, same reason, as Log's pill. */
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 18px;
   border-radius: 12px;
   border: 1px solid var(--border-strong);
   background: var(--surface-sunken);
-  color: var(--text-body);
 }
 
-.composer-row input::placeholder {
+/* Focus moves to the box, since the visible border now belongs to the box and not the field. */
+.composer-field:focus-within {
+  border-color: var(--border-active);
+}
+
+.composer-row textarea {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-body);
+  resize: none;
+  /* Auto-grows with the text, then scrolls — the same treatment as Log's composer, with the fixed
+     cap as the fallback where `field-sizing` is unsupported. Dictation is what makes this matter:
+     a spoken paragraph in a one-line box is text the user cannot review before sending. */
+  field-sizing: content;
+  max-height: 7lh;
+}
+
+.composer-row textarea::placeholder {
   color: var(--text-faint);
 }
 
-.composer-row input:focus {
-  border-color: var(--border-active);
+.composer-row textarea:focus {
+  outline: none;
 }
 
 /* ---- Stat trio ----------------------------------------------------------------------------- */
@@ -292,6 +322,11 @@
 
   .composer-row {
     flex-direction: column;
+    /* `align-items` governs the *horizontal* axis once this is a column, so the row's `flex-end`
+       would shrink the field and `Start logging` to their content width and right-align them —
+       a full-width CTA collapsing to a small button hugging the right edge. Restated, not
+       inherited, because the value that is correct in a row is wrong in a column. */
+    align-items: stretch;
   }
 
   .stat-trio {

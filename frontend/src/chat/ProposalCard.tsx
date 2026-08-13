@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import { editableFields, mergeEdits } from "../lib/entryFields";
 import { EntryFields } from "../components/EntryFields";
+import { fieldMatches } from "../lib/fieldErrors";
 
 /**
  * The Phase B confirm gate (FR-2.3): the user reviews — and may edit — the candidate before
@@ -107,8 +108,12 @@ export function ProposalCard({
       {state.phase === "invalid" && (
         <p className="field-error">
           Fix the highlighted fields and confirm again.
+          {/*
+            Only errors that reach no field on the card. This must use the same matching the fields
+            use, or an error would be reported twice — highlighted inline *and* repeated here.
+          */}
           {state.errors
-            .filter((e) => !(e.field in fields))
+            .filter((e) => !Object.keys(fields).some((key) => fieldMatches(e.field, key)))
             .map((e) => ` ${e.field}: ${e.error}.`)
             .join("")}
         </p>

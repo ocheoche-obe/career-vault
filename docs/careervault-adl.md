@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-08-09 (v1.1 slice 3 — **ADR-046** added [résumé history is a durable, no-TTL `RESUME#` record split from the ephemeral `RESUMERUN#` trace, which keeps its 30-day TTL; the `resumes/` S3 lifecycle rule is removed, **amending ADR-015 a second time** — its flat 30 days was a coupling fix to stop a trace outliving its artifacts, not a judgment about how long a résumé is worth keeping, and the coupling is gone once a durable record exists; **Sent**/**Draft** status badges omitted as having no referent, per ADR-045]; **ADR-046 amended** [`DELETE /resumes/{run_id}` — S3 artifacts, then record, then trace, behind ADR-027's confirm; added mid-slice because removing the lifecycle rule is what created the need, since nothing clears a résumé automatically any more]; **ADR-044 amended** [explicit Light/Dark/System selection on Details, defaulting to System so today's behaviour is unchanged for anyone who never opens it; `localStorage` + a pre-paint inline script, an attribute selector beside the existing media query rather than a `light-dark()` migration, which cannot express the five gradient tokens]) · prior: 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-08-11 (v1.1 slice 4 — **ADR-014 amended twice**: [amendment 2 — mic on **both** composers rather than Log only; Home's `<input>` becomes an auto-growing `<textarea>` inside a `.composer-field` box, the same override Log already made, because a dictated paragraph in a single-line control scrolls out of view and the review gate depends on seeing what you are about to send; dictation **fills the field and never sends**, with `MicButton` structurally unable to submit; no mic renders at all where the API is absent] and [amendment 3 — **correction**: this ADR has called Web Speech "browser-side" since it was written, which is true of the API and **false of the processing** — Chrome and Safari stream audio to the vendor's speech service. The decision stands and the $0/NFR-1.1 argument is untouched, since that claim was always about AWS spend; what was wrong was an implied containment guarantee. Disclosed in the UI while recording, and the capture window given a bound that actually holds] · prior: 2026-08-09 (v1.1 slice 3 — **ADR-046** added [résumé history is a durable, no-TTL `RESUME#` record split from the ephemeral `RESUMERUN#` trace, which keeps its 30-day TTL; the `resumes/` S3 lifecycle rule is removed, **amending ADR-015 a second time** — its flat 30 days was a coupling fix to stop a trace outliving its artifacts, not a judgment about how long a résumé is worth keeping, and the coupling is gone once a durable record exists; **Sent**/**Draft** status badges omitted as having no referent, per ADR-045]; **ADR-046 amended** [`DELETE /resumes/{run_id}` — S3 artifacts, then record, then trace, behind ADR-027's confirm; added mid-slice because removing the lifecycle rule is what created the need, since nothing clears a résumé automatically any more]; **ADR-044 amended** [explicit Light/Dark/System selection on Details, defaulting to System so today's behaviour is unchanged for anyone who never opens it; `localStorage` + a pre-paint inline script, an attribute selector beside the existing media query rather than a `light-dark()` migration, which cannot express the five gradient tokens]) · prior: 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -79,7 +79,7 @@ Each ADR has:
 | ADR-045 | Home's aggregates derived client-side; "streak" defined                     | Accepted   |
 | ADR-046 | Résumé history is a durable `RESUME#` record split from the 30-day trace    | Accepted   |
 
-**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (a `DictationProvider` seam with an optional `onInterim`; Web Speech still the choice, v1.1 slice 3) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
+**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (three times — a `DictationProvider` seam with an optional `onInterim`, v1.1 slice 3; mic on both composers, dictation fills but never sends, v1.1 slice 4; then a **correction** that "browser-side" describes the API and not the processing — Web Speech transcribes server-side in Chrome and Safari, v1.1 slice 4) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
 
 ---
 
@@ -439,6 +439,108 @@ wired, and the seam does not commit the project to wiring any.
 
 What makes this a known case rather than speculative generality is the ADR's own record: Web Speech
 support is weak in Firefox. A second provider is therefore a foreseeable need, not an imagined one.
+
+### Amendment 2 (2026-08-10, v1.1 slice 4) — where the mic lives, and the review gate that makes it safe
+
+Amendment 1 recorded the seam. This records what gets built on it. These are details of the decision
+above rather than a new one, which is why they are an amendment and not ADR-047 — and it follows the
+slice-2 precedent, where the identical single-line-pill override on Log was recorded as a code
+comment rather than an ADR.
+
+**The mic goes on both composers, not just Log.** The narrower option was on the table and was
+rejected by Oche: voice exists to remove capture friction, and Home is the view users land on —
+especially on mobile. A mic that requires navigating to a second view first has given back the thing
+it was added to save.
+
+**Home's `<input>` becomes an auto-growing `<textarea>` to make that safe.** There was never a
+principled reason for the single line; it is an `<input>` because the design handoff *drew* a
+one-liner pill, and until now nothing on Home produced multi-sentence text. Dictation does, and a
+dictated paragraph in a single-line control scrolls out of view horizontally. That matters because
+of the next decision.
+
+**Dictation fills the field and never sends.** The transcript lands in the composer; the user reads,
+edits, and submits deliberately. This is the mitigation for the thing this ADR already knew about
+speech-to-text — it is messier than typing, with filler words, no punctuation and garbled proper
+nouns. Auto-send-on-silence was rejected: an unreviewed send costs ~$0.006 *and* deposits a garbled
+entry in the corpus, so it fails on both the cost axis and the data-quality one.
+
+Note the interaction the review gate has with the existing hand-off, because it reads like a hole and
+is not one: `Start logging` on Home navigates to Log, and Chat **auto-sends** the carried text. The
+review step is not missing — it sits on Home, *before* the button. Read the transcript in the field,
+then press. One deliberate review per path, on both paths.
+
+**Where the API is absent, no mic renders at all.** Feature-detect at mount. Typing already works and
+is the default, so a hidden control leaves no broken affordance and nothing to explain. This ADR's
+own record of weak Firefox support is what makes the fallback a requirement rather than a nicety.
+
+**The mic lives inside the field's box** — added after seeing it on screen. Placed beside the field
+it reads as a peer of the submit button; placed inside, it reads as what it is, an input method for
+that field. Log's pill already had this shape, so this is Home matching Log rather than a new idea.
+
+**Consequence worth stating plainly:** the cost premise is unchanged and load-bearing. Voice adds
+**$0** — the transcript enters `POST /chat` and costs exactly what a typed message costs. If a
+future change makes voice cost money, it has contradicted this ADR and needs a new one.
+
+#### The trigger to revisit is broader than amendment 1 recorded
+
+Amendment 1 justified the `DictationProvider` seam on one fact: Web Speech support is weak in
+Firefox. Raised by Oche at slice-4 kickoff, and correct — **that understates the case, because the
+support matrix is the least of it.** Web Speech is inconsistent *where it is supported*:
+
+- **Continuous mode stops on its own.** Recognition ends on a silence timeout the page does not
+  control and cannot configure, so "keep listening until I stop" is something the app has to
+  reconstruct by restarting a session that ended without being asked to.
+- **Final results arrive more than once.** The same utterance can be emitted as a final result
+  repeatedly, so naive accumulation duplicates text.
+- **Chrome and Safari differ in the details** — event timing, interim granularity, and what happens
+  on restart — so "works in Chrome" is not evidence it works.
+
+This makes the seam load-bearing in a way a support gap alone would not. A support gap is closed by
+someone else shipping a feature; **behavioural inconsistency is not, and the state machine papering
+over it is the part most likely to break.** So the presumption that this project eventually moves off
+Web Speech is recorded here as reasonable rather than speculative — while noting the constraint that
+has not moved: any *paid* replacement contradicts this ADR's cost premise against NFR-1.1 and needs
+its own decision with numbers. A free, better browser API would not.
+
+**What this does not license:** building for the second provider now. One implementation, behind the
+interface, with the quirks handled in the Web Speech implementation and not leaked into the contract.
+
+#### Correction (2026-08-11, slice 4 security review) — "browser-side" is true of the API, not of the processing
+
+**This ADR has been describing Web Speech in a way that is materially wrong, and the error runs
+through every version of it.** The original decision says the browser API avoids "added cost and
+complexity"; amendment 1 says recognition is "browser-side, so voice capture adds **$0**"; amendment
+2 repeats the cost premise. All of that is true about the *bill*. None of it is true about *where the
+audio goes*.
+
+**In Chrome and Safari, Web Speech is not on-device.** Captured audio is streamed to the browser
+vendor's speech service and transcribed there. The implementation quietly corroborates this — it
+maps a `"network"` error code, which exists only because recognition needs a server round-trip.
+
+The decision itself **stands**: Web Speech is still the right choice, and the $5 ceiling (NFR-1.1)
+argument is untouched, because the cost claim was about AWS spend and remains exactly right. What
+changes is a claim this ADR should never have implied:
+
+- **Before slice 4, no audio left the device. Now it does** — to a third party, outside the SSE-S3 /
+  DynamoDB boundary every other part of this system is designed around, carrying precisely the PII
+  the app exists to hold: employers, dates, project detail, colleague references.
+- **The Transcribe comparison was never a privacy comparison.** Rejecting Amazon Transcribe on cost
+  reads, in hindsight, as though the browser option were also the more contained one. It is not.
+  Transcribe would have kept the audio inside the AWS account. That is not a reason to reverse the
+  decision at $0 vs paid, but it is a reason the trade-off should be recorded honestly.
+
+**Consequences accepted, with two mitigations built in slice 4:**
+
+1. **The user is told, at the moment it applies.** The recording status line states that audio is
+   sent to the browser's speech service. An undisclosed data flow is the actual defect here; the
+   flow itself is inherent to the chosen API.
+2. **The capture window is genuinely bounded.** The give-up counter now resets on *new speech*
+   rather than on "a transcript exists" — which, after the first word, was true on every event, so
+   ambient noise could have held the microphone open indefinitely. Pause tolerance is unchanged.
+
+**If this trade ever stops being acceptable** — a corpus with client-confidential detail, say — the
+replacement is not a different browser API but on-device STT or Transcribe, and that decision gets
+made here, with numbers, as amendment 1 already requires of any paid provider.
 
 ---
 

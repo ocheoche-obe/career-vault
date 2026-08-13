@@ -12,6 +12,7 @@ import {
   relativeSince,
   type Cadence,
 } from "../lib/aggregates";
+import { MicButton } from "../components/MicButton";
 import { LOG_CHIPS, MAX_MESSAGE_CHARS, isoWeek } from "../lib/composer";
 import { ProposalCard } from "./ProposalCard";
 import "./chat.css";
@@ -427,6 +428,18 @@ export function Chat({
                   }
                 }}
               />
+              {/*
+                Dictation writes into `draft` and stops there — it is deliberately not wired to
+                `submit` (ADR-014 amendment 2). Speech-to-text is messy enough that the user reviews
+                before anything reaches Bedrock.
+              */}
+              <MicButton
+                value={draft}
+                onChange={setDraft}
+                maxLength={MAX_MESSAGE_CHARS}
+                disabled={sending}
+              />
+
               <button type="submit" disabled={sending || !draft.trim()} aria-label="Send message">
                 <span aria-hidden="true">↑</span>
               </button>
