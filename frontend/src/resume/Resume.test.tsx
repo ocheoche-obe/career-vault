@@ -263,6 +263,95 @@ describe("starting a run", () => {
   });
 });
 
+describe("the interim draft (ADR-037 amendment)", () => {
+  const DRAFT_READY = {
+    status: "draft_ready",
+    run_id: "01JNEW",
+    document: {
+      summary: "Interim summary, still under review.",
+      experience: [{ title: "Engineer", employer: "Acme", bullets: ["Shipped the thing"] }],
+    },
+  };
+
+  const startRun = async () => {
+    render(<Resume idToken="tok" entries={VAULT} />);
+    const user = userEvent.setup();
+    await screen.findByText(/Nothing here yet/);
+    await user.type(screen.getByLabelText(/target role/i), "Staff SRE");
+    await user.click(screen.getByRole("button", { name: "Generate" }));
+  };
+
+  it("shows the draft mid-run, labelled as unfinished", async () => {
+    stubFetch(
+      { status: 200, body: { resumes: [] } },
+      { status: 202, body: { run_id: "01JNEW", status: "pending" } },
+      { status: 200, body: DRAFT_READY },
+    );
+
+    await startRun();
+
+    expect(await screen.findByText(/Interim summary, still under review/)).toBeInTheDocument();
+    expect(screen.getByText(/still being reviewed/i)).toBeInTheDocument();
+  });
+
+  it("keeps waiting rather than presenting the draft as the finished résumé", async () => {
+    stubFetch(
+      { status: 200, body: { resumes: [] } },
+      { status: 202, body: { run_id: "01JNEW", status: "pending" } },
+      { status: 200, body: DRAFT_READY },
+    );
+
+    await startRun();
+    await screen.findByText(/Interim summary, still under review/);
+
+    // `draft_ready` is not terminal: the spinner/live region must still be running, and none of the
+    // finished-run affordances may appear. A draft has no artifacts — offering Download here would
+    // link to a PDF that does not exist.
+    expect(screen.getByRole("status")).toHaveTextContent(/building your résumé/i);
+    expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
+  });
+
+  it("does not re-poll in a loop while a draft is showing", async () => {
+    // Regression test for the slice-5 code review's blocking finding. Writing the draft into
+    // `stage` — which the poll effect depends on — tore the effect down and re-ran it on every
+    // poll, re-polling immediately instead of after the 3s timer: measured at 18,445 requests in
+    // 1.5s, sustained for the whole ~60s a real run spends between draft and completion.
+    //
+    // The assertion is a *request count over elapsed time*, because that is the only thing that
+    // distinguishes the bug from correct behaviour — the rendered output is identical either way.
+    const calls = stubFetch(
+      { status: 200, body: { resumes: [] } },
+      { status: 202, body: { run_id: "01JNEW", status: "pending" } },
+      { status: 200, body: DRAFT_READY },
+    );
+
+    await startRun();
+    await screen.findByText(/Interim summary, still under review/);
+
+    const afterDraft = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+    // At a 3s interval, one second may contain at most one further poll. The broken version issued
+    // thousands. A generous bound still fails by three orders of magnitude.
+    expect(calls.length - afterDraft).toBeLessThan(5);
+  }, 10_000);
+
+  /*
+   * Deliberately *not* covered here: "a run that fails after showing a draft replaces it with the
+   * error". It was written, and it was flaky — `stubFetch` answers by queue position, so which
+   * response a given poll receives depends on how many requests mounting issued first, and at a 3s
+   * poll interval the draft landed before the failure only about three runs in five. Widening the
+   * wait did not fix it, because the draft genuinely never arrived on the losing runs.
+   *
+   * A test that passes 60% of the time is worse than no test: it trains people to re-run rather
+   * than read. The behaviour it aimed at is structural anyway — `settle` replaces the whole stage,
+   * so `failed` cannot coexist with a draft — and the transition itself is pinned in `api.test.ts`
+   * where no timers are involved. Doing it properly here needs fake timers driving the poll, which
+   * is worth having and is not worth blocking this slice on.
+   */
+});
+
 describe("accessibility", () => {
   it("has exactly one h1", async () => {
     stubFetch({ status: 200, body: HISTORY });

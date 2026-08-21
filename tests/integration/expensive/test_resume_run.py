@@ -74,7 +74,7 @@ def cleanup_resume_artifacts(aws_session, cleanup_user):
 
 
 def test_a_tailored_resume_run_completes_and_produces_a_pdf(
-    lambda_client, cleanup_user, aws_session, cleanup_resume_artifacts
+    lambda_client, cleanup_user, aws_session, cleanup_resume_artifacts, latency
 ):
     for entry in SEED_ENTRIES:
         created = invoke(
@@ -101,6 +101,8 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
     started_at = time.time()
     deadline = started_at + POLL_TIMEOUT_SECONDS
     status, polled = None, {}
+    seen_statuses: list[str] = []
+    draft_seen: dict | None = None
     while time.time() < deadline:
         polled = body_of(
             invoke(
@@ -110,12 +112,39 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
             )
         )
         status = polled.get("status")
+        if status and status not in seen_statuses:
+            seen_statuses.append(status)
+        # ADR-037 amendment. Captured on the way past rather than asserted here, because a run that
+        # never emits it must fail with a useful message rather than time out.
+        if status == "draft_ready" and draft_seen is None:
+            draft_seen = polled
         if status in terminal:
             break
         time.sleep(POLL_INTERVAL_SECONDS)
 
     elapsed = time.time() - started_at
     assert status == "completed", f"run {run_id} ended as {status!r} after {elapsed:.0f}s: {polled}"
+
+    # Recorded into the ADR-047 table so this number survives the run rather than living in
+    # scrollback — a résumé run costs ~$0.11, which is far too much to pay for a measurement nobody
+    # can compare against later. NFR-2.2's 4-minute bound is a generous alerting ceiling, not a
+    # target (requirements v0.6), so the verdict column will read PASS while B-020 is wide open.
+    latency.record(
+        name=f"résumé run — {len(SEED_ENTRIES)}-entry corpus, critique={polled.get('critique_verdict')}",
+        tier="expensive",
+        kind="end-to-end",
+        ms=elapsed * 1000,
+        nfr="NFR-2.2",
+        nfr_ms=240_000,
+        ceiling_ms=POLL_TIMEOUT_SECONDS * 1000,
+        # Tokens and cost ride along in the same row as the duration, because B-020 and B-004 are
+        # one mechanism seen from two sides — a caching change that cut time but not tokens (or the
+        # reverse) would mean something quite different from one that cut both.
+        notes=(
+            f"{polled.get('tokens')} tok · ${polled.get('cost_usd')}"
+            f" · cache r/w {polled.get('cache_read_tokens', '—')}/{polled.get('cache_write_tokens', '—')}"
+        ),
+    )
 
     # Reported rather than asserted. Requirements §7.4's original "within 30 seconds" is why
     # generation is async at all (ADR-037), and duration varies with corpus size and whether the
@@ -124,6 +153,37 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
         f"\nrésumé run {run_id}: {elapsed:.0f}s, {polled.get('tokens')} tokens, "
         f"${polled.get('cost_usd')}, critique={polled.get('critique_verdict')}, "
         f"entries={polled.get('retrieved_count')}"
+    )
+
+    # --- ADR-037 amendment: the draft really is published mid-run --------------------------------
+    # The whole point is a résumé on screen at ~T+60s instead of at the end. Unit tests pin the
+    # callback and the poll branch; only a deployed run proves the worker actually writes the item
+    # and the poll actually serves it, in the order a user would meet them.
+    assert "draft_ready" in seen_statuses, (
+        f"no draft_ready observed — statuses seen: {seen_statuses}. Either the worker never "
+        "published the Phase-3 draft, or the poll interval stepped over it."
+    )
+    assert draft_seen is not None
+    assert draft_seen.get("document"), "draft_ready carried no document"
+    # Non-terminal means non-terminal: nothing downloadable may exist yet (ADR-046).
+    assert not draft_seen.get("pdf_url"), "a draft must not presign artifacts"
+    assert not draft_seen.get("html_url"), "a draft must not presign artifacts"
+    assert seen_statuses.index("draft_ready") < seen_statuses.index(status), seen_statuses
+
+    # --- ADR-048: caching must be proven engaged, not merely requested ---------------------------
+    # This is the assertion the ADR exists for. A `cachePoint` below the model's token minimum is a
+    # silent no-op: Bedrock returns no error, no warning, and bills the full uncached prefix. A test
+    # asserting the block was *sent* would pass in exactly that situation. Only a non-zero read back
+    # from a real multi-iteration run proves the cache was populated and then used.
+    cache_read = polled.get("cache_read_tokens")
+    cache_write = polled.get("cache_write_tokens")
+    assert cache_write, (
+        f"no cache write on a {polled.get('retrieval_iterations', '?')}-iteration run — the prefix "
+        f"never became cacheable (below the model minimum?). usage: {cache_read}/{cache_write}"
+    )
+    assert cache_read, (
+        f"cache written ({cache_write} tokens) but never read back. The breakpoint moved in a way "
+        "that invalidated the prefix, or the run ended before a second iteration."
     )
 
     # Presigned URLs for both artifacts — the PDF is what the user downloads, the HTML is what the

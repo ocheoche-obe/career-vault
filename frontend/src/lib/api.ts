@@ -252,6 +252,13 @@ export type ResumeDocument = {
 /** A poll result. `failed` carries the backend's already-friendly message — render it as-is. */
 export type RunStatus =
   | { status: "pending"; runId: string }
+  /**
+   * Non-terminal (ADR-037 amendment). The Phase-3 draft exists and is worth showing at ~T+60s, but
+   * critique and revise have not run: there are no artifacts, no urls, and no history record. The
+   * client keeps polling and `completed` replaces this in place — a run can still end as `failed`
+   * after a draft, so this content must never be treated as a result to keep.
+   */
+  | { status: "draftReady"; runId: string; document?: ResumeDocument }
   | {
       status: "completed";
       runId: string;
@@ -351,6 +358,9 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
       elapsedSeconds: b.elapsed_seconds as number | undefined,
       document: b.document as ResumeDocument | undefined,
     };
+  }
+  if (b.status === "draft_ready") {
+    return { status: "draftReady", runId, document: b.document as ResumeDocument | undefined };
   }
   if (b.status === "failed") {
     return {

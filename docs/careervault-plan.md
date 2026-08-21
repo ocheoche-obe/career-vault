@@ -72,6 +72,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
 | v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
 | v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ✅ | [#51](https://github.com/ocheoche-obe/career-vault/pull/51) |
+| v1.1-5 | Résumé speed — measure, then optimise | B-023, B-020, B-004, NFR-2.1/2.2/2.3 | ✅ | [#52](https://github.com/ocheoche-obe/career-vault/pull/52) |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1970,6 +1971,275 @@ containment guarantee it never had, and this app's whole subject matter is the k
 makes that matter. Corrected in the ADL, disclosed in the UI, and the capture window given a bound
 that actually holds. The code review returned two findings, both fixed in-slice: one that would have
 re-sent a message and charged for it, one layout regression.
+
+---
+
+## v1.1 slice 5 — Résumé speed ✅
+
+**Goal:** put real numbers on the three latency NFRs that have never had any, then move the one
+number users actually feel — résumé generation — and prove the move with the same harness that
+produced the baseline.
+
+**Key refs:** ADR-010 (own the loop) · ADR-036 (agent model + caps) · ADR-037 (async job) ·
+ADR-042 (test tiering) · backlog **B-023**, **B-020**, **B-004**; related **B-013**.
+
+### ⚠ Decisions — resolved with Oche before code, 2026-08-21
+
+1. **Measure → optimise → re-measure, in one slice.** The alternative was shipping B-023 alone and
+   deciding the levers against finished data. Rejected as too slow for a change whose whole risk is
+   that it *feels* faster without being faster — the same harness has to produce both numbers, or the
+   before and after aren't comparable.
+2. **Levers: (b) prompt caching, (d) Haiku for critique, (a)/(e) progressive render. Not (c).**
+   Skipping the agentic loop for small corpora is the largest single win and was **declined** — it
+   runs directly against ADR-010's own-the-loop learning goal, and it would make the code path this
+   project exists to teach the one that no longer executes. ADR-010 stands unamended.
+3. **The harness records always and asserts on generous ceilings.** Hard NFR assertions were
+   considered and rejected: NFR-2.3 is *expected* to fail on day one (slice 1 measured `GET /entries`
+   at 3639ms against a 2000ms budget), so a hard gate ships a red suite that says nothing new. The
+   NFR verdict is a human reading recorded numbers; the assertion exists only to catch regression.
+
+### Pre-flight findings — probed live against Bedrock, 2026-08-21
+
+Lever (b) rested on an assumption nobody had checked: that Bedrock prompt caching is available for
+the model this agent actually runs on (Sonnet 4-6, since Sonnet 5 is ungrantable — B-010). It is.
+Probing it also turned up a trap.
+
+| Probe | Result |
+|---|---|
+| Sonnet 4-6, ~2.4K-token cached prefix | `cacheWriteInputTokens: 2403`, then `cacheReadInputTokens: 2403` on the repeat. Works. 5-minute TTL. |
+| Haiku 4.5, same ~2.4K prefix | `cacheWrite: 0`, `cacheRead: 0`, **`inputTokens: 2415` billed in full.** No error, no warning. |
+| Haiku 4.5, ~9.6K prefix | `cacheWrite: 9602` — so Haiku *does* support caching. |
+| Haiku 4.5, bisected | Silent at ~3055 tokens, caches at ~4162 — consistent with a 4096-token minimum, against Sonnet's 1024. |
+
+**A `cachePoint` below the model's minimum is a silent no-op.** Bedrock does not error, does not
+warn, and bills the full uncached prefix. The minimum differs per model, so *"we added caching"* and
+*"caching happened"* are two separate claims. This is the same family as ADR-021's
+`required`-is-a-hint and the ADR-025 addendum on invisible degradation: the failure mode is a feature
+that looks shipped, costs full price, and shows nothing.
+
+Three consequences carried into the work:
+
+- Every caching change is **asserted by reading `cacheReadInputTokens` back from a real run**, never
+  assumed from the presence of a `cachePoint` block.
+- The agent's Sonnet prefix clears 1024 comfortably. The **chat/parse path cannot benefit** — Haiku
+  with short prompts sits below the 4096 minimum — so caching is a résumé-agent lever only, and
+  **B-013's interactive-path cost is untouched by it.** NFR-2.1/2.3 get measurement in this slice,
+  not improvement.
+- Lever (d) **interacts with** lever (b): moving critique to Haiku moves that phase out of caching
+  range. Both are still worth doing — critique is a single call over a finished draft, so it has
+  little history to cache — but the two cannot be evaluated independently, and the re-measure must
+  attribute the delta rather than report one number.
+
+One implementation fact found while probing: `bedrock_client.converse` accepts `system` as a `str`
+and wraps it as `[{"text": system}]`, so structured system blocks are not expressible today. The
+shared layer changes before the agent does.
+
+### Scope — in
+
+1. **B-023 — the latency harness.** Timing instrumentation in the integration suite, cold and warm
+   runs separated, printing a table on every run. NFR-2.3 (dashboard load) measures in the **free**
+   tier; NFR-2.1 (ingestion, end-to-end including Haiku) needs the **`--bedrock`** tier; NFR-2.2
+   (generation) needs **`--expensive`**. Regression ceilings well above each NFR.
+2. **Baseline, recorded.** Numbers for all three NFRs written into this section — including a ❌ if
+   that is what they say.
+3. **Prompt caching on the résumé agent's stable prefix** (B-020 lever b / B-004), with the
+   `cacheReadInputTokens` assertion. Shared-layer `converse` gains structured-system support.
+4. **Haiku for the critique phase** (lever d).
+5. **Progressive render** (levers a/e) — surface the draft when it exists rather than at the end of
+   critique/revise. Amends ADR-037's poll contract.
+6. **Re-measure with the same harness**, and state the delta per lever.
+
+### Scope — out
+
+- **(c) small-corpus loop bypass** — declined above; ADR-010 stands.
+- **B-013** (full-corpus read with embeddings) — the likely cause of an NFR-2.3 failure, and
+  deliberately left. This slice's job is to *measure* it; fixing it is an API-shape change on the
+  interactive path and wants its own decision.
+- **B-044** (`related_job_id`) — explicitly sequenced after this. It changes résumé *content*, and
+  changing content mid-measurement confounds both numbers.
+- **B-043, B-039** (résumé pagination, orphaned artifacts) — unrelated to speed.
+- **Mobile / B-001 / B-046** — the next slice.
+
+### Exit criteria
+
+- [ ] Every integration tier prints a timing table; cold and warm are distinguishable.
+- [ ] Baseline **and** post-change numbers recorded here for NFR-2.1, NFR-2.2, NFR-2.3.
+- [ ] Caching proven by a test asserting `cacheReadInputTokens > 0` on a real multi-iteration run —
+      not by the presence of a `cachePoint`.
+- [ ] Résumé generation re-measured on the real corpus; **the delta is reported honestly even if it
+      is small or negative**, and attributed per lever.
+- [ ] The MVP scorecard's NFR-2.1/2.3 rows move off ❓Unverified to a measured verdict.
+- [ ] ADRs written **before** the code they justify; ADR-037 amended for progressive render.
+- [ ] Backend + frontend + integration suites green; both reviews run; docs current.
+
+### Baseline — measured 2026-08-21, before any optimisation
+
+All produced by the ADR-047 harness, so the post-change numbers are comparable rather than merely
+adjacent. Cold means a Lambda-reported `Init Duration` was present; warm means it was not.
+
+| NFR | Path | Cold | Warm | Verdict |
+|---|---|---|---|---|
+| **2.1** | `POST /chat` parse turn | 4,392 ms (1,208 init + 2,438 handler) | ~1,710 ms | ✅ under 5,000 ms |
+| **2.1** | `POST /entries` confirm write | 2,798 ms (1,337 init + 888 handler) | 346 ms | ✅ individually |
+| **2.3** | `GET /entries`, 13 entries | **2,620 ms** (1,053 init + 778 handler) | 300 ms | ❌ **over 2,000 ms cold**, ✅ warm |
+| **2.3** | `GET /entries`, empty (control) | — | 94 ms (6 ms handler) | ✅ |
+| **2.2** | résumé run, 2-entry corpus, `REVISE` | 81.8 s · 21,067 tokens · **$0.1233** | — | ✅ under 4 min |
+
+**The headline finding is that the slice was scoped on a wrong assumption, and the harness caught it
+on its first run.** NFR-2.3's miss was attributed to B-013 — every entry ships its ~1024-float Titan
+vector to a caller that discards it. Measured, the corpus term is the difference between the 13-entry
+and empty handler times: **~188 ms, about 14.5 ms per entry, ~8% of a cold dashboard load.** The
+dominant terms are container init (~1.05 s) and first-invocation setup inside the handler (~580 ms).
+
+Projecting the embedding out of the query — the obvious fix, and the one the backlog pointed at —
+would have bought ~190 ms against a ~2,300 ms problem and been written up as addressing the
+requirement. B-013's backlog row and ADR-047's context are both corrected in place. **B-013's real
+trigger is corpus growth**: at ~14.5 ms/entry the read alone reaches the 2 s budget near ~140 entries.
+
+Two consequences for this slice's scope:
+
+- **NFR-2.3 is a cold-start problem, and this slice does not fix it.** The levers are provisioned
+  concurrency (which costs money against a $5 ceiling where all infrastructure is currently under
+  $0.01/month), a smaller import graph, or accepting it. That is a real decision and it is **not**
+  one to make inside a slice scoped on résumé speed — logged rather than rushed.
+- The ✅ on NFR-2.1 is genuine but thin, and **depends on how the requirement is read**. Its own
+  parenthetical says "user submits text → confirmation shown", which is the parse turn: 4.4 s cold
+  against a 5 s budget, most of it Haiku. Read instead as "the entry is saved", the confirm write
+  follows and a fully cold submit-then-confirm is **~7.2 s — over budget**. Scored against the
+  wording as written, with the stricter reading recorded rather than buried.
+
+⚠️ **The confirm-write figure here is the *corrected* one.** The first version of this measurement
+posted identical text on every repeat, so ADR-033's semantic dup check answered **409 before the
+DynamoDB write** — and the recorded "confirm write" median (239 ms) described a duplicate rejection,
+not an ingestion. It reached the scorecard before the slice-5 code review caught it. The test now
+posts materially distinct entries and **asserts every call returns 201**, so a regression back to
+measuring rejections fails the suite instead of publishing a flattering number.
+
+⚠️ Cold starts are forced by a concurrent burst to the reserved-concurrency cap, from one test
+process, so the **observed** column carries some client-side contention and is pessimistic. The
+Lambda-reported `Init Duration` and `Duration` are unaffected and are the numbers to trust.
+
+### Result — measured 2026-08-21, after the change
+
+Four `--expensive` runs on the same 2-entry fixture, all returning the same `REVISE` verdict, all on
+the ADR-047 harness. The middle row is the attribution run: caching on, critique flipped back to
+Sonnet via `AGENT_CRITIQUE_MODEL`.
+
+| Configuration | Wall clock | Cost | Tokens | Cache read/write |
+|---|---|---|---|---|
+| **Baseline** — no caching, Sonnet critique | 81.8 s | $0.1233 | 21,067 | — |
+| **Caching only** — Sonnet critique | 84.2 s | $0.1071 | 20,632 | 4,912 / 2,829 |
+| **Both levers** — caching + Haiku critique | **48.4 s** | **$0.0785** | 23,851 | 7,754 / 4,480 |
+
+**Net: 41% faster, 36% cheaper.** And the attribution overturns the reasoning that ordered the work.
+
+- **Prompt caching bought ~13% of the cost and none of the latency.** 84.2 s against an 81.8 s
+  baseline is within run-to-run noise (two baseline runs measured 79.2 s and 81.8 s, ~3% apart), so
+  the honest reading is *no measurable latency effect*. ADR-048 predicted it would "cut both billed
+  input tokens and time-to-first-token"; only the first half happened.
+- **The Haiku critique swap delivered essentially the entire latency win** — 84.2 s → 48.4 s, a 43%
+  cut — and over half the cost saving. It was ranked as the minor lever, worth doing alongside the
+  real one. It was the real one.
+
+Why, in hindsight: the levers were chosen against B-004's *cost* mechanism (a growing prompt
+re-sent) and then assumed to move latency for the same reason. But a résumé run's wall clock is
+dominated by **output token generation** in draft, critique and revise, and caching does not touch
+output at all. Cheaper input, same generation time.
+
+⚠️ **The 2-entry fixture understates caching, and that matters.** B-004/B-020's whole premise is that
+the retrieval history grows with the corpus — the real 13-entry corpus measured ~83K tokens against
+this fixture's ~21K. Caching scales with the size of the re-sent prefix, so its cost saving should be
+materially larger there than the 13% seen here, while the Haiku finding (which is about output, not
+input) should hold roughly constant. **Nothing here justifies removing caching**; it justifies not
+having called it the latency lever.
+
+⚠️ **Thin sampling, but the headline replicated.** A fifth run (added to verify `draft_ready`
+end-to-end) landed at **48.6 s / $0.0776 / cache r/w 7744/4546** — within 0.4% of the 48.4 s run, so
+the both-levers arm has n=2 and is tight. The baseline arm also has n=2 (79.2 s, 81.8 s). Only the
+attribution arm is n=1. The Haiku effect (−43%) is far outside the observed ~3% noise and is safe to
+call real; the caching latency null (+3%) sits inside it, which is why it is reported as "no
+measurable effect" rather than "slightly worse".
+
+**Verified on the deployed stack, not just in unit tests:** the `--expensive` run now asserts that a
+`draft_ready` poll is actually observed before the terminal state, that it carries a document, and
+that it presigns nothing. That last assertion is the one worth having — it is what stops a future
+change quietly making a half-finished résumé downloadable.
+
+Not re-measured: NFR-2.1 and NFR-2.3. Neither path touches the résumé agent, and caching cannot
+reach them — the chat/parse path runs Haiku on prompts below the ~4096-token cache minimum.
+
+### Completion notes
+
+**Shipped:** the ADR-047 latency harness (every integration tier prints a cold/warm timing table,
+gated on regression ceilings); prompt caching on the résumé agent's retrieval loop with cache-token
+accounting through to the poll (ADR-048); the critique phase on Haiku, switchable via the
+`AgentCritiqueModel` template parameter; and a non-terminal `draft_ready` poll state that surfaces
+the Phase-3 draft mid-run (ADR-037 amendment), rendered as explicitly unfinished.
+
+**Deployed and verified:** backend via `sam build --cached && sam deploy` (twice — once for the
+levers, once for the review fixes); frontend via `s3 sync` + CloudFront invalidation. The
+`--expensive` run asserts, against the deployed stack, that a `draft_ready` poll is observed before
+the terminal state, carries a document, and **presigns nothing**.
+
+**Exit criteria:** all met. Timing table prints on every tier ✅ · baseline and post-change recorded
+here ✅ · caching proven by `cacheReadInputTokens > 0` on a real run rather than by the presence of a
+`cachePoint` ✅ · delta reported honestly and attributed per lever ✅ (and the attribution is the
+slice's most valuable output) · scorecard NFR-2.1/2.3 moved off ❓Unverified ✅ · ADRs written before
+the code ✅ · both reviews run ✅.
+
+**Cost:** ~**$0.78** across seven `--expensive` runs, three `--bedrock` runs and the caching probes.
+Month-to-date at wrap sits near **$1.3** against the $5 ceiling. This is the first slice where
+*testing* was the dominant spend, which is the honest price of refusing to optimise without a
+baseline.
+
+#### Gotchas a future session will trip over
+
+1. **`cachePoint` below the model minimum is a silent no-op**, billed in full, and the minimum
+   differs per model (~1024 Sonnet, ~4096 Haiku 4.5). Assert `cacheReadInputTokens`, never the
+   request. This is the third Bedrock surface where the request and the effect diverged
+   (cf. ADR-021, ADR-025's addendum).
+2. **Writing to state a `useEffect` depends on, from inside that effect, is a re-poll loop.** The
+   draft was first stored on `stage`, which the poll effect lists in its dependencies — 18,445
+   requests in 1.5 s. It now lives in independent state, and the regression test asserts a
+   *request count over elapsed time*, because the rendered output is identical either way.
+3. **A latency test without a correctness assertion measures an unknown operation.** Twice this
+   slice: a 2 ms `422` recorded as a passing ingestion (wrong field name), and a `409` duplicate
+   rejection published to the scorecard as a 239 ms "confirm write".
+4. **Medians must be taken per-sample, not per-column.** Independently medianing observed and
+   Lambda duration produced a round trip shorter than the work it contained. Fixed in both
+   `record()` and `measure()`.
+5. **`sam build --use-container` stalled for 23 minutes** with no output. `sam build --cached`
+   reused the WeasyPrint layer and finished in seconds — that is the path to use when only Python
+   changed. Docker was healthy; a "Docker is hung" diagnosis mid-slice was an artefact of macOS
+   having no `timeout` binary.
+
+#### One thing to improve
+
+**Rank levers against the mechanism you actually intend to move.** ADR-048 reasoned from B-004's
+cost mechanism and assumed latency followed, because the backlog calls B-004 and B-020 "one
+mechanism seen from two sides". For cost they are; for wall clock they are not. The attribution run
+that caught it cost $0.08 and was nearly skipped as a formality — it is the reason this slice reports
+a 41% win credited to the right change instead of the wrong one. **Budget the attribution run by
+default whenever two levers ship together.**
+
+#### Deliberately left open
+
+- **B-047** — NFR-2.3's cold-start miss. Real, measured, and out of scope for a résumé-speed slice.
+- **B-044** — `related_job_id`, still sequenced after this slice. Now unblocked: latency is measured.
+- **Real-corpus re-measure.** All résumé numbers here are the 2-entry fixture. The 13-entry corpus
+  (~83K tokens, ~176 s pre-slice) has **not** been re-measured, and caching should pay materially
+  more there.
+- **The draft render has not been seen in a live browser.** It is component-tested, api-tested, and
+  server-verified, and the deployed frontend carries it — but no human or Playwright session has
+  watched a real draft appear at T+60s. Slice 4's collapsed mobile CTA is the precedent for why that
+  gap is worth naming rather than assuming.
+
+### Cost note
+
+Before/after measurement needs several `--expensive` runs at ~$0.11–0.35 each; budget **~$0.7**.
+Month-to-date at slice start is **$0.48** against the $5 ceiling, so this is comfortable — but it is
+the one slice where the *testing* is the dominant spend, and caching should pull the per-run cost
+down rather than up.
 
 ---
 
