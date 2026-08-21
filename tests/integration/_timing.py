@@ -25,7 +25,6 @@ a warm one are different operations that happen to share a name, and their mean 
 
 from __future__ import annotations
 
-import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -151,25 +150,29 @@ class LatencyLog:
             )
         )
 
-        repeat_ms: list[float] = []
-        repeat_lambda: list[float] = []
+        # Paired, so the row stays internally coherent. Taking each column's median independently
+        # produces an observed round trip that does not contain its own reported Lambda duration,
+        # because the two numbers then come from different calls — the same defect that made the
+        # first cold-start row read as a 1,265 ms request containing 2,112 ms of work.
+        repeats_seen: list[tuple[float, float | None]] = []
         for _ in range(repeats):
             started = time.perf_counter()
             result = call()
-            repeat_ms.append((time.perf_counter() - started) * 1000)
+            elapsed_ms = (time.perf_counter() - started) * 1000
             results.append(result)
             lambda_ms, _init = report_for(result)
-            if lambda_ms is not None:
-                repeat_lambda.append(lambda_ms)
+            repeats_seen.append((elapsed_ms, lambda_ms))
 
-        if repeat_ms:
+        if repeats_seen:
+            repeats_seen.sort(key=lambda pair: pair[0])
+            median_ms, median_lambda = repeats_seen[len(repeats_seen) // 2]
             self.add(
                 Sample(
                     name=name,
                     tier=tier,
                     kind="steady-state",
-                    ms=statistics.median(repeat_ms),
-                    lambda_ms=statistics.median(repeat_lambda) if repeat_lambda else None,
+                    ms=median_ms,
+                    lambda_ms=median_lambda,
                     init_ms=None,
                     nfr=nfr,
                     nfr_ms=nfr_ms,
@@ -199,6 +202,16 @@ class LatencyLog:
         """
         sample = Sample(**fields)
         self.add(sample)
+        # Enforced here too, not only in `measure`. Storing a `ceiling_ms` that nothing checks is a
+        # gate that cannot fail — the cold-start row and the ~$0.11 résumé row both carried one, and
+        # the terminal summary printed the breach banner while the suite exited 0.
+        if sample.over_ceiling:
+            import pytest
+
+            pytest.fail(
+                f"regression ceiling breached: {sample.name} [{sample.kind}] "
+                f"{sample.ms:,.0f} ms > {sample.ceiling_ms:,} ms"
+            )
         return sample
 
     def breaches(self) -> list[Sample]:

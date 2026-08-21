@@ -312,6 +312,31 @@ describe("the interim draft (ADR-037 amendment)", () => {
     expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
   });
 
+  it("does not re-poll in a loop while a draft is showing", async () => {
+    // Regression test for the slice-5 code review's blocking finding. Writing the draft into
+    // `stage` — which the poll effect depends on — tore the effect down and re-ran it on every
+    // poll, re-polling immediately instead of after the 3s timer: measured at 18,445 requests in
+    // 1.5s, sustained for the whole ~60s a real run spends between draft and completion.
+    //
+    // The assertion is a *request count over elapsed time*, because that is the only thing that
+    // distinguishes the bug from correct behaviour — the rendered output is identical either way.
+    const calls = stubFetch(
+      { status: 200, body: { resumes: [] } },
+      { status: 202, body: { run_id: "01JNEW", status: "pending" } },
+      { status: 200, body: DRAFT_READY },
+    );
+
+    await startRun();
+    await screen.findByText(/Interim summary, still under review/);
+
+    const afterDraft = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+    // At a 3s interval, one second may contain at most one further poll. The broken version issued
+    // thousands. A generous bound still fails by three orders of magnitude.
+    expect(calls.length - afterDraft).toBeLessThan(5);
+  }, 10_000);
+
   /*
    * Deliberately *not* covered here: "a run that fails after showing a draft replaces it with the
    * error". It was written, and it was flaky — `stubFetch` answers by queue position, so which

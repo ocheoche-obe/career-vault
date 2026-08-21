@@ -77,12 +77,7 @@ function saveActiveRun(run: ActiveRun | null) {
 
 type Stage =
   | { phase: "idle" }
-  /**
-   * `draft` is the Phase-3 résumé, published mid-run by the agent (ADR-037 amendment). The stage
-   * stays `generating` while it is showing: polling must continue, the elapsed counter must keep
-   * running, and the run can still end as `failed`. Showing a draft is not a promise of success.
-   */
-  | { phase: "generating"; runId: string; startedAt: number; draft?: ResumeDocument }
+  | { phase: "generating"; runId: string; startedAt: number }
   /**
    * `fromHistory` marks a résumé opened from a past row rather than just generated. It gates
    * **Regenerate**, which reruns `target` — the textarea's contents, which for a history-opened
@@ -98,6 +93,16 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
   // Read once, at mount: if a run was in flight when the tab reloaded, re-attach to it.
   const [restored] = useState(loadActiveRun);
   const [target, setTarget] = useState(restored?.target ?? "");
+  /**
+   * The Phase-3 résumé, published mid-run by the agent (ADR-037 amendment).
+   *
+   * **Held apart from `stage` on purpose, and this is load-bearing.** The poll effect lists `stage`
+   * in its dependencies, so writing the draft into the stage made every poll produce a new stage
+   * object, tear the effect down and re-run it — which re-polls immediately instead of after the
+   * 3s timer. Measured at **18,445 requests in 1.5s** before it was caught, for the whole ~60s
+   * between draft and completion. Separate state the effect does not depend on breaks the cycle.
+   */
+  const [draft, setDraft] = useState<ResumeDocument | null>(null);
   const [stage, setStage] = useState<Stage>(() =>
     restored ? { phase: "generating", runId: restored.runId, startedAt: restored.startedAt } : { phase: "idle" },
   );
@@ -176,12 +181,9 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
         }
         if (result.status === "draftReady") {
           // Deliberately not `settle` — that clears the saved active run and stops the watch. This
-          // is a progress update inside the same stage, so the poll loop below keeps going.
-          if (!cancelled && result.document) {
-            setStage((current) =>
-              current.phase === "generating" ? { ...current, draft: result.document } : current,
-            );
-          }
+          // is a progress update, so the loop below keeps going. It must not touch `stage`, which
+          // this effect depends on; see the `draft` declaration above.
+          if (result.document) setDraft(result.document);
         }
         if (result.status === "failed") return settle({ phase: "failed", message: result.message });
         if (result.status === "notfound") {
@@ -242,6 +244,9 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           return;
         }
         saveActiveRun({ runId: result.runId, startedAt, target: trimmed });
+        // Clear any draft from a previous run before the new one starts, or the old résumé shows
+        // under the new target until the first draft poll lands.
+        setDraft(null);
         setStage({ phase: "generating", runId: result.runId, startedAt });
       } finally {
         setStarting(false);
@@ -321,6 +326,7 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           target={target}
           setTarget={setTarget}
           stage={stage}
+          draft={draft}
           starting={starting}
           elapsed={elapsed}
           entryCount={entries === null ? null : entries.length}
@@ -345,6 +351,7 @@ function Generator({
   target,
   setTarget,
   stage,
+  draft,
   starting,
   elapsed,
   entryCount,
@@ -353,6 +360,7 @@ function Generator({
   target: string;
   setTarget: (v: string) => void;
   stage: Stage;
+  draft: ResumeDocument | null;
   starting: boolean;
   elapsed: number;
   entryCount: number | null;
@@ -406,7 +414,7 @@ function Generator({
         )}
       </div>
 
-      {generating && stage.draft && (
+      {generating && draft && (
         <div className="generator-draft">
           {/* Labelled unambiguously as work in progress. The agent is still critiquing and may
               rewrite any of this, so presenting it as the résumé would be a lie the next poll
@@ -414,8 +422,8 @@ function Generator({
           <p className="generator-draft-label">
             First draft — still being reviewed, and it will change.
           </p>
-          {stage.draft.summary && <p className="generator-draft-summary">{stage.draft.summary}</p>}
-          {stage.draft.experience?.slice(0, 3).map((role, index) => (
+          {draft.summary && <p className="generator-draft-summary">{draft.summary}</p>}
+          {draft.experience?.slice(0, 3).map((role, index) => (
             <div key={`${role.employer}-${index}`} className="generator-draft-role">
               <p className="generator-draft-role-title">
                 {role.title}

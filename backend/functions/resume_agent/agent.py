@@ -154,7 +154,14 @@ def _critique_model_id() -> str:
     by someone who should not need a code change and a container build to act on it. It also made
     the two levers in this slice separately measurable, which is how the split below was obtained.
     """
-    return _haiku_model_id() if os.environ.get("AGENT_CRITIQUE_MODEL", "haiku") == "haiku" else _sonnet_model_id()
+    choice = os.environ.get("AGENT_CRITIQUE_MODEL", "haiku").strip().lower()
+    if choice not in ("haiku", "sonnet"):
+        # Fall back to the default rather than silently selecting the *other* model. An exact-match
+        # `== "haiku"` test made every typo — "Haiku", "hiaku", "" — resolve to Sonnet, quietly
+        # doubling the cost of the phase this slice moved off Sonnet on purpose.
+        logger.warning("Unrecognised AGENT_CRITIQUE_MODEL; using haiku", extra={"value": choice})
+        choice = "haiku"
+    return _haiku_model_id() if choice == "haiku" else _sonnet_model_id()
 
 
 def _args_hash(tool_name: str, tool_input: dict) -> str:
