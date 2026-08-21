@@ -101,6 +101,8 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
     started_at = time.time()
     deadline = started_at + POLL_TIMEOUT_SECONDS
     status, polled = None, {}
+    seen_statuses: list[str] = []
+    draft_seen: dict | None = None
     while time.time() < deadline:
         polled = body_of(
             invoke(
@@ -110,6 +112,12 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
             )
         )
         status = polled.get("status")
+        if status and status not in seen_statuses:
+            seen_statuses.append(status)
+        # ADR-037 amendment. Captured on the way past rather than asserted here, because a run that
+        # never emits it must fail with a useful message rather than time out.
+        if status == "draft_ready" and draft_seen is None:
+            draft_seen = polled
         if status in terminal:
             break
         time.sleep(POLL_INTERVAL_SECONDS)
@@ -146,6 +154,21 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
         f"${polled.get('cost_usd')}, critique={polled.get('critique_verdict')}, "
         f"entries={polled.get('retrieved_count')}"
     )
+
+    # --- ADR-037 amendment: the draft really is published mid-run --------------------------------
+    # The whole point is a résumé on screen at ~T+60s instead of at the end. Unit tests pin the
+    # callback and the poll branch; only a deployed run proves the worker actually writes the item
+    # and the poll actually serves it, in the order a user would meet them.
+    assert "draft_ready" in seen_statuses, (
+        f"no draft_ready observed — statuses seen: {seen_statuses}. Either the worker never "
+        "published the Phase-3 draft, or the poll interval stepped over it."
+    )
+    assert draft_seen is not None
+    assert draft_seen.get("document"), "draft_ready carried no document"
+    # Non-terminal means non-terminal: nothing downloadable may exist yet (ADR-046).
+    assert not draft_seen.get("pdf_url"), "a draft must not presign artifacts"
+    assert not draft_seen.get("html_url"), "a draft must not presign artifacts"
+    assert seen_statuses.index("draft_ready") < seen_statuses.index(status), seen_statuses
 
     # --- ADR-048: caching must be proven engaged, not merely requested ---------------------------
     # This is the assertion the ADR exists for. A `cachePoint` below the model's token minimum is a

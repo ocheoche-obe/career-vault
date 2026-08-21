@@ -2143,10 +2143,17 @@ materially larger there than the 13% seen here, while the Haiku finding (which i
 input) should hold roughly constant. **Nothing here justifies removing caching**; it justifies not
 having called it the latency lever.
 
-⚠️ **n=1 per configuration.** Four runs at ~$0.08–0.12 each is what the $5 ceiling makes reasonable,
-so the 41%/36% headline is one sample per arm, not a distribution. The Haiku effect (−43%) is far
-outside the observed ~3% noise and is safe to call real; the caching latency null (+3%) is inside it,
-which is exactly why it is reported as "no measurable effect" rather than "slightly worse".
+⚠️ **Thin sampling, but the headline replicated.** A fifth run (added to verify `draft_ready`
+end-to-end) landed at **48.6 s / $0.0776 / cache r/w 7744/4546** — within 0.4% of the 48.4 s run, so
+the both-levers arm has n=2 and is tight. The baseline arm also has n=2 (79.2 s, 81.8 s). Only the
+attribution arm is n=1. The Haiku effect (−43%) is far outside the observed ~3% noise and is safe to
+call real; the caching latency null (+3%) sits inside it, which is why it is reported as "no
+measurable effect" rather than "slightly worse".
+
+**Verified on the deployed stack, not just in unit tests:** the `--expensive` run now asserts that a
+`draft_ready` poll is actually observed before the terminal state, that it carries a document, and
+that it presigns nothing. That last assertion is the one worth having — it is what stops a future
+change quietly making a half-finished résumé downloadable.
 
 Not re-measured: NFR-2.1 and NFR-2.3. Neither path touches the résumé agent, and caching cannot
 reach them — the chat/parse path runs Haiku on prompts below the ~4096-token cache minimum.
