@@ -2072,6 +2072,85 @@ shared layer changes before the agent does.
 - [ ] ADRs written **before** the code they justify; ADR-037 amended for progressive render.
 - [ ] Backend + frontend + integration suites green; both reviews run; docs current.
 
+### Baseline — measured 2026-08-21, before any optimisation
+
+All produced by the ADR-047 harness, so the post-change numbers are comparable rather than merely
+adjacent. Cold means a Lambda-reported `Init Duration` was present; warm means it was not.
+
+| NFR | Path | Cold | Warm | Verdict |
+|---|---|---|---|---|
+| **2.1** | `POST /chat` parse turn | 4,307 ms (1,305 init + 2,278 handler) | 1,638 ms | ✅ under 5,000 ms |
+| **2.1** | `POST /entries` confirm write | — | 239 ms | ✅ |
+| **2.3** | `GET /entries`, 13 entries | **2,620 ms** (1,053 init + 778 handler) | 300 ms | ❌ **over 2,000 ms cold**, ✅ warm |
+| **2.3** | `GET /entries`, empty (control) | — | 94 ms (6 ms handler) | ✅ |
+| **2.2** | résumé run, 2-entry corpus, `REVISE` | 81.8 s · 21,067 tokens · **$0.1233** | — | ✅ under 4 min |
+
+**The headline finding is that the slice was scoped on a wrong assumption, and the harness caught it
+on its first run.** NFR-2.3's miss was attributed to B-013 — every entry ships its ~1024-float Titan
+vector to a caller that discards it. Measured, the corpus term is the difference between the 13-entry
+and empty handler times: **~188 ms, about 14.5 ms per entry, ~8% of a cold dashboard load.** The
+dominant terms are container init (~1.05 s) and first-invocation setup inside the handler (~580 ms).
+
+Projecting the embedding out of the query — the obvious fix, and the one the backlog pointed at —
+would have bought ~190 ms against a ~2,300 ms problem and been written up as addressing the
+requirement. B-013's backlog row and ADR-047's context are both corrected in place. **B-013's real
+trigger is corpus growth**: at ~14.5 ms/entry the read alone reaches the 2 s budget near ~140 entries.
+
+Two consequences for this slice's scope:
+
+- **NFR-2.3 is a cold-start problem, and this slice does not fix it.** The levers are provisioned
+  concurrency (which costs money against a $5 ceiling where all infrastructure is currently under
+  $0.01/month), a smaller import graph, or accepting it. That is a real decision and it is **not**
+  one to make inside a slice scoped on résumé speed — logged rather than rushed.
+- The ✅ on NFR-2.1 is genuine but thin: 4.3 s cold against a 5 s budget, with ~2.3 s of it Haiku.
+  It passes today and would not survive the parse turn getting much slower.
+
+⚠️ Cold starts are forced by a concurrent burst to the reserved-concurrency cap, from one test
+process, so the **observed** column carries some client-side contention and is pessimistic. The
+Lambda-reported `Init Duration` and `Duration` are unaffected and are the numbers to trust.
+
+### Result — measured 2026-08-21, after the change
+
+Four `--expensive` runs on the same 2-entry fixture, all returning the same `REVISE` verdict, all on
+the ADR-047 harness. The middle row is the attribution run: caching on, critique flipped back to
+Sonnet via `AGENT_CRITIQUE_MODEL`.
+
+| Configuration | Wall clock | Cost | Tokens | Cache read/write |
+|---|---|---|---|---|
+| **Baseline** — no caching, Sonnet critique | 81.8 s | $0.1233 | 21,067 | — |
+| **Caching only** — Sonnet critique | 84.2 s | $0.1071 | 20,632 | 4,912 / 2,829 |
+| **Both levers** — caching + Haiku critique | **48.4 s** | **$0.0785** | 23,851 | 7,754 / 4,480 |
+
+**Net: 41% faster, 36% cheaper.** And the attribution overturns the reasoning that ordered the work.
+
+- **Prompt caching bought ~13% of the cost and none of the latency.** 84.2 s against an 81.8 s
+  baseline is within run-to-run noise (two baseline runs measured 79.2 s and 81.8 s, ~3% apart), so
+  the honest reading is *no measurable latency effect*. ADR-048 predicted it would "cut both billed
+  input tokens and time-to-first-token"; only the first half happened.
+- **The Haiku critique swap delivered essentially the entire latency win** — 84.2 s → 48.4 s, a 43%
+  cut — and over half the cost saving. It was ranked as the minor lever, worth doing alongside the
+  real one. It was the real one.
+
+Why, in hindsight: the levers were chosen against B-004's *cost* mechanism (a growing prompt
+re-sent) and then assumed to move latency for the same reason. But a résumé run's wall clock is
+dominated by **output token generation** in draft, critique and revise, and caching does not touch
+output at all. Cheaper input, same generation time.
+
+⚠️ **The 2-entry fixture understates caching, and that matters.** B-004/B-020's whole premise is that
+the retrieval history grows with the corpus — the real 13-entry corpus measured ~83K tokens against
+this fixture's ~21K. Caching scales with the size of the re-sent prefix, so its cost saving should be
+materially larger there than the 13% seen here, while the Haiku finding (which is about output, not
+input) should hold roughly constant. **Nothing here justifies removing caching**; it justifies not
+having called it the latency lever.
+
+⚠️ **n=1 per configuration.** Four runs at ~$0.08–0.12 each is what the $5 ceiling makes reasonable,
+so the 41%/36% headline is one sample per arm, not a distribution. The Haiku effect (−43%) is far
+outside the observed ~3% noise and is safe to call real; the caching latency null (+3%) is inside it,
+which is exactly why it is reported as "no measurable effect" rather than "slightly worse".
+
+Not re-measured: NFR-2.1 and NFR-2.3. Neither path touches the résumé agent, and caching cannot
+reach them — the chat/parse path runs Haiku on prompts below the ~4096-token cache minimum.
+
 ### Cost note
 
 Before/after measurement needs several `--expensive` runs at ~$0.11–0.35 each; budget **~$0.7**.

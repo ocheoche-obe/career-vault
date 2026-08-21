@@ -145,6 +145,18 @@ def _haiku_model_id() -> str:
     return os.environ["BEDROCK_HAIKU_MODEL_ID"]
 
 
+def _critique_model_id() -> str:
+    """Which model judges the draft (ADR-048).
+
+    Env-switchable rather than hard-coded because this is the one model choice in the agent that
+    trades *quality* for cost and speed, and ADR-048's stated revert trigger — "critique output that
+    stops distinguishing good drafts from bad" — is a judgement made from real output, weeks later,
+    by someone who should not need a code change and a container build to act on it. It also made
+    the two levers in this slice separately measurable, which is how the split below was obtained.
+    """
+    return _haiku_model_id() if os.environ.get("AGENT_CRITIQUE_MODEL", "haiku") == "haiku" else _sonnet_model_id()
+
+
 def _args_hash(tool_name: str, tool_input: dict) -> str:
     payload = json.dumps({"t": tool_name, "i": tool_input}, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
@@ -617,7 +629,7 @@ def _critique(run: RunState, analysis: RequirementsAnalysis, draft: ResumeDocume
     # than reasoning multi-step, which is NFR-1.3's own criterion for a Haiku task. Note this moves
     # the phase out of prompt-caching range — Haiku 4.5's minimum is ~4096 tokens — but a one-shot
     # call had nothing to re-read anyway.
-    response = _converse(run, phase="critique", model_id=_haiku_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
+    response = _converse(run, phase="critique", model_id=_critique_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
     uses = _tool_uses(response)
     raw = uses[0]["input"] if uses else {}
     try:
@@ -626,7 +638,7 @@ def _critique(run: RunState, analysis: RequirementsAnalysis, draft: ResumeDocume
         logger.info("submit_critique failed validation; retrying once")
         messages.append(_assistant_turn(response))
         messages.append({"role": "user", "content": [{"text": "Re-emit a valid submit_critique."}]})
-        retry = _converse(run, phase="critique", model_id=_haiku_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
+        retry = _converse(run, phase="critique", model_id=_critique_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
         retry_uses = _tool_uses(retry)
         try:
             return Critique.model_validate(retry_uses[0]["input"] if retry_uses else {})

@@ -2991,9 +2991,39 @@ improved; the interactive path's cost stays with B-013.
 - **Wait for Sonnet 5** (B-010) — faster and ~33% cheaper, and `blocked-external` with nothing
   self-serve remaining. Not a plan.
 
+### Measured outcome (same slice, after deploying) — the ranking was wrong
+
+The decision stands; the reasoning behind the *ordering* did not survive contact with the harness.
+Four `--expensive` runs on one fixture, same `REVISE` verdict throughout:
+
+| Configuration | Wall clock | Cost |
+|---|---|---|
+| Baseline | 81.8 s | $0.1233 |
+| **Caching only** | 84.2 s | $0.1071 |
+| Caching + Haiku critique | **48.4 s** | **$0.0785** |
+
+**Prompt caching produced ~13% of the cost saving and no measurable latency change** — 84.2 s
+against an 81.8 s baseline sits inside the ~3% run-to-run noise. The Haiku critique swap, ranked
+here as the minor lever and grouped almost as an afterthought, produced **the entire 43% latency
+win** and over half the cost saving.
+
+The error is identifiable and worth naming. The Decision above reasons from B-004's *cost*
+mechanism — a growing prompt re-sent every iteration — and then assumes latency follows, because the
+backlog treats B-004 and B-020 as "one mechanism seen from two sides". They are, for **cost**. For
+**wall clock** they are not: a run's duration is dominated by *output* token generation across
+draft, critique and revise, and caching does nothing to output. Cheaper input, identical generation
+time. "Same root cause" was true of the bill and false of the clock, and nothing in the reasoning
+distinguished the two.
+
+**This does not reverse the decision.** The 2-entry test fixture understates caching by
+construction: the real 13-entry corpus runs ~83K tokens against this fixture's ~21K, and caching
+scales with the re-sent prefix, so its cost saving should be materially larger in production than
+measured here. What changes is the claim — caching is a **cost** lever that also happens to be
+cheap, not the latency lever B-020 needed.
+
 ### Consequences
 
-- ✅ Attacks B-004 and B-020 at their shared root with one change, and needs no architectural
+- ✅ Attacks B-004's cost mechanism at its root with one change, and needs no architectural
   rework — the loop keeps its shape.
 - ✅ The silent-no-op trap is caught by a test rather than by an audit of the bill.
 - ✅ Cache-read/write tokens in the trace make future regressions visible per run.
@@ -3001,8 +3031,9 @@ improved; the interactive path's cost stays with B-013.
   apart). Across runs it means the first iteration of a cold run always pays a cache *write*, which
   is billed **above** the normal input rate. A run that ends after one Sonnet call is therefore
   slightly *more* expensive than before — acceptable, since such a run is not the one that hurts.
-- ⚠️ The lever pair (caching + Haiku critique) is not independently attributable without measuring
-  them separately, which costs an extra `--expensive` run.
+- ⚠️ The lever pair is not independently attributable without measuring them separately. That run
+  was made (~$0.08) and is the reason the ranking error above was caught rather than shipped as a
+  41% win credited to the wrong change. `AGENT_CRITIQUE_MODEL` exists partly so it can be repeated.
 - ⚠️ Haiku critique is a quality risk on the payoff feature. The critique verdict is recorded per run
   already, so a systematic shift in verdicts is detectable; the trigger to revert is critique output
   that stops distinguishing good drafts from bad, not a single disagreeable verdict.

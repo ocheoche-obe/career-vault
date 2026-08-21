@@ -385,6 +385,7 @@ def test_exactly_one_moving_breakpoint_rides_the_growing_history(fake, monkeypat
 
 
 def test_critique_runs_on_haiku_and_drafting_stays_on_sonnet(fake, monkeypatch):
+    monkeypatch.delenv("AGENT_CRITIQUE_MODEL", raising=False)
     monkeypatch.setenv("BEDROCK_SONNET_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
     monkeypatch.setenv("BEDROCK_HAIKU_MODEL_ID", "us.anthropic.claude-haiku-4-5")
 
@@ -476,3 +477,18 @@ def test_a_failing_draft_callback_does_not_take_the_run_down(fake):
 
     assert result.ok, f"a failed progress write killed the run: {result.status}"
     assert result.document is not None
+
+
+def test_the_critique_model_can_be_switched_back_to_sonnet_without_a_code_change(fake, monkeypatch):
+    """ADR-048's revert path. The trigger is a quality judgement made from real output later."""
+    monkeypatch.setenv("BEDROCK_SONNET_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    monkeypatch.setenv("BEDROCK_HAIKU_MODEL_ID", "us.anthropic.claude-haiku-4-5")
+    monkeypatch.setenv("AGENT_CRITIQUE_MODEL", "sonnet")
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    fake.retrieval = [_forced("retrieval_done", {"rationale": "enough"})]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS"})]
+
+    _run()
+
+    assert agent._model_family(fake.calls[-1]) == "sonnet", fake.calls
