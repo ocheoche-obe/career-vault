@@ -3034,6 +3034,14 @@ cheap, not the latency lever B-020 needed.
 - ⚠️ The lever pair is not independently attributable without measuring them separately. That run
   was made (~$0.08) and is the reason the ranking error above was caught rather than shipped as a
   41% win credited to the wrong change. `AGENT_CRITIQUE_MODEL` exists partly so it can be repeated.
+- ⚠️ **Caching holds retrieved career entries in Bedrock's prompt cache for ~5 minutes.** Raised by
+  the slice-5 security review as a below-threshold note, not a finding: the cache is keyed on the
+  exact token prefix within this account, the data is identical to what every iteration already
+  transmitted, and the MVP has one user. It is recorded because *"the model provider now retains
+  this for five minutes"* is a true statement that was not true before, and this ADR would otherwise
+  not say it — the same omission ADR-014 had to be **corrected** for when "browser-side" turned out
+  to describe the API rather than the processing. The trigger to revisit is multi-tenancy, where
+  "keyed on content" stops being a comfortable answer on its own.
 - ⚠️ Haiku critique is a quality risk on the payoff feature. The critique verdict is recorded per run
   already, so a systematic shift in verdicts is detectable; the trigger to revert is critique output
   that stops distinguishing good drafts from bad, not a single disagreeable verdict.
