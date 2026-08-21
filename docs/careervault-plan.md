@@ -72,6 +72,7 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | v1.1-2 | Redesign — Log, Timeline, Import, Details | B-001, NFR-6.2, A3–A11 | ✅ | [#48](https://github.com/ocheoche-obe/career-vault/pull/48) |
 | v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
 | v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ✅ | [#51](https://github.com/ocheoche-obe/career-vault/pull/51) |
+| v1.1-5 | Résumé speed — measure, then optimise | B-023, B-020, B-004, NFR-2.1/2.2/2.3 | 🔨 | — |
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the
@@ -1970,6 +1971,113 @@ containment guarantee it never had, and this app's whole subject matter is the k
 makes that matter. Corrected in the ADL, disclosed in the UI, and the capture window given a bound
 that actually holds. The code review returned two findings, both fixed in-slice: one that would have
 re-sent a message and charged for it, one layout regression.
+
+---
+
+## v1.1 slice 5 — Résumé speed 🔨
+
+**Goal:** put real numbers on the three latency NFRs that have never had any, then move the one
+number users actually feel — résumé generation — and prove the move with the same harness that
+produced the baseline.
+
+**Key refs:** ADR-010 (own the loop) · ADR-036 (agent model + caps) · ADR-037 (async job) ·
+ADR-042 (test tiering) · backlog **B-023**, **B-020**, **B-004**; related **B-013**.
+
+### ⚠ Decisions — resolved with Oche before code, 2026-08-21
+
+1. **Measure → optimise → re-measure, in one slice.** The alternative was shipping B-023 alone and
+   deciding the levers against finished data. Rejected as too slow for a change whose whole risk is
+   that it *feels* faster without being faster — the same harness has to produce both numbers, or the
+   before and after aren't comparable.
+2. **Levers: (b) prompt caching, (d) Haiku for critique, (a)/(e) progressive render. Not (c).**
+   Skipping the agentic loop for small corpora is the largest single win and was **declined** — it
+   runs directly against ADR-010's own-the-loop learning goal, and it would make the code path this
+   project exists to teach the one that no longer executes. ADR-010 stands unamended.
+3. **The harness records always and asserts on generous ceilings.** Hard NFR assertions were
+   considered and rejected: NFR-2.3 is *expected* to fail on day one (slice 1 measured `GET /entries`
+   at 3639ms against a 2000ms budget), so a hard gate ships a red suite that says nothing new. The
+   NFR verdict is a human reading recorded numbers; the assertion exists only to catch regression.
+
+### Pre-flight findings — probed live against Bedrock, 2026-08-21
+
+Lever (b) rested on an assumption nobody had checked: that Bedrock prompt caching is available for
+the model this agent actually runs on (Sonnet 4-6, since Sonnet 5 is ungrantable — B-010). It is.
+Probing it also turned up a trap.
+
+| Probe | Result |
+|---|---|
+| Sonnet 4-6, ~2.4K-token cached prefix | `cacheWriteInputTokens: 2403`, then `cacheReadInputTokens: 2403` on the repeat. Works. 5-minute TTL. |
+| Haiku 4.5, same ~2.4K prefix | `cacheWrite: 0`, `cacheRead: 0`, **`inputTokens: 2415` billed in full.** No error, no warning. |
+| Haiku 4.5, ~9.6K prefix | `cacheWrite: 9602` — so Haiku *does* support caching. |
+| Haiku 4.5, bisected | Silent at ~3055 tokens, caches at ~4162 — consistent with a 4096-token minimum, against Sonnet's 1024. |
+
+**A `cachePoint` below the model's minimum is a silent no-op.** Bedrock does not error, does not
+warn, and bills the full uncached prefix. The minimum differs per model, so *"we added caching"* and
+*"caching happened"* are two separate claims. This is the same family as ADR-021's
+`required`-is-a-hint and the ADR-025 addendum on invisible degradation: the failure mode is a feature
+that looks shipped, costs full price, and shows nothing.
+
+Three consequences carried into the work:
+
+- Every caching change is **asserted by reading `cacheReadInputTokens` back from a real run**, never
+  assumed from the presence of a `cachePoint` block.
+- The agent's Sonnet prefix clears 1024 comfortably. The **chat/parse path cannot benefit** — Haiku
+  with short prompts sits below the 4096 minimum — so caching is a résumé-agent lever only, and
+  **B-013's interactive-path cost is untouched by it.** NFR-2.1/2.3 get measurement in this slice,
+  not improvement.
+- Lever (d) **interacts with** lever (b): moving critique to Haiku moves that phase out of caching
+  range. Both are still worth doing — critique is a single call over a finished draft, so it has
+  little history to cache — but the two cannot be evaluated independently, and the re-measure must
+  attribute the delta rather than report one number.
+
+One implementation fact found while probing: `bedrock_client.converse` accepts `system` as a `str`
+and wraps it as `[{"text": system}]`, so structured system blocks are not expressible today. The
+shared layer changes before the agent does.
+
+### Scope — in
+
+1. **B-023 — the latency harness.** Timing instrumentation in the integration suite, cold and warm
+   runs separated, printing a table on every run. NFR-2.3 (dashboard load) measures in the **free**
+   tier; NFR-2.1 (ingestion, end-to-end including Haiku) needs the **`--bedrock`** tier; NFR-2.2
+   (generation) needs **`--expensive`**. Regression ceilings well above each NFR.
+2. **Baseline, recorded.** Numbers for all three NFRs written into this section — including a ❌ if
+   that is what they say.
+3. **Prompt caching on the résumé agent's stable prefix** (B-020 lever b / B-004), with the
+   `cacheReadInputTokens` assertion. Shared-layer `converse` gains structured-system support.
+4. **Haiku for the critique phase** (lever d).
+5. **Progressive render** (levers a/e) — surface the draft when it exists rather than at the end of
+   critique/revise. Amends ADR-037's poll contract.
+6. **Re-measure with the same harness**, and state the delta per lever.
+
+### Scope — out
+
+- **(c) small-corpus loop bypass** — declined above; ADR-010 stands.
+- **B-013** (full-corpus read with embeddings) — the likely cause of an NFR-2.3 failure, and
+  deliberately left. This slice's job is to *measure* it; fixing it is an API-shape change on the
+  interactive path and wants its own decision.
+- **B-044** (`related_job_id`) — explicitly sequenced after this. It changes résumé *content*, and
+  changing content mid-measurement confounds both numbers.
+- **B-043, B-039** (résumé pagination, orphaned artifacts) — unrelated to speed.
+- **Mobile / B-001 / B-046** — the next slice.
+
+### Exit criteria
+
+- [ ] Every integration tier prints a timing table; cold and warm are distinguishable.
+- [ ] Baseline **and** post-change numbers recorded here for NFR-2.1, NFR-2.2, NFR-2.3.
+- [ ] Caching proven by a test asserting `cacheReadInputTokens > 0` on a real multi-iteration run —
+      not by the presence of a `cachePoint`.
+- [ ] Résumé generation re-measured on the real corpus; **the delta is reported honestly even if it
+      is small or negative**, and attributed per lever.
+- [ ] The MVP scorecard's NFR-2.1/2.3 rows move off ❓Unverified to a measured verdict.
+- [ ] ADRs written **before** the code they justify; ADR-037 amended for progressive render.
+- [ ] Backend + frontend + integration suites green; both reviews run; docs current.
+
+### Cost note
+
+Before/after measurement needs several `--expensive` runs at ~$0.11–0.35 each; budget **~$0.7**.
+Month-to-date at slice start is **$0.48** against the $5 ceiling, so this is comfortable — but it is
+the one slice where the *testing* is the dominant spend, and caching should pull the per-run cost
+down rather than up.
 
 ---
 
