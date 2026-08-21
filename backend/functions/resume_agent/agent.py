@@ -24,7 +24,7 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from aws_lambda_powertools.metrics import MetricUnit
 from pydantic import ValidationError
@@ -108,9 +108,33 @@ def _model_family(model_id: str) -> str:
     return "haiku" if "haiku" in lowered else "sonnet"
 
 
-def _cost(model_id: str, input_tokens: int, output_tokens: int) -> float:
+#: Bedrock prompt-caching multipliers on the *input* rate (ADR-048). A cache write costs more than
+#: an uncached read, which is why caching a prefix that is never re-read is a net loss — and why
+#: only the retrieval loop is cached.
+_CACHE_WRITE_MULTIPLIER = 1.25
+_CACHE_READ_MULTIPLIER = 0.10
+
+
+def _cost(
+    model_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+) -> float:
+    """Price one call. ``inputTokens`` excludes anything served from or written to cache.
+
+    Verified against a live response rather than assumed: a 2403-token cached prefix came back as
+    ``inputTokens: 13`` with ``cacheReadInputTokens: 2403``, so adding the cache counts to
+    ``inputTokens`` would double-count and treating them as free would under-report.
+    """
     in_rate, out_rate = _PRICE_PER_TOKEN[_model_family(model_id)]
-    return input_tokens * in_rate + output_tokens * out_rate
+    return (
+        input_tokens * in_rate
+        + cache_write_tokens * in_rate * _CACHE_WRITE_MULTIPLIER
+        + cache_read_tokens * in_rate * _CACHE_READ_MULTIPLIER
+        + output_tokens * out_rate
+    )
 
 
 def _sonnet_model_id() -> str:
@@ -141,6 +165,8 @@ class RunState:
     started_at: float = field(default_factory=time.monotonic)
     cumulative_tokens: int = 0
     cumulative_cost_usd: float = 0.0
+    cumulative_cache_read_tokens: int = 0
+    cumulative_cache_write_tokens: int = 0
     call_history: list[str] = field(default_factory=list)
     retrieved_ids: set[str] = field(default_factory=set)
     trace: list[dict] = field(default_factory=list)
@@ -170,6 +196,11 @@ class AgentResult:
     #: Wall-clock seconds the agent ran (B-007). Defaulted so a partial result can still be built
     #: in tests; ``run_agent`` always populates it, including on every failure path.
     elapsed_seconds: float = 0.0
+    #: Prompt-cache accounting (ADR-048). ``cache_read_tokens`` is the proof caching actually
+    #: engaged — a cachePoint below the model minimum is a silent no-op, so a zero here on a
+    #: multi-iteration run means the feature is present in the request and absent from the bill.
+    cumulative_cache_read_tokens: int = 0
+    cumulative_cache_write_tokens: int = 0
 
     @property
     def ok(self) -> bool:
@@ -178,7 +209,47 @@ class AgentResult:
 
 # --- Bedrock call wrapper: tokens, cost, trace, budget --------------------------------------------
 
-def _converse(run: RunState, *, phase: str, model_id: str, system: str, messages: list[dict], tool_config: dict) -> dict:
+def _cache_point() -> dict:
+    """A Bedrock prompt-cache breakpoint. Everything *before* it becomes cacheable prefix."""
+    return {"cachePoint": {"type": "default"}}
+
+
+def _cached_system(text: str) -> list[dict]:
+    """System prompt plus a cache breakpoint, so it and the tool schemas cache together."""
+    return [{"text": text}, _cache_point()]
+
+
+def _with_moving_breakpoint(messages: list[dict]) -> list[dict]:
+    """Return ``messages`` with exactly one cache breakpoint, on the final turn.
+
+    The retrieval loop re-sends a conversation that grows every iteration (B-004), so the thing
+    worth caching is not just the static header but *last iteration's history*. Moving the
+    breakpoint to the end each time means iteration N+1 reads everything iteration N sent as cache
+    rather than paying full input rate for it.
+
+    Old breakpoints are stripped rather than accumulated: Claude allows a small fixed number of
+    them, and a loop that adds one per iteration would hit the limit. Stripping is safe because a
+    cachePoint is a marker, not content — removing one does not change the token prefix that the
+    cache is keyed on.
+    """
+    cleaned = []
+    for message in messages:
+        content = [block for block in message["content"] if "cachePoint" not in block]
+        cleaned.append({**message, "content": content})
+    if cleaned:
+        cleaned[-1] = {**cleaned[-1], "content": [*cleaned[-1]["content"], _cache_point()]}
+    return cleaned
+
+
+def _converse(
+    run: RunState,
+    *,
+    phase: str,
+    model_id: str,
+    system: str | list[dict],
+    messages: list[dict],
+    tool_config: dict,
+) -> dict:
     """Call Converse, meter it into the run budget/trace, then enforce the ceiling.
 
     The budget is checked *after* recording usage: we may have paid for this call, but we stop
@@ -194,8 +265,16 @@ def _converse(run: RunState, *, phase: str, model_id: str, system: str, messages
     usage = response.get("usage", {}) or {}
     in_tok = int(usage.get("inputTokens", 0) or 0)
     out_tok = int(usage.get("outputTokens", 0) or 0)
-    run.cumulative_tokens += in_tok + out_tok
-    run.cumulative_cost_usd += _cost(model_id, in_tok, out_tok)
+    cache_read = int(usage.get("cacheReadInputTokens", 0) or 0)
+    cache_write = int(usage.get("cacheWriteInputTokens", 0) or 0)
+
+    # Cache tokens count toward the budget ceiling at face value even though they are billed at a
+    # fraction. The ceiling exists to bound *context size*, not spend — a run whose prompt has grown
+    # past the limit is out of control whether or not the growth is cheap.
+    run.cumulative_tokens += in_tok + out_tok + cache_read + cache_write
+    run.cumulative_cache_read_tokens += cache_read
+    run.cumulative_cache_write_tokens += cache_write
+    run.cumulative_cost_usd += _cost(model_id, in_tok, out_tok, cache_read, cache_write)
     run.trace.append(
         {
             "phase": phase,
@@ -203,6 +282,8 @@ def _converse(run: RunState, *, phase: str, model_id: str, system: str, messages
             "stop_reason": response.get("stopReason"),
             "input_tokens": in_tok,
             "output_tokens": out_tok,
+            "cache_read_tokens": cache_read,
+            "cache_write_tokens": cache_write,
             "cumulative_tokens": run.cumulative_tokens,
             "cumulative_cost_usd": round(run.cumulative_cost_usd, 6),
         }
@@ -390,12 +471,16 @@ def _retrieve(run: RunState, analysis: RequirementsAnalysis) -> list[dict]:
 
     for iteration in range(1, MAX_RETRIEVAL_ITERATIONS + 1):
         run.retrieval_iterations = iteration
+        # Prompt caching (ADR-048) applies *here* and nowhere else in the agent. This is the only
+        # phase that re-sends a prefix — every other Sonnet call is one-shot, where a cache write at
+        # 1.25x with no subsequent read is a pure loss. The system breakpoint caches the instructions
+        # and tool schemas; the moving one caches the conversation so far.
         response = _converse(
             run,
             phase="retrieve",
             model_id=_sonnet_model_id(),
-            system=_RETRIEVE_SYSTEM,
-            messages=messages,
+            system=_cached_system(_RETRIEVE_SYSTEM),
+            messages=_with_moving_breakpoint(messages),
             tool_config=tool_config,
         )
         messages.append(_assistant_turn(response))
@@ -528,7 +613,11 @@ def _critique(run: RunState, analysis: RequirementsAnalysis, draft: ResumeDocume
     )
     messages = [{"role": "user", "content": [{"text": prompt}]}]
     tool_config = build_critique_tool_config()
-    response = _converse(run, phase="critique", model_id=_sonnet_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
+    # Critique runs on Haiku (ADR-048): it judges a finished draft against a fixed rubric rather
+    # than reasoning multi-step, which is NFR-1.3's own criterion for a Haiku task. Note this moves
+    # the phase out of prompt-caching range — Haiku 4.5's minimum is ~4096 tokens — but a one-shot
+    # call had nothing to re-read anyway.
+    response = _converse(run, phase="critique", model_id=_haiku_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
     uses = _tool_uses(response)
     raw = uses[0]["input"] if uses else {}
     try:
@@ -537,7 +626,7 @@ def _critique(run: RunState, analysis: RequirementsAnalysis, draft: ResumeDocume
         logger.info("submit_critique failed validation; retrying once")
         messages.append(_assistant_turn(response))
         messages.append({"role": "user", "content": [{"text": "Re-emit a valid submit_critique."}]})
-        retry = _converse(run, phase="critique", model_id=_sonnet_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
+        retry = _converse(run, phase="critique", model_id=_haiku_model_id(), system=_CRITIQUE_SYSTEM, messages=messages, tool_config=tool_config)
         retry_uses = _tool_uses(retry)
         try:
             return Critique.model_validate(retry_uses[0]["input"] if retry_uses else {})
@@ -592,6 +681,7 @@ def run_agent(
     target_text: str,
     entries: list[dict],
     profile: dict | None,
+    on_draft: Callable[[ResumeDocument], None] | None = None,
 ) -> AgentResult:
     """Run Phases 1–5 and return an :class:`AgentResult` (never raises on an expected termination).
 
@@ -599,6 +689,15 @@ def run_agent(
     corpus is shared across search, get_entry, and the empty-corpus short-circuit. A ``BedrockError``
     (unexpected infra failure) is allowed to propagate; every *expected* agent termination is caught
     and reflected in ``status`` with the partial trace attached.
+
+    ``on_draft`` is invoked once, with the Phase-3 draft, before critique and revise run (ADR-037
+    amendment). It exists so the handler can publish a ``draft_ready`` poll state at roughly T+60s
+    instead of withholding everything until the run is terminal. It is a *callback* rather than a
+    write from inside this module on purpose: the original ADR-037 decision earned its "the agent
+    brain stays invocation-agnostic" property, and teaching the loop about DynamoDB would spend it.
+
+    A failing ``on_draft`` must never take the run down — the draft is a progress signal, and losing
+    the signal is not a reason to lose the résumé.
     """
     entries_by_id = {e["entry_id"]: _public_entry(e) for e in entries if e.get("entry_id")}
     run = RunState(
@@ -617,6 +716,11 @@ def run_agent(
         requirements = _analyze(run)
         retrieved = _retrieve(run, requirements)
         draft = _draft(run, requirements, retrieved)
+        if on_draft is not None:
+            try:
+                on_draft(draft)
+            except Exception:  # pragma: no cover - progress signal, never the run's problem
+                logger.exception("on_draft callback failed; continuing the run")
         document, verdict = _critique_revise(run, requirements, retrieved, draft)
         run.status = "ok"
     except AgentBudgetExceeded:
@@ -648,6 +752,8 @@ def run_agent(
         critique_verdict=verdict,
         retrieved_ids=sorted(run.retrieved_ids),
         cumulative_tokens=run.cumulative_tokens,
+        cumulative_cache_read_tokens=run.cumulative_cache_read_tokens,
+        cumulative_cache_write_tokens=run.cumulative_cache_write_tokens,
         cumulative_cost_usd=round(run.cumulative_cost_usd, 6),
         retrieval_iterations=run.retrieval_iterations,
         revisions_used=run.revisions_used,

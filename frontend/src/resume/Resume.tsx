@@ -6,6 +6,7 @@ import {
   listResumes,
   startResumeRun,
   type Entry,
+  type ResumeDocument,
   type ResumeSummary,
   type RunStatus,
 } from "../lib/api";
@@ -76,7 +77,12 @@ function saveActiveRun(run: ActiveRun | null) {
 
 type Stage =
   | { phase: "idle" }
-  | { phase: "generating"; runId: string; startedAt: number }
+  /**
+   * `draft` is the Phase-3 résumé, published mid-run by the agent (ADR-037 amendment). The stage
+   * stays `generating` while it is showing: polling must continue, the elapsed counter must keep
+   * running, and the run can still end as `failed`. Showing a draft is not a promise of success.
+   */
+  | { phase: "generating"; runId: string; startedAt: number; draft?: ResumeDocument }
   /**
    * `fromHistory` marks a résumé opened from a past row rather than just generated. It gates
    * **Regenerate**, which reruns `target` — the textarea's contents, which for a history-opened
@@ -167,6 +173,15 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           setFreshRunId(runId);
           void refreshHistory();
           return;
+        }
+        if (result.status === "draftReady") {
+          // Deliberately not `settle` — that clears the saved active run and stops the watch. This
+          // is a progress update inside the same stage, so the poll loop below keeps going.
+          if (!cancelled && result.document) {
+            setStage((current) =>
+              current.phase === "generating" ? { ...current, draft: result.document } : current,
+            );
+          }
         }
         if (result.status === "failed") return settle({ phase: "failed", message: result.message });
         if (result.status === "notfound") {
@@ -390,6 +405,31 @@ function Generator({
           </>
         )}
       </div>
+
+      {generating && stage.draft && (
+        <div className="generator-draft">
+          {/* Labelled unambiguously as work in progress. The agent is still critiquing and may
+              rewrite any of this, so presenting it as the résumé would be a lie the next poll
+              exposes — and the run can still fail from here. */}
+          <p className="generator-draft-label">
+            First draft — still being reviewed, and it will change.
+          </p>
+          {stage.draft.summary && <p className="generator-draft-summary">{stage.draft.summary}</p>}
+          {stage.draft.experience?.slice(0, 3).map((role, index) => (
+            <div key={`${role.employer}-${index}`} className="generator-draft-role">
+              <p className="generator-draft-role-title">
+                {role.title}
+                {role.employer ? ` · ${role.employer}` : ""}
+              </p>
+              <ul>
+                {role.bullets?.slice(0, 3).map((bullet, bulletIndex) => (
+                  <li key={bulletIndex}>{bullet}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
 
       {stage.phase === "failed" && (
         <p className="generator-error" role="alert">

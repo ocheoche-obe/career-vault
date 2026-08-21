@@ -44,9 +44,13 @@ class FakeConverse:
         self.resume = []
         self.critique = []
         self.calls = []
+        self.requests = []
 
     def __call__(self, messages, *, system, tool_config, model_id, max_tokens):
         self.calls.append(model_id)
+        # Full call recorded so ADR-048's cache-breakpoint placement can be asserted; `calls` stays
+        # a plain list of model ids because a dozen existing tests index it that way.
+        self.requests.append({"messages": messages, "system": system, "model_id": model_id})
         choice = tool_config["toolChoice"]
         if "auto" in choice:
             return self.retrieval.pop(0)
@@ -323,3 +327,152 @@ def test_stagnant_detects_high_overlap():
     assert agent._stagnant(["a", "b"], ["c", "d"]) is False
     assert agent._stagnant(None, ["a"]) is False
     assert agent._stagnant(["a"], []) is False
+
+
+# --- ADR-048: prompt caching and model placement ---------------------------------------------------
+#
+# These pin *where* cache breakpoints go and *which* model each phase uses. Both are invisible to
+# every other test in this file: switching critique from Sonnet to Haiku, or dropping the cachePoint
+# blocks entirely, leaves the whole suite green, because neither changes the loop's control flow.
+
+
+def _cache_points(content):
+    return [block for block in content if "cachePoint" in block]
+
+
+def test_the_retrieval_system_prompt_carries_a_cache_breakpoint(fake):
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    fake.retrieval = [
+        _forced("search_entries", {"query": "cloud"}),
+        _forced("retrieval_done", {"rationale": "enough"}),
+    ]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS"})]
+
+    _run()
+
+    retrieval = [r for r in fake.requests if isinstance(r["system"], list)]
+    assert retrieval, "no phase sent a structured system prompt — caching is not wired at all"
+    for request in retrieval:
+        assert _cache_points(request["system"]), request["system"]
+
+
+def test_exactly_one_moving_breakpoint_rides_the_growing_history(fake, monkeypatch):
+    monkeypatch.setattr(agent, "MAX_RETRIEVAL_ITERATIONS", 3)
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    # Three searches, never done — forces three iterations with a history that grows each time.
+    fake.retrieval = [_forced("search_entries", {"query": f"q{i}"}) for i in range(3)]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS", "issues": []})]
+
+    _run()
+
+    loop_calls = [r for r in fake.requests if isinstance(r["system"], list)]
+    assert len(loop_calls) == 3, [len(loop_calls)]
+
+    lengths = []
+    for request in loop_calls:
+        points = [b for message in request["messages"] for b in _cache_points(message["content"])]
+        # Exactly one, always on the final turn: Claude allows only a few breakpoints, so a loop
+        # that accumulated one per iteration would eventually be rejected outright.
+        assert len(points) == 1, f"{len(points)} breakpoints in one call"
+        assert _cache_points(request["messages"][-1]["content"]), "breakpoint is not on the last turn"
+        lengths.append(len(request["messages"]))
+
+    # The history really is growing — otherwise the moving breakpoint would be pointless and this
+    # test would be asserting a property of a conversation that never changes.
+    assert lengths == sorted(lengths) and lengths[-1] > lengths[0], lengths
+
+
+def test_critique_runs_on_haiku_and_drafting_stays_on_sonnet(fake, monkeypatch):
+    monkeypatch.setenv("BEDROCK_SONNET_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+    monkeypatch.setenv("BEDROCK_HAIKU_MODEL_ID", "us.anthropic.claude-haiku-4-5")
+
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    fake.retrieval = [
+        _forced("search_entries", {"query": "cloud"}),
+        _forced("retrieval_done", {"rationale": "enough"}),
+    ]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS"})]
+
+    _run()
+
+    families = [agent._model_family(model_id) for model_id in fake.calls]
+    # Order is analyze, retrieve..., draft, critique. Position is not asserted — the model *per
+    # phase* is, which is what ADR-048 decided.
+    assert families[-1] == "haiku", f"critique should be Haiku, got {families}"
+    assert "sonnet" in families, f"drafting must stay on Sonnet, got {families}"
+
+
+def test_a_cachepoint_is_stripped_before_being_re_added_rather_than_accumulating():
+    messages = [
+        {"role": "user", "content": [{"text": "one"}, {"cachePoint": {"type": "default"}}]},
+        {"role": "assistant", "content": [{"text": "two"}]},
+    ]
+
+    marked = agent._with_moving_breakpoint(messages)
+
+    assert _cache_points(marked[0]["content"]) == [], "the stale breakpoint was not stripped"
+    assert _cache_points(marked[1]["content"]), "no breakpoint on the final turn"
+    # The caller's list must be untouched — the loop reuses `messages` across iterations, so
+    # mutating it here would compound a breakpoint per turn into the caller's own history.
+    assert messages[1]["content"] == [{"text": "two"}]
+
+
+def test_cache_reads_are_billed_at_a_tenth_and_writes_at_a_premium():
+    model = "us.anthropic.claude-sonnet-4-6"
+    in_rate, _out = agent._PRICE_PER_TOKEN["sonnet"]
+
+    uncached = agent._cost(model, 1000, 0)
+    read = agent._cost(model, 0, 0, cache_read_tokens=1000)
+    written = agent._cost(model, 0, 0, cache_write_tokens=1000)
+
+    assert read == pytest.approx(uncached * 0.10)
+    assert written == pytest.approx(uncached * 1.25)
+    # The premium is the whole reason caching a one-shot prefix is a loss, not a wash.
+    assert written > uncached > read
+    assert agent._cost(model, 1000, 0, 1000, 1000) == pytest.approx(in_rate * 1000 * (1 + 0.10 + 1.25))
+
+
+def test_the_draft_callback_fires_before_critique_with_the_phase_3_draft(fake):
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    fake.retrieval = [_forced("retrieval_done", {"rationale": "enough"})]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS"})]
+
+    seen = []
+    result = agent.run_agent(
+        run_id="01JRUN",
+        user_id="u",
+        target_text="JD",
+        entries=[_entry("E1")],
+        profile=None,
+        on_draft=lambda draft: seen.append((draft.summary, len(fake.calls))),
+    )
+
+    assert len(seen) == 1, f"callback fired {len(seen)} times"
+    summary, calls_at_callback = seen[0]
+    assert summary == "Strong engineer."
+    # Fired *before* critique: the whole point is surfacing a résumé at ~T+60s rather than at the
+    # end. If this ever equals the final count, the callback has drifted to after the run.
+    assert calls_at_callback < len(fake.calls), (calls_at_callback, len(fake.calls))
+    assert result.ok
+
+
+def test_a_failing_draft_callback_does_not_take_the_run_down(fake):
+    """Losing the progress signal is not a reason to lose the résumé."""
+    fake.analysis = [_forced("extract_requirements", ANALYSIS)]
+    fake.retrieval = [_forced("retrieval_done", {"rationale": "enough"})]
+    fake.resume = [_forced("submit_resume", DRAFT)]
+    fake.critique = [_forced("submit_critique", {"verdict": "PASS"})]
+
+    def _explode(_draft):
+        raise RuntimeError("DynamoDB down")
+
+    result = agent.run_agent(
+        run_id="01JRUN", user_id="u", target_text="JD", entries=[_entry("E1")], profile=None, on_draft=_explode
+    )
+
+    assert result.ok, f"a failed progress write killed the run: {result.status}"
+    assert result.document is not None

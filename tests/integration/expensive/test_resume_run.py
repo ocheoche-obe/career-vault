@@ -147,6 +147,22 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
         f"entries={polled.get('retrieved_count')}"
     )
 
+    # --- ADR-048: caching must be proven engaged, not merely requested ---------------------------
+    # This is the assertion the ADR exists for. A `cachePoint` below the model's token minimum is a
+    # silent no-op: Bedrock returns no error, no warning, and bills the full uncached prefix. A test
+    # asserting the block was *sent* would pass in exactly that situation. Only a non-zero read back
+    # from a real multi-iteration run proves the cache was populated and then used.
+    cache_read = polled.get("cache_read_tokens")
+    cache_write = polled.get("cache_write_tokens")
+    assert cache_write, (
+        f"no cache write on a {polled.get('retrieval_iterations', '?')}-iteration run — the prefix "
+        f"never became cacheable (below the model minimum?). usage: {cache_read}/{cache_write}"
+    )
+    assert cache_read, (
+        f"cache written ({cache_write} tokens) but never read back. The breakpoint moved in a way "
+        "that invalidated the prefix, or the run ended before a second iteration."
+    )
+
     # Presigned URLs for both artifacts — the PDF is what the user downloads, the HTML is what the
     # in-app preview iframes (slice 6b).
     assert polled.get("pdf_url"), "a completed run must presign a PDF"
