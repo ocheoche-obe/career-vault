@@ -74,7 +74,7 @@ def cleanup_resume_artifacts(aws_session, cleanup_user):
 
 
 def test_a_tailored_resume_run_completes_and_produces_a_pdf(
-    lambda_client, cleanup_user, aws_session, cleanup_resume_artifacts
+    lambda_client, cleanup_user, aws_session, cleanup_resume_artifacts, latency
 ):
     for entry in SEED_ENTRIES:
         created = invoke(
@@ -116,6 +116,27 @@ def test_a_tailored_resume_run_completes_and_produces_a_pdf(
 
     elapsed = time.time() - started_at
     assert status == "completed", f"run {run_id} ended as {status!r} after {elapsed:.0f}s: {polled}"
+
+    # Recorded into the ADR-047 table so this number survives the run rather than living in
+    # scrollback — a résumé run costs ~$0.11, which is far too much to pay for a measurement nobody
+    # can compare against later. NFR-2.2's 4-minute bound is a generous alerting ceiling, not a
+    # target (requirements v0.6), so the verdict column will read PASS while B-020 is wide open.
+    latency.record(
+        name=f"résumé run — {len(SEED_ENTRIES)}-entry corpus, critique={polled.get('critique_verdict')}",
+        tier="expensive",
+        kind="end-to-end",
+        ms=elapsed * 1000,
+        nfr="NFR-2.2",
+        nfr_ms=240_000,
+        ceiling_ms=POLL_TIMEOUT_SECONDS * 1000,
+        # Tokens and cost ride along in the same row as the duration, because B-020 and B-004 are
+        # one mechanism seen from two sides — a caching change that cut time but not tokens (or the
+        # reverse) would mean something quite different from one that cut both.
+        notes=(
+            f"{polled.get('tokens')} tok · ${polled.get('cost_usd')}"
+            f" · cache r/w {polled.get('cache_read_tokens', '—')}/{polled.get('cache_write_tokens', '—')}"
+        ),
+    )
 
     # Reported rather than asserted. Requirements §7.4's original "within 30 seconds" is why
     # generation is async at all (ADR-037), and duration varies with corpus size and whether the

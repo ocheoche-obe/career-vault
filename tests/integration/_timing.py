@@ -44,6 +44,7 @@ class Sample:
     nfr: str | None = None
     nfr_ms: int | None = None
     ceiling_ms: int | None = None
+    notes: str = ""
 
     @property
     def captured(self) -> bool:
@@ -214,7 +215,7 @@ def format_table(samples: list[Sample]) -> list[str]:
     if not samples:
         return ["  (no latency samples recorded — the tiers that measure them did not run)"]
 
-    header = ("Measurement", "Kind", "Observed", "Lambda", "Init", "NFR", "Budget", "Verdict")
+    header = ("Measurement", "Kind", "Observed", "Lambda", "Init", "NFR", "Budget", "Verdict", "Notes")
     rows = [
         (
             s.name,
@@ -225,6 +226,7 @@ def format_table(samples: list[Sample]) -> list[str]:
             s.nfr or "—",
             _ms(s.nfr_ms),
             s.verdict,
+            s.notes,
         )
         for s in samples
     ]
