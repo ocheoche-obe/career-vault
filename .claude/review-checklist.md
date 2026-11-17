@@ -9,12 +9,15 @@ checks and the report format; this file holds what is specific to CareerVault.
 Run from the repo root. These match CI (`.github/workflows/ci.yml`). A failing check is a blocker.
 
 1. Backend unit tests, in a venv outside the working tree (this is what
-   `./scripts/run-tests.sh` does, but that script writes `.venv-test` into the repo, which a
-   read-only reviewer must not do):
-   `python3 -m venv "$TMPDIR/cv-venv" && "$TMPDIR/cv-venv/bin/pip" install -q -r tests/requirements-dev.txt && "$TMPDIR/cv-venv/bin/python" -m pytest tests/unit -q -p no:cacheprovider`
+   `./scripts/run-tests.sh` does, but that script writes `.venv-test`, which is not gitignored,
+   into the repo):
+   `V="${TMPDIR:-/tmp}/cv-venv"; python3 -m venv "$V" && "$V/bin/pip" install -q -r tests/requirements-dev.txt && PYTHONDONTWRITEBYTECODE=1 "$V/bin/python" -m pytest tests/unit -q -p no:cacheprovider`
 2. `(cd frontend && npm ci --no-audit --no-fund && npm test)`. Report vitest's pass count.
 3. `(cd frontend && npm run build && npm run lint)`. This is the typecheck; `npm test` does not
    typecheck.
+
+`npm ci` and the build write `frontend/node_modules` and `frontend/dist`; both are gitignored, so
+`git status` stays clean.
 
 Never run `./scripts/run-integration.sh`, in any tier. It needs SSO, and its `--bedrock` and
 `--expensive` tiers spend money.
@@ -22,15 +25,17 @@ Never run `./scripts/run-integration.sh`, in any tier. It needs SSO, and its `--
 ## Docs to read
 
 `CLAUDE.md` (conventions and gotchas), then only what the diff touches in
-`docs/careervault-architecture.md` and `docs/careervault-adl.md`. The ADL is about 3,000 lines:
+`docs/careervault-architecture.md` and `docs/careervault-adl.md`. The ADL is nearly 3,000 lines:
 search it by ADR number or backlog ID, do not read it end to end.
 
 ## Domain checks
 
 - **Live data.** `careervault-dev` is the only stack and holds the owner's only copy of their
   data. In `infrastructure/template.yaml`, flag any change that would replace or delete the table
-  or a bucket (a changed logical ID, table name, key schema or other replacement-triggering
-  property, or a removed `DeletionPolicy`/`UpdateReplacePolicy`). Flag any bulk data change.
+  or a bucket: a changed logical ID, table or bucket name, key schema or other
+  replacement-triggering property; any change to `DeletionPolicy`, `UpdateReplacePolicy`,
+  `DeletionProtectionEnabled`, `PointInTimeRecoverySpecification` or `TimeToLiveSpecification`;
+  and any change to the `IsProd` condition those guards depend on. Flag any bulk data change.
 - **Identity and scoping.** `user_id` comes from the JWT claims, never from the request body.
   Every item key is `PK = USER#<user_id>`. All DynamoDB writes go through the prefix-scoped
   helpers in `ddb_helpers`; a direct `put_item`/`update_item`/`delete_item` elsewhere is a finding,
