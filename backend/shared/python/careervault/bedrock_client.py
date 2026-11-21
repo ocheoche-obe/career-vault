@@ -138,7 +138,7 @@ def _record_token_metrics(usage: dict) -> None:
 def converse(
     messages: list[dict[str, Any]],
     *,
-    system: str | None = None,
+    system: str | list[dict[str, Any]] | None = None,
     tool_config: dict | None = None,
     model_id: str | None = None,
     max_tokens: int = 1024,
@@ -148,7 +148,12 @@ def converse(
 
     Args:
         messages: Converse-format turns, e.g. ``[{"role": "user", "content": [{"text": "..."}]}]``.
-        system: Optional system prompt.
+        system: Optional system prompt. A plain string is wrapped as ``[{"text": system}]``. A list
+            is passed through untouched, which is how a caller expresses structured system blocks —
+            notably a ``{"cachePoint": {...}}`` marker for prompt caching (ADR-048). **A cachePoint
+            below the model's token minimum is silently ignored and billed in full** (~1024 for
+            Sonnet, ~4096 for Haiku 4.5), so callers must confirm caching happened by reading
+            ``usage.cacheReadInputTokens`` back rather than assuming it from the request.
         tool_config: Optional ``toolConfig`` (see :func:`careervault.pydantic_models.tools.build_tool_config`).
         model_id: Defaults to ``BEDROCK_HAIKU_MODEL_ID`` — an *inference profile* ID per ADR-031.
         max_tokens: Response cap. Also a cost ceiling per call.
@@ -165,7 +170,7 @@ def converse(
         "inferenceConfig": {"maxTokens": max_tokens, "temperature": temperature},
     }
     if system:
-        request["system"] = [{"text": system}]
+        request["system"] = [{"text": system}] if isinstance(system, str) else system
     if tool_config:
         request["toolConfig"] = tool_config
 
@@ -180,6 +185,8 @@ def converse(
             "stop_reason": response.get("stopReason"),
             "input_tokens": usage.get("inputTokens"),
             "output_tokens": usage.get("outputTokens"),
+            "cache_read_tokens": usage.get("cacheReadInputTokens"),
+            "cache_write_tokens": usage.get("cacheWriteInputTokens"),
         },
     )
     return response

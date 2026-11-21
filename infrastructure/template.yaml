@@ -42,6 +42,16 @@ Parameters:
     Description: >
       Reserved concurrency for chat_lambda (arch §4.7.4 target: 5). Same -1 sentinel as
       SettingsReservedConcurrency (ADR-030). This is the primary runaway-Bedrock-cost guard.
+  AgentCritiqueModel:
+    Type: String
+    Default: haiku
+    AllowedValues: [haiku, sonnet]
+    Description: >-
+      Model for the resume agent critique phase (ADR-048). Haiku is the default: critique judges a
+      finished draft against a fixed rubric rather than reasoning multi-step, and the swap is what
+      delivered slice 5's latency win. AllowedValues is what makes a typo fail the deploy instead of
+      silently selecting the other model.
+
   CareerCrudReservedConcurrency:
     Type: Number
     Default: -1
@@ -740,6 +750,10 @@ Resources:
           # the agent 120s per call so a normal long generation doesn't trip a socket timeout. The
           # per-run wall-clock budget (240s, ADR-036) and the 300s Lambda timeout still bound it.
           BEDROCK_READ_TIMEOUT_SECONDS: "120"
+          # Which model judges the draft (ADR-048). Declared here so the documented revert path is
+          # real: without it, flipping this on the deployed function survives only until the next
+          # `sam deploy` silently drops it, and the ADR's "no code change needed" claim is false.
+          AGENT_CRITIQUE_MODEL: !Ref AgentCritiqueModel
           DATA_BUCKET_NAME: !Ref DataBucket
           # WeasyPrint (layer) finds its fonts via fontconfig; its cache must be on a writable path.
           FONTCONFIG_PATH: /opt/fonts

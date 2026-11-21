@@ -28,6 +28,9 @@ from urllib.parse import urlparse
 
 import pytest
 
+from _timing import LOG as LATENCY_LOG
+from _timing import format_table
+
 DDB_LOCAL_ENDPOINT = os.environ.get("DDB_ENDPOINT_URL", "http://localhost:8000")
 LOCAL_TABLE_NAME = "CareerVaultTable-inttest"
 DEPLOYED_TABLE_NAME = "CareerVaultTable-dev"
@@ -249,3 +252,41 @@ def scheduler_safe_user(live_table, cloud_user_id):
     )
     yield cloud_user_id
     _purge_user(live_table, cloud_user_id)
+
+
+# ---------------------------------------------------------------------------
+# Latency recording (ADR-047).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def latency():
+    """The session-wide latency log.
+
+    Session-scoped state in a function-scoped fixture on purpose: the terminal-summary hook runs
+    after every fixture has torn down, so the collector has to outlive them.
+    """
+    return LATENCY_LOG
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
+    """Print the recorded latency table once, after the run.
+
+    Printed unconditionally — including when nothing was recorded, which is itself the signal that
+    the tiers carrying the measurements were deselected. ADR-047's ⚠ is that a recorded number only
+    helps if somebody reads it; a table that silently omits itself when empty is how "we measure
+    latency" quietly becomes false.
+    """
+    terminalreporter.write_sep("=", "latency (ADR-047)")
+    for line in format_table(LATENCY_LOG.samples):
+        terminalreporter.write_line(line)
+
+    breached = LATENCY_LOG.breaches()
+    if breached:
+        terminalreporter.write_line("")
+        terminalreporter.write_line("  REGRESSION CEILING BREACHED:")
+        for sample in breached:
+            terminalreporter.write_line(
+                f"    {sample.name} ({sample.kind}) {sample.ms:,.0f} ms "
+                f"> ceiling {sample.ceiling_ms:,} ms"
+            )

@@ -6,6 +6,7 @@ import {
   listResumes,
   startResumeRun,
   type Entry,
+  type ResumeDocument,
   type ResumeSummary,
   type RunStatus,
 } from "../lib/api";
@@ -92,6 +93,16 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
   // Read once, at mount: if a run was in flight when the tab reloaded, re-attach to it.
   const [restored] = useState(loadActiveRun);
   const [target, setTarget] = useState(restored?.target ?? "");
+  /**
+   * The Phase-3 résumé, published mid-run by the agent (ADR-037 amendment).
+   *
+   * **Held apart from `stage` on purpose, and this is load-bearing.** The poll effect lists `stage`
+   * in its dependencies, so writing the draft into the stage made every poll produce a new stage
+   * object, tear the effect down and re-run it — which re-polls immediately instead of after the
+   * 3s timer. Measured at **18,445 requests in 1.5s** before it was caught, for the whole ~60s
+   * between draft and completion. Separate state the effect does not depend on breaks the cycle.
+   */
+  const [draft, setDraft] = useState<ResumeDocument | null>(null);
   const [stage, setStage] = useState<Stage>(() =>
     restored ? { phase: "generating", runId: restored.runId, startedAt: restored.startedAt } : { phase: "idle" },
   );
@@ -168,6 +179,12 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           void refreshHistory();
           return;
         }
+        if (result.status === "draftReady") {
+          // Deliberately not `settle` — that clears the saved active run and stops the watch. This
+          // is a progress update, so the loop below keeps going. It must not touch `stage`, which
+          // this effect depends on; see the `draft` declaration above.
+          if (result.document) setDraft(result.document);
+        }
         if (result.status === "failed") return settle({ phase: "failed", message: result.message });
         if (result.status === "notfound") {
           // The run record is gone (expired trace, or a stale id from an older session).
@@ -227,6 +244,9 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           return;
         }
         saveActiveRun({ runId: result.runId, startedAt, target: trimmed });
+        // Clear any draft from a previous run before the new one starts, or the old résumé shows
+        // under the new target until the first draft poll lands.
+        setDraft(null);
         setStage({ phase: "generating", runId: result.runId, startedAt });
       } finally {
         setStarting(false);
@@ -306,6 +326,7 @@ export function Resume({ idToken, entries }: { idToken: string; entries: Entry[]
           target={target}
           setTarget={setTarget}
           stage={stage}
+          draft={draft}
           starting={starting}
           elapsed={elapsed}
           entryCount={entries === null ? null : entries.length}
@@ -330,6 +351,7 @@ function Generator({
   target,
   setTarget,
   stage,
+  draft,
   starting,
   elapsed,
   entryCount,
@@ -338,6 +360,7 @@ function Generator({
   target: string;
   setTarget: (v: string) => void;
   stage: Stage;
+  draft: ResumeDocument | null;
   starting: boolean;
   elapsed: number;
   entryCount: number | null;
@@ -390,6 +413,31 @@ function Generator({
           </>
         )}
       </div>
+
+      {generating && draft && (
+        <div className="generator-draft">
+          {/* Labelled unambiguously as work in progress. The agent is still critiquing and may
+              rewrite any of this, so presenting it as the résumé would be a lie the next poll
+              exposes — and the run can still fail from here. */}
+          <p className="generator-draft-label">
+            First draft — still being reviewed, and it will change.
+          </p>
+          {draft.summary && <p className="generator-draft-summary">{draft.summary}</p>}
+          {draft.experience?.slice(0, 3).map((role, index) => (
+            <div key={`${role.employer}-${index}`} className="generator-draft-role">
+              <p className="generator-draft-role-title">
+                {role.title}
+                {role.employer ? ` · ${role.employer}` : ""}
+              </p>
+              <ul>
+                {role.bullets?.slice(0, 3).map((bullet, bulletIndex) => (
+                  <li key={bulletIndex}>{bullet}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
 
       {stage.phase === "failed" && (
         <p className="generator-error" role="alert">

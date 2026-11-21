@@ -47,6 +47,7 @@ from careervault.ddb_helpers import (
     delete_resume_run_trace,
     extract_user_id,
     finalize_resume_run,
+    overwrite_resume_run,
     from_ddb_numbers,
     get_profile,
     get_resume_record,
@@ -160,6 +161,10 @@ def _final_item(
                 "revisions_used": result.revisions_used,
                 "cumulative_tokens": result.cumulative_tokens,
                 "cumulative_cost_usd": result.cumulative_cost_usd,
+                # ADR-048. Persisted because a zero read on a multi-iteration run is the signature
+                # of caching that was requested and silently declined — invisible on any other signal.
+                "cumulative_cache_read_tokens": result.cumulative_cache_read_tokens,
+                "cumulative_cache_write_tokens": result.cumulative_cache_write_tokens,
                 # B-007. The poll reads *this* item for the first 30 days, so omitting it here made
                 # elapsed time null on exactly the runs a user would look at.
                 "elapsed_seconds": result.elapsed_seconds,
@@ -222,6 +227,8 @@ def _record_item(
         "critique_verdict": result.critique_verdict,
         "cumulative_tokens": result.cumulative_tokens,
         "cumulative_cost_usd": result.cumulative_cost_usd,
+        "cumulative_cache_read_tokens": result.cumulative_cache_read_tokens,
+        "cumulative_cache_write_tokens": result.cumulative_cache_write_tokens,
         "elapsed_seconds": result.elapsed_seconds,
     }
 
@@ -332,9 +339,32 @@ def _run_worker(payload: dict) -> dict:
         return _fail("empty_retrieval")
     profile = get_profile(user_id)
 
+    def _publish_draft(draft) -> None:
+        """Move the run to `draft_ready` so the poll can show a résumé at ~T+60s (ADR-037 amend).
+
+        Deliberately *not* terminal, and deliberately artifact-free: no S3 render, no presigned
+        URLs, and no `RESUME#` record. ADR-046's rule is that "past résumés" means résumés that
+        exist, and a draft that has not been critiqued is not one. Nothing here is downloadable.
+        """
+        item = _base_item(user_id, run_id, target_text, created_at)
+        item.update(
+            {
+                "status": "draft_ready",
+                "updated_at": utcnow_iso(),
+                "detail": None,
+                "document": draft.model_dump(mode="json", exclude_none=True),
+            }
+        )
+        overwrite_resume_run(item)
+
     try:
         result = agent.run_agent(
-            run_id=run_id, user_id=user_id, target_text=target_text, entries=entries, profile=profile
+            run_id=run_id,
+            user_id=user_id,
+            target_text=target_text,
+            entries=entries,
+            profile=profile,
+            on_draft=_publish_draft,
         )
     except BedrockError:
         logger.exception("Bedrock unavailable during agent run")
@@ -380,6 +410,8 @@ def _run_worker(payload: dict) -> dict:
         extra={
             "cumulative_tokens": result.cumulative_tokens,
             "cumulative_cost_usd": result.cumulative_cost_usd,
+            "cache_read_tokens": result.cumulative_cache_read_tokens,
+            "cache_write_tokens": result.cumulative_cache_write_tokens,
             "critique_verdict": result.critique_verdict,
         },
     )
@@ -419,6 +451,8 @@ def _completed_payload(run_id: str, item: dict) -> dict:
         "retrieved_count": len(retrieved) if retrieved is not None else from_ddb_numbers(item.get("entry_count")),
         "cost_usd": from_ddb_numbers(item.get("cumulative_cost_usd")),
         "tokens": from_ddb_numbers(item.get("cumulative_tokens")),
+        "cache_read_tokens": from_ddb_numbers(item.get("cumulative_cache_read_tokens")),
+        "cache_write_tokens": from_ddb_numbers(item.get("cumulative_cache_write_tokens")),
         # B-007: the elapsed counter used to vanish at exactly the moment you'd compare runs.
         "elapsed_seconds": from_ddb_numbers(item.get("elapsed_seconds")),
         # B-022: the structured résumé, so the client can offer copyable plain-text bullets over
@@ -540,6 +574,20 @@ def _status(user_id: str, run_id: str) -> dict:
                 "message": _FAILURE_MESSAGES.get(detail, "Couldn't generate a résumé — please try again."),
             },
         )
+    if status == "draft_ready":
+        # Non-terminal. The client renders this and keeps polling; `completed` replaces it in place.
+        # No urls and no document-is-final promise — a run that fails after a draft still reports
+        # `failed`, so the client must not treat this content as a result it can keep.
+        return _response(
+            200,
+            {
+                "run_id": run_id,
+                "status": "draft_ready",
+                "created_at": created_at,
+                "document": from_ddb_numbers(item.get("document")),
+            },
+        )
+
     # pending
     return _response(200, {"run_id": run_id, "status": "pending", "created_at": created_at})
 

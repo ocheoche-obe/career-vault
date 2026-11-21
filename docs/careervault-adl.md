@@ -1,7 +1,7 @@
 # CareerVault — Architectural Decisions Log (ADL)
 
 **Status:** Living document — updated as decisions are made
-**Last updated:** 2026-08-11 (v1.1 slice 4 — **ADR-014 amended twice**: [amendment 2 — mic on **both** composers rather than Log only; Home's `<input>` becomes an auto-growing `<textarea>` inside a `.composer-field` box, the same override Log already made, because a dictated paragraph in a single-line control scrolls out of view and the review gate depends on seeing what you are about to send; dictation **fills the field and never sends**, with `MicButton` structurally unable to submit; no mic renders at all where the API is absent] and [amendment 3 — **correction**: this ADR has called Web Speech "browser-side" since it was written, which is true of the API and **false of the processing** — Chrome and Safari stream audio to the vendor's speech service. The decision stands and the $0/NFR-1.1 argument is untouched, since that claim was always about AWS spend; what was wrong was an implied containment guarantee. Disclosed in the UI while recording, and the capture window given a bound that actually holds] · prior: 2026-08-09 (v1.1 slice 3 — **ADR-046** added [résumé history is a durable, no-TTL `RESUME#` record split from the ephemeral `RESUMERUN#` trace, which keeps its 30-day TTL; the `resumes/` S3 lifecycle rule is removed, **amending ADR-015 a second time** — its flat 30 days was a coupling fix to stop a trace outliving its artifacts, not a judgment about how long a résumé is worth keeping, and the coupling is gone once a durable record exists; **Sent**/**Draft** status badges omitted as having no referent, per ADR-045]; **ADR-046 amended** [`DELETE /resumes/{run_id}` — S3 artifacts, then record, then trace, behind ADR-027's confirm; added mid-slice because removing the lifecycle rule is what created the need, since nothing clears a résumé automatically any more]; **ADR-044 amended** [explicit Light/Dark/System selection on Details, defaulting to System so today's behaviour is unchanged for anyone who never opens it; `localStorage` + a pre-paint inline script, an attribute selector beside the existing media query rather than a `light-dark()` migration, which cannot express the five gradient tokens]) · prior: 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
+**Last updated:** 2026-08-21 (v1.1 slice 5 — **ADR-047** added [latency is measured by a recording harness that prints cold and warm separately and asserts only against regression ceilings, not the NFRs themselves — NFR-2.3 is expected to fail today, so a hard gate would ship a permanently red suite; each NFR measures in the cheapest tier that can honestly measure it]; **ADR-048** added [prompt caching on the résumé agent's stable Sonnet prefix, attacking B-004 and B-020 at their shared root, with the critique phase moved to Haiku — **verified live: a `cachePoint` below the model's token minimum is a silent no-op that bills in full, and the minimum differs per model (~1024 Sonnet, ~4096 Haiku 4.5), so caching is proven by asserting `cacheReadInputTokens`, never by the presence of the block**; B-020 lever (c), the small-corpus loop bypass, declined to keep ADR-010 intact]; **ADR-037 amended** [the poll gains a non-terminal `draft_ready` state so the draft surfaces at ~T+60s instead of being withheld until revise finishes; not terminal, no artifacts, no `RESUME#` record]) · prior: 2026-08-11 (v1.1 slice 4 — **ADR-014 amended twice**: [amendment 2 — mic on **both** composers rather than Log only; Home's `<input>` becomes an auto-growing `<textarea>` inside a `.composer-field` box, the same override Log already made, because a dictated paragraph in a single-line control scrolls out of view and the review gate depends on seeing what you are about to send; dictation **fills the field and never sends**, with `MicButton` structurally unable to submit; no mic renders at all where the API is absent] and [amendment 3 — **correction**: this ADR has called Web Speech "browser-side" since it was written, which is true of the API and **false of the processing** — Chrome and Safari stream audio to the vendor's speech service. The decision stands and the $0/NFR-1.1 argument is untouched, since that claim was always about AWS spend; what was wrong was an implied containment guarantee. Disclosed in the UI while recording, and the capture window given a bound that actually holds] · prior: 2026-08-09 (v1.1 slice 3 — **ADR-046** added [résumé history is a durable, no-TTL `RESUME#` record split from the ephemeral `RESUMERUN#` trace, which keeps its 30-day TTL; the `resumes/` S3 lifecycle rule is removed, **amending ADR-015 a second time** — its flat 30 days was a coupling fix to stop a trace outliving its artifacts, not a judgment about how long a résumé is worth keeping, and the coupling is gone once a durable record exists; **Sent**/**Draft** status badges omitted as having no referent, per ADR-045]; **ADR-046 amended** [`DELETE /resumes/{run_id}` — S3 artifacts, then record, then trace, behind ADR-027's confirm; added mid-slice because removing the lifecycle rule is what created the need, since nothing clears a résumé automatically any more]; **ADR-044 amended** [explicit Light/Dark/System selection on Details, defaulting to System so today's behaviour is unchanged for anyone who never opens it; `localStorage` + a pre-paint inline script, an attribute selector beside the existing media query rather than a `light-dark()` migration, which cannot express the five gradient tokens]) · prior: 2026-08-07 (v1.1 slice 1 — **ADR-043** added [correct the two design-handoff tokens that fail WCAG — `text-faint` #6f6c88 → #817e99 and a real focus ring from the existing `accent` token — deviating on exactly two values and nowhere else]; **ADR-044** added [keep system-theme support the current app already has; dark declared on bare `:root` so it diffs against the handoff, light derived and contrast-validated, heatmap ramp inverted]; **ADR-045** added [Home's aggregates derived client-side from `GET /entries`; "streak" defined as consecutive completed cadence periods by `created_at`, calendar-anchored, current period neutral until it ends]) · prior: slice 7 — **ADR-038** added [chat routing: a third control-flow tool `answer_question` keeps `toolChoice=any`; route → deterministic Titan retrieval → grounded synthesis, and `chat_lambda` gains read-only `ENTRY#` access, amending the §4.2.3 isolation claim]) · prior: slice 6b — **ADR-015 amended** [résumé retention becomes a flat 30 days matching the RESUMERUN TTL; the original "keep the newest indefinitely, 7-day TTL for older" is not expressible as an S3 lifecycle rule, and 7 days would have outlived-by-proxy the 30-day trace items]) · prior: slice 6a — **ADR-036** added [resume agent: Sonnet 5 via inference profile + 150K token ceiling + tuned iteration/revision caps; with a live-access correction — Sonnet 5 ungrantable on this account, runs on Sonnet 4-6 — and a cost-tuning note]; **ADR-037** added [résumé generation is an async job: 202 + poll, corrects arch §3.2.1's synchronous depiction]) · prior: slice 5 — ADR-035 added; ADR-024 corrected
 
 ---
 
@@ -78,8 +78,10 @@ Each ADR has:
 | ADR-044 | Keep system-theme support; derive the light palette the handoff omits       | Accepted   |
 | ADR-045 | Home's aggregates derived client-side; "streak" defined                     | Accepted   |
 | ADR-046 | Résumé history is a durable `RESUME#` record split from the 30-day trace    | Accepted   |
+| ADR-047 | Latency measured by a recording harness, gated on regression ceilings        | Accepted   |
+| ADR-048 | Prompt caching on the agent prefix, proven by cache-read tokens              | Accepted   |
 
-**Amended since first acceptance:** ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (three times — a `DictationProvider` seam with an optional `onInterim`, v1.1 slice 3; mic on both composers, dictation fills but never sends, v1.1 slice 4; then a **correction** that "browser-side" describes the API and not the processing — Web Speech transcribes server-side in Chrome and Safari, v1.1 slice 4) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
+**Amended since first acceptance:** **ADR-037** (progressive render — the poll gains a non-terminal `draft_ready` state, v1.1 slice 5) · ADR-015 (twice — delivery stands, retention rewritten by ADR-046) · ADR-021 · ADR-024 · **ADR-014** (three times — a `DictationProvider` seam with an optional `onInterim`, v1.1 slice 3; mic on both composers, dictation fills but never sends, v1.1 slice 4; then a **correction** that "browser-side" describes the API and not the processing — Web Speech transcribes server-side in Chrome and Safari, v1.1 slice 4) · **ADR-044** (explicit Light/Dark/System selection, v1.1 slice 3) · **ADR-046** (résumé deletion, added mid-slice in v1.1 slice 3 — amended in the same slice that accepted it) · ADR-019 · ADR-036
 
 ---
 
@@ -1541,6 +1543,40 @@ resource.
 
 ---
 
+### Amendment (2026-08-21, v1.1 slice 5) — the poll can return a draft before the run is terminal
+
+The contract above has exactly two useful states: `pending` and terminal. That was right when it was
+written and is the wrong shape for a 176-second job, because it means the user stares at
+"generating…" for the entire run and the draft — which typically exists around **T+60 s** — is
+withheld until critique and revise finish.
+
+Caching and the Haiku critique swap (ADR-048) reduce the number. This amendment attacks the *other*
+half of B-020, which the backlog is careful to separate: **(a)/(e) make the wait feel shorter without
+making it shorter.** Both are worth doing and they must not be confused for each other — a
+progressive render that shipped alone would let a slice claim victory on latency while the wall-clock
+number was untouched.
+
+**The change:** the worker writes the draft to the RESUMERUN item when Phase 3 completes, and
+`GET /resumes/{run_id}` reports a non-terminal **`draft_ready`** status carrying it. The client
+renders the draft and keeps polling; when the run reaches `completed`, the revised résumé replaces
+it in place.
+
+Three things this deliberately does not change:
+
+- **`draft_ready` is not terminal.** No S3 artifacts, no presigned URLs, and **no `RESUME#` record** —
+  ADR-046's "past résumés should mean résumés that exist" holds, and a draft that was never critiqued
+  is not a résumé the user built. Nothing downloadable exists until `completed`.
+- **The state machine stays forward-only.** `pending` → `draft_ready` → `completed` | `failed`. A run
+  that fails *after* a draft still reports `failed`; showing a draft is not a promise of success, and
+  the client must not treat `draft_ready` content as a result it can keep.
+- **The agent brain stays invocation-agnostic.** The original decision's ✅ — `agent.py` is a pure
+  function of its inputs — is worth preserving, so the draft is surfaced via a callback the handler
+  supplies, not by giving the loop knowledge of DynamoDB.
+
+⚠️ The cost is one extra `UpdateItem` per run and a UI that shows text it will later replace. The
+replacement is visible by design: watching the résumé improve is more informative than watching a
+spinner, and it is honest about what the agent is doing.
+
 ## ADR-038: Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any`
 
 **Status:** Accepted
@@ -2761,3 +2797,251 @@ lifetime set the product's**, because they were convenient to write together.
 These decisions are anticipated and will be added as work progresses:
 
 - **ADR-020** — Dashboard UX spec.
+
+---
+
+## ADR-047: Latency is measured by a recording harness, and gated on regression ceilings — not on the NFRs
+
+**Status:** Accepted
+**Date:** 2026-08-21 (v1.1 slice 5)
+
+### Context
+
+Three performance NFRs have existed since requirements v0.1 and **none has ever had a number
+attached** (B-023):
+
+| | Budget | Status before this slice |
+|---|---|---|
+| NFR-2.1 | Ingestion ≤ 5 s end-to-end | ❓ never measured |
+| NFR-2.2 | Generation ≤ 4 min, async | Measured only incidentally — 72 s / ~176 s, from cost runs |
+| NFR-2.3 | Dashboard load ≤ 2 s | ❓ never measured |
+
+The asymmetry that explains nine slices of silence: **per-turn cost has a forcing function and
+latency has none.** Cost shows up on a bill someone reads monthly. Latency shows up only if somebody
+is watching a stopwatch, so it went unmeasured while cost got measured to four decimal places.
+
+This slice's whole premise is moving a latency number, which is impossible to claim without a
+baseline produced by the same instrument as the after-measurement.
+
+One fact constrains the design. Slice 1 recorded `GET /entries` at **3639 ms inside a 3686 ms cold
+load** — NFR-2.3's entire 2000 ms budget blown by a single read. So the harness is being built in the
+knowledge that **one of the three NFRs it measures is expected to fail.**
+
+### Correction (same slice, hours later) — the cause was attributed to the wrong thing
+
+The paragraph above originally continued *"with the cause already known and logged (B-013: every
+entry ships its ~1024-float Titan vector to a caller that ranks and discards them)"*. **The harness
+was built, and it measured that claim false.** Recorded against the deployed dev stack, 13 entries:
+
+| Term | Cold | Warm |
+|---|---|---|
+| Container init (`Init Duration`) | 885 ms | — |
+| Handler duration | 661 ms | 193 ms |
+| Observed round trip | **2305 ms — over NFR-2.3** | 299 ms — passes |
+
+Against an empty corpus the handler runs in **6 ms** warm, so the corpus term is ~188 ms across 13
+entries — roughly **14.5 ms per entry**, and **8% of a cold dashboard load**. B-013 is real, it
+scales, and it is *not* what breaks NFR-2.3. Container init plus first-invocation setup inside the
+handler is ~1.5 s of the cold path, and the wire carries the rest.
+
+This is the harness earning its cost on its first run: the fix everyone would have reached for
+(project the embedding out of the query) would have bought ~190 ms against a ~2300 ms problem and
+been reported as addressing the requirement. The B-013 entry is corrected accordingly — its trigger
+is corpus growth, not NFR-2.3.
+
+⚠️ One caveat on the cold number, recorded rather than smoothed over: cold starts are forced by a
+4-way concurrent burst from a single test process, so the **observed** column carries some
+client-side contention and is pessimistic. The Lambda-reported `Init Duration` and `Duration` are
+unaffected by that and are the numbers to trust.
+
+### Decision
+
+**1. Record on every run; assert only against a generous ceiling.**
+
+Each integration tier prints a timing table unconditionally. Assertions fire at a ceiling set well
+above the NFR — they exist to catch a *regression*, not to adjudicate the requirement. The NFR
+verdict is a human reading recorded numbers into the MVP scorecard.
+
+Hard-asserting the NFRs was the tempting alternative and is wrong here for two independent reasons.
+NFR-2.3 fails today, so a hard gate ships a permanently red suite, and a suite that is always red
+communicates nothing when it goes red for a new reason. And latency measured over a network against
+cold Lambdas is genuinely noisy; a gate tight enough to be meaningful is tight enough to be flaky,
+and a flaky gate gets muted, which returns us to no measurement at all.
+
+**2. Cold and warm are separate measurements, never averaged.**
+
+A cold Lambda invocation and a warm one are different operations that happen to share a name, and
+their mean is a number describing neither. The harness reports both. NFR-2.1's "user submits text →
+confirmation shown" is a **cold-path** claim for a single-user app that is idle most of the day.
+
+**3. Each NFR measures in the cheapest tier that can honestly measure it** (ADR-042's tiering
+applied, not amended):
+
+| NFR | Tier | Why not cheaper |
+|---|---|---|
+| NFR-2.3 dashboard load | **free** | Deployed `GET /entries` round-trip; no Bedrock involved |
+| NFR-2.1 ingestion | **`--bedrock`** (~$0.01) | "End-to-end" includes the Haiku parse turn — a free-tier measurement would time everything except the dominant term |
+| NFR-2.2 generation | **`--expensive`** (~$0.11+) | A real Sonnet run is the only thing that measures a Sonnet run |
+
+Putting NFR-2.1 in the free tier by stubbing Bedrock was rejected: it would produce a green number
+that omits the slowest step, which is worse than no number because it looks like evidence.
+
+**4. Recorded numbers land in the plan doc, not only in a terminal.** A measurement that exists only
+in scrollback is not a baseline. Each slice that measures writes the table into its plan section.
+
+### Consequences
+
+- ✅ B-023 closes with real numbers, and the before/after comparison this slice needs is produced by
+  one instrument rather than two.
+- ✅ Regression protection without flakiness — the failure mode of a muted gate is designed out.
+- ✅ NFR-2.1/2.3 move off ❓Unverified on the scorecard, in at least one case to ❌. A measured
+  failure is a better position than an unmeasured assumption.
+- ⚠️ **A ceiling well above the NFR tolerates real degradation silently.** A dashboard load drifting
+  2 s → 4 s stays green under a 10 s ceiling. Mitigated only by the recorded table being read at
+  wrap; if that stops happening, this decision degrades to no measurement. The honest trigger to
+  revisit is the first time a regression is found by a human rather than the suite.
+- ⚠️ NFR-2.1 measurement now costs ~$0.01 per run, so it is not in the default free suite. The
+  number gets refreshed when someone runs `--bedrock`, not continuously.
+
+---
+
+## ADR-048: Prompt caching on the résumé agent's stable prefix, proven by cache-read tokens
+
+**Status:** Accepted
+**Date:** 2026-08-21 (v1.1 slice 5)
+
+### Context
+
+The résumé agent's retrieval loop (`agent.py` `_retrieve`) appends the assistant turn and the tool
+results to `messages` on every iteration and re-sends the whole conversation to Sonnet. That single
+mechanism is **simultaneously the dominant cost driver (B-004) and the dominant latency driver
+(B-020)** — which is why slice-9's measurements moved together: 2-entry corpus 72 s / 20K tokens /
+$0.113; 13-entry corpus ~176 s / ~83K tokens / $0.31–0.35, *same* `REVISE` verdict. Not a cheaper
+code path — the same path carrying more.
+
+Prompt caching attacks the re-send directly: the stable prefix (system prompt + tool schemas + the
+analysis) is transmitted once and referenced thereafter, cutting both billed input tokens and
+time-to-first-token on every iteration after the first.
+
+**Availability was assumed by the backlog and is now verified.** Probed live against
+account 768396678224 / us-east-1 on 2026-08-21, before writing this:
+
+| Probe | `usage` returned |
+|---|---|
+| Sonnet 4-6, ~2.4K-token cached system prefix | `cacheWriteInputTokens: 2403`; repeat → `cacheReadInputTokens: 2403`, `cacheDetails[0].ttl: "5m"` |
+| **Haiku 4.5, identical ~2.4K prefix** | `cacheWrite: 0`, `cacheRead: 0`, **`inputTokens: 2415` — billed in full** |
+| Haiku 4.5, ~9.6K prefix | `cacheWrite: 9602` — Haiku does support caching |
+| Haiku 4.5, bisected | silent at ~3055 tokens, caches at ~4162 |
+
+**The finding that shapes this ADR: a `cachePoint` below the model's minimum is a silent no-op.**
+Bedrock returns no error, emits no warning, and bills the full uncached prefix. The minimum differs
+per model — roughly 1024 for Sonnet, 4096 for Haiku 4.5. So *"a `cachePoint` block is present"* and
+*"caching happened"* are separate claims, and only the second one saves money.
+
+This is the same shape as ADR-021 (`required` in a tool schema is a hint, not a constraint) and the
+ADR-025 addendum on invisible degradation. The project has now hit this failure mode three times in
+three different Bedrock surfaces, which is enough to call it the house pattern rather than a
+coincidence: **on Bedrock, verify the effect, never the request.**
+
+### Decision
+
+**1. Cache the agent's stable prefix on the Sonnet phases.** A `cachePoint` goes after the system
+prompt and tool schemas — the segment that is byte-identical across every iteration of a run. The
+growing message history sits after it and is not cached.
+
+**2. Caching is proven by reading `cacheReadInputTokens` back, in a test.** The `--expensive` tier
+asserts a real multi-iteration run reports `cacheReadInputTokens > 0`. A test that asserts a
+`cachePoint` block was *sent* would have passed against Haiku at 2.4K tokens while the account was
+billed full price, which is precisely the bug this ADR exists to not ship.
+
+The per-run trace records cache-read and cache-write tokens alongside the existing counts, so the
+metadata row (B-006) shows whether caching engaged on that run rather than in principle.
+
+**3. The critique phase moves to Haiku**, and the two levers are evaluated together. Critique reads a
+finished draft and returns a verdict — judgement over a bounded artifact, not multi-step reasoning,
+which is NFR-1.3's own criterion for a Haiku task. It is a single call with little history, so it is
+the phase with the least to gain from caching and the most to gain from a faster, cheaper model.
+
+Because moving it to Haiku moves it **below the 4096 minimum and therefore out of caching range**,
+the two changes interact and the re-measurement must attribute the delta per lever rather than
+report one aggregate number.
+
+**4. `bedrock_client.converse` gains structured-system support.** It currently accepts `system` as a
+`str` and wraps it as `[{"text": system}]`, so a `cachePoint` block is not expressible. The parameter
+accepts either a string (unchanged behaviour, every existing caller unaffected) or a list of content
+blocks passed through.
+
+**5. Caching is a résumé-agent lever only.** The chat and parse paths run Haiku on prompts well under
+4096 tokens, so they cannot benefit. NFR-2.1 and NFR-2.3 are *measured* in this slice (ADR-047), not
+improved; the interactive path's cost stays with B-013.
+
+### Alternatives considered
+
+- **Skip the agentic retrieval loop for small corpora** (B-020 lever c) — feed ~13 entries straight
+  to the draft and delete several sequential round-trips. The largest single win available, and
+  **declined**: it runs against ADR-010's explicit own-the-loop learning goal, and it would make the
+  code path this project exists to teach the one that no longer runs. ADR-010 stands unamended. The
+  trigger to revisit is a corpus large enough that the loop stops being the interesting part.
+- **Summarise prior tool results between iterations** (B-004's original suggestion). Reduces tokens
+  without provider support, but costs an extra model call per iteration to save tokens on the next —
+  plausibly a latency *increase* — and it discards information the loop may need. Caching gets the
+  same reduction with no summarisation and no information loss.
+- **Cap the retrieved-entry payload.** Cheap and real, but it trades résumé quality for speed, which
+  is the wrong trade on the payoff feature. Caching costs nothing in quality.
+- **Wait for Sonnet 5** (B-010) — faster and ~33% cheaper, and `blocked-external` with nothing
+  self-serve remaining. Not a plan.
+
+### Measured outcome (same slice, after deploying) — the ranking was wrong
+
+The decision stands; the reasoning behind the *ordering* did not survive contact with the harness.
+Four `--expensive` runs on one fixture, same `REVISE` verdict throughout:
+
+| Configuration | Wall clock | Cost |
+|---|---|---|
+| Baseline | 81.8 s | $0.1233 |
+| **Caching only** | 84.2 s | $0.1071 |
+| Caching + Haiku critique | **48.4 s** | **$0.0785** |
+
+**Prompt caching produced ~13% of the cost saving and no measurable latency change** — 84.2 s
+against an 81.8 s baseline sits inside the ~3% run-to-run noise. The Haiku critique swap, ranked
+here as the minor lever and grouped almost as an afterthought, produced **the entire 43% latency
+win** and over half the cost saving.
+
+The error is identifiable and worth naming. The Decision above reasons from B-004's *cost*
+mechanism — a growing prompt re-sent every iteration — and then assumes latency follows, because the
+backlog treats B-004 and B-020 as "one mechanism seen from two sides". They are, for **cost**. For
+**wall clock** they are not: a run's duration is dominated by *output* token generation across
+draft, critique and revise, and caching does nothing to output. Cheaper input, identical generation
+time. "Same root cause" was true of the bill and false of the clock, and nothing in the reasoning
+distinguished the two.
+
+**This does not reverse the decision.** The 2-entry test fixture understates caching by
+construction: the real 13-entry corpus runs ~83K tokens against this fixture's ~21K, and caching
+scales with the re-sent prefix, so its cost saving should be materially larger in production than
+measured here. What changes is the claim — caching is a **cost** lever that also happens to be
+cheap, not the latency lever B-020 needed.
+
+### Consequences
+
+- ✅ Attacks B-004's cost mechanism at its root with one change, and needs no architectural
+  rework — the loop keeps its shape.
+- ✅ The silent-no-op trap is caught by a test rather than by an audit of the bill.
+- ✅ Cache-read/write tokens in the trace make future regressions visible per run.
+- ⚠️ **The cache TTL is 5 minutes.** Within a single run that is ample (iterations are seconds
+  apart). Across runs it means the first iteration of a cold run always pays a cache *write*, which
+  is billed **above** the normal input rate. A run that ends after one Sonnet call is therefore
+  slightly *more* expensive than before — acceptable, since such a run is not the one that hurts.
+- ⚠️ The lever pair is not independently attributable without measuring them separately. That run
+  was made (~$0.08) and is the reason the ranking error above was caught rather than shipped as a
+  41% win credited to the wrong change. `AGENT_CRITIQUE_MODEL` exists partly so it can be repeated.
+- ⚠️ **Caching holds retrieved career entries in Bedrock's prompt cache for ~5 minutes.** Raised by
+  the slice-5 security review as a below-threshold note, not a finding: the cache is keyed on the
+  exact token prefix within this account, the data is identical to what every iteration already
+  transmitted, and the MVP has one user. It is recorded because *"the model provider now retains
+  this for five minutes"* is a true statement that was not true before, and this ADR would otherwise
+  not say it — the same omission ADR-014 had to be **corrected** for when "browser-side" turned out
+  to describe the API rather than the processing. The trigger to revisit is multi-tenancy, where
+  "keyed on content" stops being a comfortable answer on its own.
+- ⚠️ Haiku critique is a quality risk on the payoff feature. The critique verdict is recorded per run
+  already, so a systematic shift in verdicts is detectable; the trigger to revert is critique output
+  that stops distinguishing good drafts from bad, not a single disagreeable verdict.

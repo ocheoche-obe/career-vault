@@ -262,3 +262,47 @@
     min-height: 380px;
   }
 }
+
+/* --- Interim draft, shown mid-run (ADR-037 amendment) -------------------------------------------
+   Visually subordinate to a finished résumé on purpose: this is progress, not product. It is still
+   being critiqued and may be rewritten, and the run can still fail from here. Geometry in literal
+   px and colour from tokens only, matching the rest of this file — a raw hex here would be a
+   light-mode bug that dark-mode review cannot see. */
+.generator-draft {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: var(--surface-sunken);
+}
+
+.generator-draft-label {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.generator-draft-summary {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.generator-draft-role {
+  margin-top: 12px;
+}
+
+.generator-draft-role-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.generator-draft-role ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  color: var(--text-muted);
+}

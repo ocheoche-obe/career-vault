@@ -44,7 +44,7 @@ def _fail_result(status):
 @pytest.fixture
 def stubs(monkeypatch):
     """Stub every external boundary of the handler; tests override individual pieces as needed."""
-    state = {"created": [], "finalized": [], "invoked": [], "records": [], "deleted": [], "deleted_traces": [], "run": None}
+    state = {"created": [], "finalized": [], "invoked": [], "records": [], "deleted": [], "deleted_traces": [], "overwritten": [], "run": None}
     # The stored RESUME# record. `_delete` reads it before destroying anything (so an unknown
     # run_id 404s with no side effects) and takes the object keys from it rather than rebuilding
     # them from a filename convention. Tests that need it absent set `state["record"] = None`.
@@ -61,6 +61,9 @@ def stubs(monkeypatch):
     monkeypatch.setattr(h, "get_profile", lambda uid: {"email": "dev@example.com"})
     monkeypatch.setattr(h, "create_resume_run", lambda item: state["created"].append(item))
     monkeypatch.setattr(h, "finalize_resume_run", lambda item: state["finalized"].append(item))
+    # ADR-037 amendment: the non-terminal `draft_ready` write goes through the overwrite primitive
+    # rather than `finalize_resume_run`, so it is stubbed and recorded separately.
+    monkeypatch.setattr(h, "overwrite_resume_run", lambda item: state["overwritten"].append(item))
     # ADR-046's durable RESUME# record, plus its read and delete paths.
     monkeypatch.setattr(h, "create_resume_record", lambda item: state["records"].append(item))
     monkeypatch.setattr(h, "get_resume_record", lambda uid, rid: state["record"])
@@ -624,3 +627,61 @@ def test_delete_without_a_run_id_is_400(stubs):
     resp = h.handler(api_event(None, method="DELETE", path_params=None), FakeLambdaContext())
     assert resp["statusCode"] == 400
     assert stubs["deleted"] == []
+
+
+# --- ADR-037 amendment: the non-terminal `draft_ready` state ---------------------------------------
+
+
+def test_poll_reports_draft_ready_with_the_document_but_no_urls(stubs, monkeypatch):
+    monkeypatch.setattr(
+        h,
+        "get_resume_run",
+        lambda uid, rid: {
+            "status": "draft_ready",
+            "created_at": "t",
+            "document": {"summary": "A draft."},
+        },
+    )
+
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+
+    assert body["status"] == "draft_ready"
+    assert body["document"] == {"summary": "A draft."}
+    # Nothing downloadable exists yet, and the client must not be handed anything implying it does.
+    # ADR-046's rule is that a résumé you can keep is one that finished; a draft has not.
+    assert "pdf_url" not in body
+    assert "html_url" not in body
+
+
+def test_the_worker_publishes_the_draft_before_critique_and_writes_no_record(stubs, monkeypatch):
+    """The callback fires mid-run, not at the end, and creates nothing durable.
+
+    Asserted through `run_agent`'s contract rather than by running the real loop: what matters here
+    is that the handler's callback writes a `draft_ready` item and does not confuse it for a result.
+    """
+    published = {}
+
+    def fake_run_agent(*, run_id, user_id, target_text, entries, profile, on_draft=None):
+        assert on_draft is not None, "the worker no longer passes a draft callback"
+
+        class _Draft:
+            def model_dump(self, **kw):
+                return {"summary": "Interim draft."}
+
+        on_draft(_Draft())
+        published["at_callback"] = list(stubs["overwritten"])
+        raise RuntimeError("stop the run here — only the callback is under test")
+
+    monkeypatch.setattr(h.agent, "run_agent", fake_run_agent)
+
+    with pytest.raises(RuntimeError):
+        h._run_worker({"job": h._WORKER_JOB, "user_id": "u", "run_id": "01JRUN", "target_text": "JD"})
+
+    written = published["at_callback"]
+    assert len(written) == 1, written
+    assert written[0]["status"] == "draft_ready"
+    assert written[0]["document"] == {"summary": "Interim draft."}
+    # The draft must not have produced a durable RESUME# record — "past résumés" means résumés that
+    # exist (ADR-046), and this one has not been critiqued yet.
+    assert stubs["records"] == []
+    assert stubs["finalized"] == []

@@ -433,6 +433,16 @@ def finalize_resume_run(item: Mapping[str, Any]) -> None:
     because by definition the item already exists. TTL'd (30 days) via the caller's ``expires_at``
     epoch attribute, matching the table's TimeToLive configuration.
     """
+    overwrite_resume_run(item)
+
+
+def overwrite_resume_run(item: Mapping[str, Any]) -> None:
+    """Unconditionally replace a RESUMERUN# item, terminal state or not.
+
+    Split out from :func:`finalize_resume_run` when ADR-037's amendment added the non-terminal
+    ``draft_ready`` state: the write is identical, but "finalize" promises a run has ended, and a
+    caller publishing a mid-run progress update should not have to say that word to get a PutItem.
+    """
     assert_sk_prefix(item, "RESUMERUN#")
     get_table().put_item(Item=to_ddb_numbers(dict(item)))
 

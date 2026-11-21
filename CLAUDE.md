@@ -128,11 +128,31 @@ All generated IDs are ULIDs (lexicographically time-sortable). Entry subtypes: J
 
 ## Current phase
 
-**v1.1 slice 4 complete (Voice capture — PR #51). Next: v1.1 slice 5 — résumé speed (B-023 first).**
-Slices 1–3 shipped as PR #43, #48 and #50. **The redesign is complete across all six views**, and the
+**v1.1 slice 5 complete (Résumé speed — PR #52). Next: v1.1 slice 6 — UI + mobile pass (B-001,
+NFR-6.2, B-046), then B-044.** Slices 1–4 shipped as PR #43, #48, #50 and #51. **The redesign is complete across all six views**, and the
 scaffolding that carried it is gone: **B-036 is closed** — zero shim aliases in `index.css`, no
 `.legacy-view` in `App.css`, and no raw hex outside `index.css`. Phase 2 / MVP was declared
 2026-07-29 (slice 9, PR #32).
+
+**What slice 5 changed that outlives it (ADR-047, ADR-048, ADR-037 amendment):** the résumé is
+**41% faster and 36% cheaper** (81.8 s / $0.1233 → 48.4 s / $0.0785 on the 2-entry fixture), all three
+latency NFRs finally have numbers, and the poll has a non-terminal `draft_ready` state. Four things a
+future session will trip over:
+
+- **A `cachePoint` below the model's token minimum is a silent no-op** — no error, no warning, billed
+  in full — and the minimum differs per model (~1024 Sonnet, ~4096 Haiku 4.5). **Prove caching by
+  reading `cacheReadInputTokens` back**, never by the presence of the block. Third Bedrock surface
+  where the request and the effect diverge (cf. ADR-021).
+- **Caching was the wrong lever and shipped anyway.** It bought ~13% of the *cost* and **none** of the
+  latency; the Haiku critique swap bought the entire 43%. B-004 and B-020 are one mechanism *for
+  cost* and two for wall clock — a run is dominated by **output** generation, which caching cannot
+  touch. Caching stays (the 2-entry fixture understates it); the claim is what was corrected.
+- **NFR-2.3's cold miss is cold start, not B-013.** Measured: 2,620 ms cold = 1,053 ms init + 778 ms
+  handler, against a ~188 ms corpus term (~14.5 ms/entry). Projecting embeddings out would buy ~190 ms
+  against a ~2,300 ms problem. Now **B-047**; B-013's real trigger is corpus growth (~140 entries).
+- **Never write state a `useEffect` depends on from inside that effect.** The draft lived on `stage`,
+  which the poll effect depends on: 18,445 requests in 1.5 s. It now lives in separate state, and the
+  regression test asserts a *request count over elapsed time* because the render is identical either way.
 
 **What slice 4 changed that outlives it (ADR-014 amendments 1–3):** dictation exists on **both**
 composers via a `DictationProvider` seam, and Home's composer is now an auto-growing `<textarea>`
@@ -183,11 +203,10 @@ Remaining v1.1 scope in `docs/careervault-plan.md` § "v1.1 — graduated scope"
 
 1. ~~**Voice capture**~~ — **closed in slice 4.** Frontend-only and $0, both measured. The paid-provider
    constraint stands: anything paid breaks ADR-014's cost premise and needs its own decision.
-2. **Résumé speed (slice 5, next)** — B-023 first (measure; NFR-2.1/2.3 have no numbers, and
-   optimising without a baseline ships changes that only *feel* faster), then B-020/B-004 (one
-   mechanism — the retrieval loop's growing history drives both cost and latency). ~~B-022~~ closed
-   in slice 3. **Sequence B-044 after this**, not before: linking projects to roles changes résumé
-   *content*, and changing content while latency is unmeasured confounds both.
+2. ~~**Résumé speed**~~ — **closed in slice 5.** B-023 closed with real numbers; B-020/B-004 attacked
+   and 41%/36% won. **B-044 is now unblocked** — latency is measured, so changing résumé content no
+   longer confounds it. Not done: the **real-corpus re-measure** (all figures are the 2-entry
+   fixture) and **B-047** (NFR-2.3 cold start).
 3. **UI + mobile pass** — B-001 plus NFR-6.2. Slices 3 and 4 measured **28 combinations** with zero
    horizontal overflow, so this is narrower than the ❓Unverified scorecard entry suggests — but
    every one was an *emulated* viewport, and NFR-6.2 does not close until a real device is used.
@@ -214,13 +233,13 @@ Each of these caused, or would have caused, a wrong action. Detail is in the lin
 
 ## Testing
 
-663 tests. **The default run of every suite is free** — that is deliberate, because a suite that
+756 tests. **The default run of every suite is free** — that is deliberate, because a suite that
 costs money is a suite people avoid, and an avoided test still implies coverage nobody has (ADR-042).
 
 ```bash
-./scripts/run-tests.sh                    # 417 backend unit                        $0
-cd frontend && npm test                   # 189 component (Vitest + RTL)            $0
-./scripts/run-integration.sh              # 57 · DynamoDB Local + deployed dev      $0
+./scripts/run-tests.sh                    # 429 backend unit                        $0
+cd frontend && npm test                   # 267 component (Vitest + RTL)            $0
+./scripts/run-integration.sh              # 60 · DynamoDB Local + deployed dev      $0
 ./scripts/run-integration.sh --bedrock    # + real Haiku round-trips           ~$0.01
 ./scripts/run-integration.sh --expensive  # + a full Sonnet résumé run         ~$0.11
 ```

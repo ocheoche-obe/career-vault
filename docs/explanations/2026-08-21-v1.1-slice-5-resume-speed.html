@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Measuring first: how the résumé got 41% faster, and why the credit went to the wrong change</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fafaf8; --fg: #1a1a1a; --accent: #b5541f; --muted: #6b6b6b;
+    --code-bg: #282c34; --code-fg: #e6e6e6; --callout-bg: #fff4e8; --border: #e0ddd6;
+  }
+  body { font-family: Georgia, 'Times New Roman', serif; background: var(--bg); color: var(--fg);
+    max-width: 820px; margin: 0 auto; padding: 2rem 1.5rem 6rem; line-height: 1.65; }
+  h1 { font-size: 1.9rem; border-bottom: 3px solid var(--accent); padding-bottom: .5rem; }
+  h2 { font-size: 1.4rem; margin-top: 3rem; color: var(--accent); }
+  h3 { font-size: 1.1rem; margin-top: 1.8rem; }
+  code { font-family: 'SF Mono', Consolas, monospace; background: #eee; padding: .1rem .3rem; border-radius: 3px; font-size: .92em; }
+  pre { background: var(--code-bg); color: var(--code-fg); padding: 1rem 1.2rem; border-radius: 8px;
+    overflow-x: auto; white-space: pre-wrap; font-family: 'SF Mono', Consolas, monospace; font-size: .88rem; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  .callout { background: var(--callout-bg); border-left: 4px solid var(--accent); padding: .9rem 1.2rem;
+    border-radius: 0 6px 6px 0; margin: 1.2rem 0; }
+  .toc { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.5rem; margin: 1.5rem 0; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc ul { margin: .3rem 0; }
+  .diagram { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem;
+    margin: 1.2rem 0; font-family: 'SF Mono', Consolas, monospace; font-size: .85rem; }
+  .flow { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; justify-content: center; padding: .5rem 0; }
+  .box { border: 2px solid var(--accent); border-radius: 8px; padding: .6rem 1rem; background: #fdf6ee; text-align: center; min-width: 120px; }
+  .box.fail { border-color: #b91c1c; background: #fef2f2; }
+  .arrow { font-size: 1.4rem; color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .92rem; }
+  th, td { border: 1px solid var(--border); padding: .5rem .7rem; text-align: left; }
+  th { background: #f0ede6; }
+  .quiz-q { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 1.2rem 1.5rem; margin: 1.2rem 0; }
+  .quiz-opt { display: block; width: 100%; text-align: left; padding: .6rem 1rem; margin: .4rem 0;
+    border: 1px solid var(--border); border-radius: 6px; background: #fff; cursor: pointer; font-family: inherit; font-size: .95rem; }
+  .quiz-opt:hover { background: #f5f2ec; }
+  .feedback { display: none; margin-top: .6rem; padding: .6rem 1rem; border-radius: 6px; font-size: .9rem; }
+  .feedback.correct { background: #ecfdf3; color: #166534; border-left: 3px solid #16a34a; }
+  .feedback.incorrect { background: #fef2f2; color: #991b1b; border-left: 3px solid #dc2626; }
+  .badge { display: inline-block; font-size: .75rem; padding: .15rem .5rem; border-radius: 10px; font-family: sans-serif; }
+  .badge.new { background: #dcfce7; color: #166534; }
+  @media (max-width: 600px) { body { padding: 1rem; } .flow { flex-direction: column; } }
+</style>
+
+<h1>Measuring first: how the résumé got 41% faster, and why the credit went to the wrong change</h1>
+<p style="color:var(--muted); margin-top:-.5rem;">v1.1 slice 5 · Prepared 2026-08-21 · ADR-047, ADR-048, ADR-037 amendment</p>
+
+<div class="toc">
+<strong>Contents</strong>
+<ul>
+  <li><a href="#background">Background</a></li>
+  <li><a href="#intuition">Intuition</a></li>
+  <li><a href="#code">Code walkthrough</a></li>
+  <li><a href="#quiz">Quiz</a></li>
+</ul>
+</div>
+
+<h2 id="background">Background</h2>
+
+<p>This slice is about making the résumé generator faster and cheaper. But the interesting part is
+not the 41% — it is that <em>the change we built the slice around was not the one that worked</em>,
+and we only know that because we measured properly. Everything below is in service of that story.</p>
+
+<h3>Skippable if you know AWS: what the pieces are</h3>
+
+<p><strong>Lambda</strong> runs your code without a server. When a request arrives and no container
+is already running your function, AWS creates one: downloads your code, starts a Python interpreter,
+imports your modules. That is a <strong>cold start</strong>, and it is billed and reported separately
+from the actual work. Once warm, a container is reused for later requests until it is reclaimed.</p>
+
+<p><strong>Amazon Bedrock</strong> is AWS's managed access to foundation models. CareerVault talks to
+it through the <strong>Converse API</strong>, a single chat-shaped interface that works across model
+vendors. Every response carries a <code>usage</code> block: how many input tokens you sent, how many
+output tokens came back. You are billed on both, at different rates, and output is roughly 5× the
+price of input.</p>
+
+<p><strong>Prompt caching</strong> is a Bedrock feature that lets you mark a point in your prompt and
+say "everything before here is stable — remember it." Subsequent calls that share that exact prefix
+read it from cache instead of re-transmitting it, at about a tenth of the input price. Writing the
+cache costs slightly <em>more</em> than a normal input token (1.25×), so caching only pays if the
+prefix is actually re-read.</p>
+
+<div class="callout">
+<strong>Cross-cloud parallel.</strong> Azure OpenAI does this automatically for prefixes over 1024
+tokens with no API surface at all — you cannot control placement, you just observe
+<code>cached_tokens</code> in the response. Google Vertex AI splits it in two: implicit caching that
+behaves like Azure's, and explicit <code>CachedContent</code> objects you create, name, give a TTL,
+and reference by ID. Bedrock sits in between — you place the breakpoint inline with
+<code>cachePoint</code> markers, but you do not manage a cache object's lifecycle.
+</div>
+
+<h3>The narrow background: what the résumé agent does</h3>
+
+<p>Generating a tailored résumé is CareerVault's most expensive operation and its slowest. It is a
+six-phase agent loop (<strong>ADR-010</strong> — we own the loop rather than using Bedrock Agents,
+deliberately, for the learning value):</p>
+
+<div class="diagram">
+<div class="flow">
+<div class="box">1. Analyze<br><span style="font-size:.8em;color:#777">Haiku</span></div>
+<span class="arrow">→</span>
+<div class="box">2. Retrieve<br><span style="font-size:.8em;color:#777">Sonnet, <em>loops</em></span></div>
+<span class="arrow">→</span>
+<div class="box">3. Draft<br><span style="font-size:.8em;color:#777">Sonnet</span></div>
+<span class="arrow">→</span>
+<div class="box">4. Critique<br><span style="font-size:.8em;color:#777">Sonnet</span></div>
+<span class="arrow">→</span>
+<div class="box">5. Revise<br><span style="font-size:.8em;color:#777">Sonnet</span></div>
+</div>
+</div>
+
+<p>Phase 2 is the only one that repeats. The model calls search tools, gets results back, and decides
+whether to search again — up to 8 times. Each iteration re-sends <em>the entire conversation so
+far</em>, because that is how a stateless chat API works: there is no server-side session, so
+"remember what we discussed" means "send it all again."</p>
+
+<p>That re-send is logged in the backlog twice, from two angles: <strong>B-004</strong> calls it the
+dominant cost driver, <strong>B-020</strong> calls it the dominant latency driver. The backlog
+describes them as "one mechanism seen from two sides." Hold that thought — it turns out to be half
+true, and the half that is false is what this slice discovered.</p>
+
+<p>The whole run is asynchronous (<strong>ADR-037</strong>): a real run takes 1–3 minutes, and API
+Gateway hard-caps an integration at 29 seconds, so the request returns a <code>run_id</code>
+immediately and a self-invoked worker Lambda does the work while the browser polls for status.</p>
+
+
+<h2 id="intuition">Intuition</h2>
+
+<h3>Rule one: measure before you optimise</h3>
+
+<p>CareerVault has three latency requirements. Before this slice, <em>none of them had a number.</em>
+Not "a number we were failing" — no number at all, for nine slices.</p>
+
+<p>The reason is worth naming, because it generalises. Cost has a <strong>forcing function</strong>:
+a bill arrives monthly and somebody reads it. Latency has none. Nobody gets an email saying your
+dashboard got slower. So per-turn cost was known to four decimal places
+(<code>$0.006</code> for a chat turn) while latency went entirely unmeasured.</p>
+
+<p>So the first thing built was not an optimisation. It was an instrument
+(<strong>ADR-047</strong>): every integration test run now prints a timing table.</p>
+
+<div class="callout">
+<strong>The design decision that matters:</strong> the harness <em>records</em> everything and
+<em>asserts</em> almost nothing. Tests fail only against a ceiling set far above the requirement.
+Why? Because one of these NFRs fails today. Gating on the requirement itself would ship a suite that
+is permanently red — and a suite that is always red tells you nothing when it goes red for a
+<em>new</em> reason. The requirement verdict is a human reading numbers; the assertion only catches
+drift.
+</div>
+
+<h3>What the instrument found on its first run</h3>
+
+<p>The dashboard-load requirement (NFR-2.3, ≤ 2 seconds) was known to be failing, and the backlog
+had a confident explanation: <strong>B-013</strong>. Every career entry is stored with a
+1024-dimension embedding vector (~20 KB), and the read fetches all of them just to throw them away.
+Obviously that is the problem. Obviously.</p>
+
+<p>Measuring it decomposed the number instead of assuming it:</p>
+
+<table>
+<tr><th>Term</th><th>Cold</th><th>Warm</th></tr>
+<tr><td>Container init (<code>Init Duration</code>)</td><td>1,053 ms</td><td>—</td></tr>
+<tr><td>Handler execution</td><td>778 ms</td><td>193 ms</td></tr>
+<tr><td>Handler, <em>empty corpus</em></td><td>—</td><td>6 ms</td></tr>
+<tr><td><strong>Observed round trip</strong></td><td><strong>2,620 ms ❌</strong></td><td>300 ms ✅</td></tr>
+</table>
+
+<p>Subtract the empty-corpus handler (6 ms) from the 13-entry handler (193 ms) and you get the part
+that actually scales with the corpus: <strong>~188 ms, about 14.5 ms per entry.</strong> That is
+roughly <strong>8% of a cold dashboard load.</strong></p>
+
+<div class="callout">
+<strong>This is the whole argument for measuring.</strong> The "obvious" fix — project the embedding
+out of the query — would have bought about 190 ms against a 2,300 ms problem, roughly 7%, and been
+written up as addressing the requirement. The real cause is cold start: 1,053 ms of container init
+plus ~580 ms of first-invocation setup inside the handler. B-013 is real and it does scale — the read
+alone hits the 2-second budget somewhere near 140 entries — but it is not what breaks the
+requirement today. Both the ADR and the backlog entry were corrected in place.
+</div>
+
+<h3>The thing live AWS contradicted: a cache that silently does nothing</h3>
+
+<p>Before writing the caching ADR, we probed the actual API rather than trusting the docs. Same
+request shape, two models:</p>
+
+<table>
+<tr><th>Probe</th><th>What <code>usage</code> came back</th></tr>
+<tr><td>Sonnet 4-6, ~2.4K-token prefix</td><td><code>cacheWriteInputTokens: 2403</code>, then <code>cacheReadInputTokens: 2403</code> ✅</td></tr>
+<tr><td><strong>Haiku 4.5, identical prefix</strong></td><td><code>cacheWrite: 0</code>, <code>cacheRead: 0</code>, <strong><code>inputTokens: 2415</code> — billed in full</strong></td></tr>
+<tr><td>Haiku 4.5, ~9.6K prefix</td><td><code>cacheWrite: 9602</code> — so Haiku <em>does</em> support it</td></tr>
+</table>
+
+<p>Bisecting put Haiku's minimum near 4096 tokens, against Sonnet's 1024. Below the minimum, Bedrock
+does not error. It does not warn. It accepts your <code>cachePoint</code>, ignores it, and charges
+full price.</p>
+
+<div class="callout">
+<strong>So "we added caching" and "caching happened" are two different claims</strong>, and only the
+second one saves money. This is the third time this codebase has hit the same shape: <strong>ADR-021</strong>
+found that <code>required</code> in a Converse tool schema is a hint the model may ignore;
+<strong>ADR-014</strong> had to be corrected when "browser-side" turned out to describe the Web Speech
+API but not where the audio is processed. The house rule that came out of it:
+<strong>on Bedrock, verify the effect, never the request.</strong>
+</div>
+
+<h3>Where to put the breakpoints</h3>
+
+<p>Caching only pays where a prefix is <em>re-read</em>. A one-shot call that caches its prefix pays
+the 1.25× write premium and never gets the 0.1× read back — a pure loss. So caching goes on the
+retrieval loop and nowhere else. Two breakpoints: one after the system prompt (stable forever), and
+one that <em>moves</em> to the end of the conversation on each iteration.</p>
+
+<div class="diagram">
+<strong>Iteration 2 sends:</strong><br><br>
+[ system prompt + tool schemas ] ◄── breakpoint 1, cached since iteration 1<br>
+[ initial user prompt ]<br>
+[ assistant: call search_entries ]<br>
+[ user: tool results ]&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;◄── breakpoint 2 <em>moves here</em><br>
+<br>
+<span style="color:#777">Iteration 3 reads all of the above from cache at 0.1× and writes the new turn.</span>
+</div>
+
+<p>Old breakpoints are stripped before the new one is added, because Claude allows only a few of
+them. That is safe: a <code>cachePoint</code> is a marker, not content, so removing one does not
+change the token prefix the cache is keyed on.</p>
+
+<h3>The result, and the twist</h3>
+
+<p>Two levers shipped together — caching, and moving the critique phase from Sonnet to the much
+cheaper Haiku. Measuring both together would have been enough to claim a win. Measuring them
+<em>separately</em> cost one extra $0.08 run and changed the conclusion entirely:</p>
+
+<table>
+<tr><th>Configuration</th><th>Wall clock</th><th>Cost</th></tr>
+<tr><td>Baseline</td><td>81.8 s</td><td>$0.1233</td></tr>
+<tr><td><strong>Caching only</strong></td><td>84.2 s</td><td>$0.1071</td></tr>
+<tr><td>Caching + Haiku critique</td><td><strong>48.4 s</strong></td><td><strong>$0.0785</strong></td></tr>
+</table>
+
+<p><strong>Prompt caching bought about 13% of the cost and none of the latency.</strong> 84.2 s
+against an 81.8 s baseline is inside the run-to-run noise (two baseline runs measured 79.2 s and
+81.8 s). The critique swap — ranked as the minor lever, almost an afterthought — delivered the
+entire 43% latency win.</p>
+
+<div class="callout">
+<strong>Why, in hindsight.</strong> The reasoning went: B-004 and B-020 are "one mechanism seen from
+two sides," we are attacking that mechanism, so both should move. But a run's wall clock is dominated
+by <strong>output token generation</strong> across draft, critique and revise — and caching does
+nothing whatsoever to output. Cheaper input, identical generation time. The two backlog items really
+are one mechanism <em>for cost</em>. For the clock they are not, and nothing in the argument
+distinguished them.
+<br><br>
+Caching stayed. The test fixture has 2 entries; the real corpus has 13 and runs ~83K tokens against
+this fixture's ~21K, and caching scales with the size of the re-sent prefix. What changed is the
+<em>claim</em>, not the code.
+</div>
+
+<h3>Making the wait feel shorter, honestly</h3>
+
+<p>The last piece attacks perceived time rather than real time. The draft exists at around T+60s but
+was withheld until critique and revise finished. Now the worker publishes it as a non-terminal
+<code>draft_ready</code> poll state (an <strong>ADR-037</strong> amendment):</p>
+
+<div class="diagram">
+<div class="flow">
+<div class="box">pending</div>
+<span class="arrow">→</span>
+<div class="box">draft_ready<br><span style="font-size:.8em;color:#777">~T+60s, shows a draft</span></div>
+<span class="arrow">→</span>
+<div class="box">completed</div>
+</div>
+<div class="flow" style="margin-top:.5rem">
+<span style="color:#777">…or from either state →</span>
+<div class="box fail">failed</div>
+</div>
+</div>
+
+<p>Three things it deliberately does <em>not</em> do: no S3 artifacts, no presigned URLs, and no
+durable <code>RESUME#</code> history record. <strong>ADR-046</strong>'s rule is that "past résumés"
+means résumés that exist, and a draft nobody has critiqued is not one. Nothing is downloadable, and
+a run can still end <code>failed</code> after showing a draft — so the UI labels it as unfinished
+rather than presenting it as the résumé.</p>
+
+
+<h2 id="code">Code walkthrough</h2>
+
+<h3>1. Teaching the shared client to speak in blocks</h3>
+
+<p>The shared Bedrock wrapper took <code>system</code> as a plain string and wrapped it itself, so a
+<code>cachePoint</code> was not expressible at all. It now accepts either
+(<code>backend/shared/python/careervault/bedrock_client.py:138</code>):</p>
+
+<pre><code>request["system"] = [{"text": system}] if isinstance(system, str) else system</code></pre>
+
+<p>Every existing caller passes a string and is unaffected. The docstring carries the warning about
+per-model minimums, because that is where someone reaching for this feature will look.</p>
+
+<h3>2. Placing the breakpoints</h3>
+
+<p>Two small helpers in <code>backend/functions/resume_agent/agent.py:225</code>. The interesting one
+is the moving breakpoint:</p>
+
+<pre><code>def _with_moving_breakpoint(messages: list[dict]) -> list[dict]:
+    cleaned = []
+    for message in messages:
+        content = [b for b in message["content"] if "cachePoint" not in b]
+        cleaned.append({**message, "content": content})
+    if cleaned:
+        cleaned[-1] = {**cleaned[-1],
+                       "content": [*cleaned[-1]["content"], _cache_point()]}
+    return cleaned</code></pre>
+
+<p>Note it builds new dicts rather than mutating. The loop reuses its <code>messages</code> list
+across iterations, so mutating in place would compound a breakpoint per turn into the caller's own
+history — and there is a unit test that fails if you do.</p>
+
+<h3>3. Getting the arithmetic right</h3>
+
+<p>Cache tokens are billed at different rates <em>and</em> reported separately —
+<code>inputTokens</code> excludes anything served from or written to cache. We verified that against
+a live response rather than assuming it (a 2403-token cached prefix returns
+<code>inputTokens: 13</code>), because guessing wrong in either direction silently corrupts every
+cost number the app reports:</p>
+
+<pre><code>return (
+    input_tokens * in_rate
+    + cache_write_tokens * in_rate * 1.25   # writes cost a premium
+    + cache_read_tokens  * in_rate * 0.10   # reads are a tenth
+    + output_tokens * out_rate
+)</code></pre>
+
+<p>The budget ceiling still counts cache tokens at <em>face value</em>, deliberately. That ceiling
+bounds context size, not spend — a run whose prompt has ballooned is out of control whether or not
+the growth was cheap.</p>
+
+<h3>4. The draft escapes without the agent learning about DynamoDB</h3>
+
+<p><code>run_agent</code> gained one optional parameter, and the handler supplies the callback
+(<code>backend/functions/resume_agent/handler.py:341</code>). This preserves something ADR-037 called
+out as a win: the agent module is a pure function of its inputs, which is why async was a pure wiring
+concern with no loop rework. Teaching the loop to write to DynamoDB would have spent that.</p>
+
+<pre><code>draft = _draft(run, requirements, retrieved)
+if on_draft is not None:
+    try:
+        on_draft(draft)
+    except Exception:
+        logger.exception("on_draft callback failed; continuing the run")</code></pre>
+
+<p>The swallow is the point: losing a progress signal is not a reason to lose the résumé.</p>
+
+<h3>5. The frontend bug worth the whole walkthrough</h3>
+
+<p>The first version stored the draft on the component's <code>stage</code> object. The poll effect
+lists <code>stage</code> in its dependency array. So every poll produced a new stage object, React
+tore the effect down and re-ran it, and re-running it <em>polls immediately</em> instead of after the
+3-second timer.</p>
+
+<div class="diagram">
+<div class="flow">
+<div class="box">poll returns draft</div>
+<span class="arrow">→</span>
+<div class="box">setStage(...)</div>
+<span class="arrow">→</span>
+<div class="box fail">effect re-runs</div>
+<span class="arrow">→</span>
+<div class="box fail">poll immediately</div>
+</div>
+<div style="text-align:center;margin-top:.6rem;color:#b91c1c">
+↺ measured at <strong>18,445 requests in 1.5 seconds</strong>, for the ~60s a real run spends here
+</div>
+</div>
+
+<p>The fix is to keep the draft in state the effect does not depend on
+(<code>frontend/src/resume/Resume.tsx:97</code>). What makes this a good teaching case is the test:</p>
+
+<pre><code>const afterDraft = calls.length;
+await new Promise((r) => setTimeout(r, 1_000));
+expect(calls.length - afterDraft).toBeLessThan(5);</code></pre>
+
+<p>It asserts a <strong>request count over elapsed time</strong>, because that is the only thing that
+distinguishes the bug from correct behaviour — <em>the rendered output is identical either way</em>.
+A snapshot test, an accessibility assertion, a "does the draft appear" test: all of them pass on the
+broken version.</p>
+
+<h3>6. What the harness had to get right about itself</h3>
+
+<p>Two bugs in the measuring instrument, both of the same family — a number that looks like evidence
+and is not:</p>
+
+<ul>
+<li><strong>Medians taken per column, not per sample.</strong> Taking the median observed time and
+the median Lambda duration <em>independently</em> produced a row where the round trip was
+<em>shorter</em> than the work it supposedly contained, because the two numbers came from different
+calls. Fixed by picking one representative sample and reporting it whole.</li>
+<li><strong>A latency test with no correctness assertion measures an unknown operation.</strong> This
+bit twice. A misspelled field name (<code>issue_date</code> for <code>issued_date</code>) made the
+handler return <code>422</code> in 2 ms — recorded as a beautifully fast ingestion. Then the repeats
+posted identical text, so the duplicate check (<strong>ADR-033</strong>) answered <code>409</code>
+<em>before</em> the database write, and a 239 ms "confirm write" number reached the project scorecard
+describing a rejection. Both now assert the status code, so a regression fails the suite instead of
+publishing a flattering number.</li>
+</ul>
+
+<h3>7. Forcing a cold start without touching anything</h3>
+
+<p>Cold starts cannot be produced by calling something repeatedly — repetition is exactly what warms
+it. And the honest signal is not wall clock: a slow first call could be a cold Lambda <em>or</em> a
+cold boto3 client resolving credentials and doing a TLS handshake, and those have unrelated fixes. So
+the harness reads Lambda's own <code>REPORT</code> line, where <code>Init Duration</code> appears
+<strong>only on a cold start</strong>, and forces one with a concurrent burst up to the function's
+reserved-concurrency cap. Nothing is mutated. It is opportunistic by nature — once the container pool
+is warm, no burst can force one — so a miss records a "not captured" row rather than quietly
+vanishing from the table.</p>
+
+
+<h2 id="quiz">Quiz</h2>
+
+<div class="quiz-q">
+<p><strong>A cachePoint is added to a Haiku call whose prefix is ~2,400 tokens. What happens?</strong></p>
+<button class="quiz-opt" data-correct="true">The cachePoint is silently ignored and the full prefix is billed at the normal input rate.</button>
+<button class="quiz-opt" data-correct="false">Bedrock caches it but reports cacheWriteInputTokens as 0 to indicate a partial write.</button>
+<button class="quiz-opt" data-correct="false">The prefix is cached, since 2,400 comfortably exceeds Claude's 1,024-token minimum.</button>
+<button class="quiz-opt" data-correct="false">Bedrock returns a ValidationException naming the minimum token count.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Why is prompt caching applied to the retrieval loop but deliberately NOT to the draft and revise phases?</strong></p>
+<button class="quiz-opt" data-correct="false">Draft and revise send structured tool payloads, which Bedrock cannot cache.</button>
+<button class="quiz-opt" data-correct="true">They are one-shot calls, so they would pay the 1.25× write premium and never get a read back.</button>
+<button class="quiz-opt" data-correct="false">Claude permits only two cache breakpoints per request, and the loop already uses both.</button>
+<button class="quiz-opt" data-correct="false">Their prompts contain user PII, which must not be retained in a provider cache.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Caching cut cost by ~13% but produced no measurable latency change. What best explains that?</strong></p>
+<button class="quiz-opt" data-correct="false">The retrieval loop terminated after one iteration, so nothing was ever re-read.</button>
+<button class="quiz-opt" data-correct="true">Wall clock is dominated by output token generation, which caching does not affect.</button>
+<button class="quiz-opt" data-correct="false">The 5-minute cache TTL expired between iterations, so most reads missed.</button>
+<button class="quiz-opt" data-correct="false">Cache reads are slower to serve than uncached input, offsetting the token saving.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>Measurement showed cold dashboard load at 2,620 ms with a ~188 ms corpus term. What does that imply about B-013 (the read fetching all embeddings)?</strong></p>
+<button class="quiz-opt" data-correct="false">B-013 is the dominant term and fixing it would bring the load under the 2s budget.</button>
+<button class="quiz-opt" data-correct="false">B-013 is not a real issue and the backlog entry should be closed as wontfix.</button>
+<button class="quiz-opt" data-correct="false">B-013 only affects the warm path, since cold starts bypass the DynamoDB read.</button>
+<button class="quiz-opt" data-correct="true">B-013 is roughly 8% of the cold load; the requirement is missed because of cold start.</button>
+</div>
+
+<div class="quiz-q">
+<p><strong>The runaway-poll regression test asserts a request count over elapsed time rather than checking the rendered draft. Why is that the right assertion?</strong></p>
+<button class="quiz-opt" data-correct="true">The rendered output is identical whether or not the bug is present, so only request volume distinguishes them.</button>
+<button class="quiz-opt" data-correct="false">Request counting is faster than querying the DOM, keeping the suite under its time budget.</button>
+<button class="quiz-opt" data-correct="false">React Testing Library cannot assert on text rendered from asynchronous state updates.</button>
+<button class="quiz-opt" data-correct="false">The draft's content is model-generated and therefore too non-deterministic to assert on.</button>
+</div>
+
+<script>
+document.querySelectorAll('.quiz-q').forEach(q => {
+  q.querySelectorAll('.quiz-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      const correct = opt.dataset.correct === 'true';
+      let fb = opt.nextElementSibling;
+      if (!fb || !fb.classList.contains('feedback')) {
+        fb = document.createElement('div');
+        fb.className = 'feedback';
+        opt.insertAdjacentElement('afterend', fb);
+      }
+      fb.textContent = correct ? '\u2705 Correct.' : '\u274c Not quite \u2014 reread the section above.';
+      fb.className = 'feedback ' + (correct ? 'correct' : 'incorrect');
+      fb.style.display = 'block';
+    });
+  });
+});
+</script>
+
+</body>
+</html>
