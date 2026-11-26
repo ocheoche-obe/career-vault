@@ -17,7 +17,7 @@ import { Upload } from './upload/Upload'
 import { Resume } from './resume/Resume'
 import { Settings } from './settings/Settings'
 import { Home } from './home/Home'
-import { listEntries, getSettings, type Entry } from './lib/api'
+import { listEntries, getSettings, setUnauthorizedHandler, type Entry } from './lib/api'
 import { computeStreak, CADENCE_NOUN, type Cadence } from './lib/aggregates'
 
 /**
@@ -69,6 +69,20 @@ function App() {
   const [dataVersion, setDataVersion] = useState(0)
 
   const idToken = auth.user?.id_token
+
+  // B-041: an API 401 means the ID token died while the tab was open. Clear the local session so
+  // the sign-in screen shows, and say why. This deliberately does not call `signinRedirect` itself:
+  // if a 401 ever came from something a fresh token cannot fix, an automatic redirect would loop
+  // through Cognito's still-valid session forever, while one click on Sign in cannot.
+  const [sessionExpired, setSessionExpired] = useState(false)
+  const { removeUser } = auth
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      void removeUser()
+      setSessionExpired(true)
+    })
+    return () => setUnauthorizedHandler(null)
+  }, [removeUser])
 
   /**
    * Re-read the entry list. Called when a view *writes* an entry, so every derived number in the
@@ -152,7 +166,16 @@ function App() {
     return (
       <main className="app-state app-signin">
         <h1>CareerVault</h1>
-        <p>Your career, on the record. Log what you achieve while it is fresh.</p>
+        {sessionExpired ? (
+          // Honest about what is lost: the 401 means the request never reached a Lambda, so a chat
+          // message sent with the stale token, or an unconfirmed proposal, was not saved (B-050).
+          <p role="status">
+            Your session expired. Sign in again to continue. Anything you had not saved yet will
+            need to be entered again.
+          </p>
+        ) : (
+          <p>Your career, on the record. Log what you achieve while it is fresh.</p>
+        )}
         <button className="btn-primary" onClick={() => void auth.signinRedirect()}>
           Sign in
         </button>

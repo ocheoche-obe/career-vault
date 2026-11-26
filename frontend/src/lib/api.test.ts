@@ -55,3 +55,23 @@ describe("getResumeRun status mapping", () => {
     expect(await getResumeRun("tok", "01JR")).toMatchObject({ status: "notfound", runId: "01JR" });
   });
 });
+
+describe("getResumeRun on a transient error (fresh-eyes PR B review)", () => {
+  // With CORS on API Gateway's own error responses these statuses are now readable. They must not
+  // read as a failed run: the worker is very likely still running, and "failed" stops the watch.
+  it.each([429, 500, 502, 503, 504])("throws on %i so the poll keeps watching", async (status) => {
+    stubFetch({ status, body: { message: "Too Many Requests" } });
+    await expect(getResumeRun("tok", "01JR")).rejects.toThrow(/transient/);
+  });
+
+  it("throws on 401 so the parked run survives the sign-out and resumes after re-auth", async () => {
+    stubFetch({ status: 401, body: { message: "Unauthorized" } });
+    await expect(getResumeRun("tok", "01JR")).rejects.toThrow(/transient/);
+  });
+
+  it("still reports a client error other than 401/404 as failed", async () => {
+    stubFetch({ status: 400, body: { message: "Missing run id" } });
+    expect((await getResumeRun("tok", "01JR")).status).toBe("failed");
+  });
+});
+

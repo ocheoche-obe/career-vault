@@ -349,6 +349,22 @@ Resources:
         AllowHeaders: "'Authorization,Content-Type'"
         # PUT/DELETE land with the entry CRUD routes (slice 3, career_crud).
         AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      # B-041. Responses API Gateway writes itself (the authorizer's 401 for an expired token, a
+      # throttle, an integration failure) never reach a Lambda, so neither the Cors block above
+      # (preflight only) nor the functions' own headers cover them. Without these the browser hides
+      # the status behind a CORS error and the SPA cannot tell "sign in again" from "API down".
+      # Same wildcard and headers as the preflight (ADR-034).
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Authorization,Content-Type'"
+        DEFAULT_5XX:
+          ResponseParameters:
+            Headers:
+              Access-Control-Allow-Origin: "'*'"
+              Access-Control-Allow-Headers: "'Authorization,Content-Type'"
 
   # ---------------------------------------------------------------------------
   # Shared Lambda layer (ADR-023 / Section 5.3) — attached to every function
@@ -753,6 +769,20 @@ Resources:
       # The async worker runs the bounded loop (240s wall-clock budget, ADR-036) — 300s is the
       # backstop per §3.2.4. The API-facing POST/GET invocations return in well under a second.
       Timeout: 300
+      # No async retries. Lambda's default is two, and each would re-run the whole Sonnet agent at
+      # full cost for one click. A crashed worker is reported instead: the worker fails its own run
+      # on an exception, and the status poll fails a run that has outlived its worker. The claim in
+      # the worker (ddb_helpers.claim_resume_run) covers the duplicate delivery that async
+      # invocation can still produce with retries off.
+      #
+      # MaximumRetryAttempts covers function errors only. A *throttled* event (reserved concurrency
+      # is 2, shared with the status polls) is requeued for up to 6 hours unless capped here, and a
+      # run nobody polls stays `pending`, so a late event would claim it and spend a full Sonnet run
+      # hours after the user gave up. 300s drops the event before the poll's 315s verdict
+      # (handler._WORKER_TIMEOUT_SECONDS + _WORKER_GRACE_SECONDS); age counts from submission.
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 300
       ReservedConcurrentExecutions: !If
         - HasResumeAgentReservedConcurrency
         - !Ref ResumeAgentReservedConcurrency
@@ -789,11 +819,14 @@ Resources:
             # key alone (§4.2.3). The restriction is a code invariant in ddb_helpers, as always.
             # It notably does NOT let the agent delete an ENTRY: that is enforced by there being no
             # code path here that builds an ENTRY# key, not by this policy.
+            # UpdateItem is for the worker's claim and the conditional fail of an unfinished run
+            # (RESUMERUN# only, again by code rather than by this policy).
             - Effect: Allow
               Action:
                 - dynamodb:Query
                 - dynamodb:GetItem
                 - dynamodb:PutItem
+                - dynamodb:UpdateItem
                 - dynamodb:DeleteItem
               Resource: !GetAtt CareerVaultTable.Arn
             # Store + read back the generated HTML/PDF, and delete them when the user deletes the

@@ -23,7 +23,8 @@ outlive the S3 objects it pointed at, and that coupling disappears once a durabl
 
 The agent is read-only over the user's data (§3.2.7): it reads ENTRY/PROFILE and calls Bedrock; the
 only writes are the résumé artifact + the RESUMERUN record. IAM: ``dynamodb:Query`` + ``GetItem`` +
-``PutItem``; ``s3:PutObject`` + ``GetObject`` on ``resumes/*``; ``bedrock:InvokeModel`` on the
+``PutItem`` + ``UpdateItem`` (the worker's claim and the conditional fail of an unfinished run);
+``s3:PutObject`` + ``GetObject`` on ``resumes/*``; ``bedrock:InvokeModel`` on the
 Sonnet + Haiku profiles (+ regional foundation-model ARNs, ADR-031/036) and the Titan ARN;
 ``lambda:InvokeFunction`` on its own ARN (ADR-037).
 """
@@ -33,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from datetime import UTC, datetime, timedelta
 
 import boto3
 from aws_lambda_powertools.metrics import MetricUnit
@@ -41,11 +43,13 @@ from botocore.exceptions import ClientError
 
 from careervault.bedrock_client import BedrockError
 from careervault.ddb_helpers import (
+    claim_resume_run,
     create_resume_record,
     create_resume_run,
     delete_resume_record,
     delete_resume_run_trace,
     extract_user_id,
+    fail_unfinished_resume_run,
     finalize_resume_run,
     overwrite_resume_run,
     from_ddb_numbers,
@@ -88,6 +92,15 @@ _RESUME_LIST_LIMIT = 50
 #: Worker-payload marker (ADR-037) — an async self-invocation carries this instead of an API event.
 _WORKER_JOB = "resume"
 
+#: The function's hard timeout (template.yaml, ResumeAgentFunction.Timeout). Async retries are off
+#: (EventInvokeConfig MaximumRetryAttempts 0), so a worker that dies writes nothing and nothing runs
+#: it again. Past this long after its claim, a non-terminal run cannot have a live worker; the poll
+#: then marks it failed instead of leaving it pending for the trace's 30 days.
+_WORKER_TIMEOUT_SECONDS = 300
+#: Slack for clock skew and the claim landing a moment after the invocation starts. Kept small so
+#: the server's verdict reaches the client before its own 330s give-up (Resume.tsx).
+_WORKER_GRACE_SECONDS = 15
+
 #: Friendly messages by failure ``detail`` for the status poll.
 _FAILURE_MESSAGES = {
     "budget_exceeded": "Generation budget exceeded — try a more focused target.",
@@ -97,6 +110,10 @@ _FAILURE_MESSAGES = {
     "bedrock_unavailable": "The résumé service was busy — please try again.",
     "render_failed": "Built the résumé but couldn't render it — please try again.",
     "store_failed": "Generated the résumé but couldn't store it — please try again.",
+    # The worker raised something the paths above don't name, or stopped without reporting at all
+    # (timeout, out of memory, an event that never ran). Retries are off, so nothing will finish it.
+    "worker_error": "Something went wrong while generating — please try again.",
+    "worker_lost": "Generation stopped before it finished — please try again.",
 }
 
 _s3_client = None
@@ -320,17 +337,47 @@ def _contact_from_profile(profile: dict | None, *, jwt_email: str | None = None)
 
 
 def _run_worker(payload: dict) -> dict:
-    """Async entrypoint (ADR-037): run the agent, finalize the RESUMERUN item. Return value ignored."""
+    """Async entrypoint (ADR-037): claim the run, then run the agent and finalize. Return value ignored.
+
+    Two guards sit around the work, because async retries are off (MaximumRetryAttempts 0):
+
+    - **The claim.** Lambda can still deliver one async event twice. Only the delivery that wins
+      :func:`claim_resume_run` runs the agent; any other exits before a single Bedrock call.
+    - **The catch-all.** With no retry coming, an exception that escapes would leave the run
+      ``pending`` until the poll's staleness check notices. Failing it here reports the failure at
+      once. The write is conditional, so a crash *after* the run completed cannot overwrite it.
+      The exception is re-raised so the invocation still counts as an error in Lambda's metrics.
+    """
+    user_id = payload["user_id"]
+    run_id = payload["run_id"]
+    logger.append_keys(run_id=run_id)
+
+    claimed_at = utcnow_iso()
+    if not claim_resume_run(user_id, run_id, claimed_at):
+        logger.warning("Résumé run already claimed or no longer pending; skipping duplicate delivery")
+        metrics.add_metric(name="ResumeWorkerDuplicateSkipped", unit=MetricUnit.Count, value=1)
+        return {"status": "skipped", "run_id": run_id}
+
+    try:
+        return _run_claimed_worker(payload, claimed_at)
+    except Exception:
+        logger.exception("Résumé worker crashed")
+        if fail_unfinished_resume_run(user_id, run_id, "worker_error", utcnow_iso(), claimed_at=claimed_at):
+            metrics.add_metric(name="ResumeJobFailed", unit=MetricUnit.Count, value=1)
+        raise
+
+
+def _run_claimed_worker(payload: dict, claimed_at: str) -> dict:
+    """The worker body, run only by the delivery that won the claim."""
     user_id = payload["user_id"]
     run_id = payload["run_id"]
     target_text = payload["target_text"]
     created_at = payload.get("created_at") or utcnow_iso()
-    logger.append_keys(run_id=run_id)
 
     def _fail(detail: str, result: agent.AgentResult | None = None) -> dict:
-        finalize_resume_run(
-            _final_item(user_id, run_id, target_text, created_at, status="failed", detail=detail, result=result)
-        )
+        item = _final_item(user_id, run_id, target_text, created_at, status="failed", detail=detail, result=result)
+        item["worker_claimed_at"] = claimed_at
+        finalize_resume_run(item)
         metrics.add_metric(name="ResumeJobFailed", unit=MetricUnit.Count, value=1)
         return {"status": "failed", "run_id": run_id, "detail": detail}
 
@@ -353,6 +400,9 @@ def _run_worker(payload: dict) -> dict:
                 "updated_at": utcnow_iso(),
                 "detail": None,
                 "document": draft.model_dump(mode="json", exclude_none=True),
+                # Carried through the overwrite: the poll's staleness check measures from the claim,
+                # and a later duplicate delivery must still see the run as claimed.
+                "worker_claimed_at": claimed_at,
             }
         )
         overwrite_resume_run(item)
@@ -394,9 +444,9 @@ def _run_worker(payload: dict) -> dict:
     # benign inconsistency — the user's poll completes and their résumé downloads, and all that is
     # missing is a row in a list. The reverse order would leave a history row for a run whose poll
     # never reports `completed`, which is the failure worth avoiding.
-    finalize_resume_run(
-        _final_item(user_id, run_id, target_text, created_at, status="completed", result=result, keys=keys)
-    )
+    completed = _final_item(user_id, run_id, target_text, created_at, status="completed", result=result, keys=keys)
+    completed["worker_claimed_at"] = claimed_at
+    finalize_resume_run(completed)
     try:
         create_resume_record(_record_item(user_id, run_id, target_text, created_at, result=result, keys=keys))
     except ClientError:
@@ -547,7 +597,33 @@ def _delete(user_id: str, run_id: str) -> dict:
     return _response(200, {"run_id": run_id, "deleted": True})
 
 
-def _status(user_id: str, run_id: str) -> dict:
+def _worker_is_dead(item: dict, now: datetime) -> bool:
+    """True when a non-terminal run cannot still have a live worker.
+
+    Measured from the claim when there is one, since that is when the worker's 300s clock started.
+    An unclaimed run is measured from its creation: its event either never ran or is still queued,
+    and a queued one will lose the claim once this run is marked failed.
+    """
+    started = item.get("worker_claimed_at") or item.get("created_at")
+    if not started:
+        return False
+    try:
+        started_at = datetime.fromisoformat(started.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return now - started_at > timedelta(seconds=_WORKER_TIMEOUT_SECONDS + _WORKER_GRACE_SECONDS)
+
+
+def _failed_payload(run_id: str, created_at: str | None, detail: str | None) -> dict:
+    return {
+        "run_id": run_id,
+        "status": "failed",
+        "created_at": created_at,
+        "message": _FAILURE_MESSAGES.get(detail, "Couldn't generate a résumé — please try again."),
+    }
+
+
+def _status(user_id: str, run_id: str, *, may_fail_lost_run: bool = True) -> dict:
     item = get_resume_run(user_id, run_id)
     if item is None:
         # The trace has aged out (30-day TTL) but the résumé itself has not — ADR-046 removed the
@@ -564,16 +640,26 @@ def _status(user_id: str, run_id: str) -> dict:
     if status == "completed":
         return _response(200, _completed_payload(run_id, item))
     if status == "failed":
-        detail = item.get("detail")
-        return _response(
-            200,
-            {
-                "run_id": run_id,
-                "status": "failed",
-                "created_at": created_at,
-                "message": _FAILURE_MESSAGES.get(detail, "Couldn't generate a résumé — please try again."),
-            },
-        )
+        return _response(200, _failed_payload(run_id, created_at, item.get("detail")))
+
+    if (
+        may_fail_lost_run
+        and status in ("pending", "draft_ready")
+        and _worker_is_dead(item, datetime.now(tz=UTC))
+    ):
+        # Retries are off, so a worker that timed out or ran out of memory wrote nothing and nothing
+        # will run it again. Without this the run would read `pending` for 30 days. The write names
+        # the claim this read saw, so a worker that claimed the run since then is never failed.
+        if fail_unfinished_resume_run(
+            user_id, run_id, "worker_lost", utcnow_iso(), claimed_at=item.get("worker_claimed_at")
+        ):
+            metrics.add_metric(name="ResumeJobLost", unit=MetricUnit.Count, value=1)
+            logger.warning("Résumé run outlived its worker; marked failed", extra={"run_id": run_id})
+            return _response(200, _failed_payload(run_id, created_at, "worker_lost"))
+        # The condition failed: a worker finished, or claimed the run, between our read and our
+        # write. Report what is there now, once, without trying to fail it again.
+        return _status(user_id, run_id, may_fail_lost_run=False)
+
     if status == "draft_ready":
         # Non-terminal. The client renders this and keeps polling; `completed` replaces it in place.
         # No urls and no document-is-final promise — a run that fails after a draft still reports
