@@ -1302,7 +1302,7 @@ Six Lambdas, with their non-baseline permissions. Bedrock model ARNs abbreviated
 |---|---|---|---|---|
 | **`chat_lambda`** | `Query`, `PutItem` (IAM unchanged since slice 2 — *effective* scope is `CONVO#*` read/write plus, from slice 7, `ENTRY#*` **read-only**, and that scoping lives in application code, not IAM — see the amendment below) | `InvokeModel` on `<haiku>`, `<titan-embed>` (Titan added slice 7) | — | — |
 | **`career_crud`** | `GetItem`, `Query`, `PutItem`, `DeleteItem` | `InvokeModel` on `<titan-embed>` | — | — |
-| **`resume_agent`** | `GetItem`, `Query`, `PutItem` | `InvokeModel` on `<haiku>`, `<sonnet>`, `<titan-embed>` | `PutObject`, `GetObject` on `careervault-data/resumes/*` | — |
+| **`resume_agent`** | `GetItem`, `Query`, `PutItem`, `UpdateItem`, `DeleteItem` (`UpdateItem` for the worker's claim and the conditional fail of an unfinished run, ADR-037 amendment 2; `DeleteItem` for `DELETE /resumes/{run_id}`, ADR-046) | `InvokeModel` on `<haiku>`, `<sonnet>`, `<titan-embed>` | `PutObject`, `GetObject` on `careervault-data/resumes/*` | — |
 | **`resume_upload_parser`** | `PutItem` | `InvokeModel` on `<haiku>`, `<sonnet>`, `<titan-embed>` | `GetObject` on `careervault-data/uploads/*` | — |
 | **`settings_lambda`** | `GetItem`, `UpdateItem` | — | — | — |
 | **`checkin_lambda`** | `Query`, `GetItem`, `UpdateItem`, `PutItem` | `InvokeModel` on `<haiku>` | — | `SendEmail` on verified sender-identity ARN |

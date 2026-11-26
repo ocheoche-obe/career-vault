@@ -787,6 +787,8 @@ def test_poll_fails_a_run_whose_worker_never_started(stubs, monkeypatch):
     monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: {"status": "pending", "created_at": _iso_ago(400)})
     body = body_of(h.handler(_get(), FakeLambdaContext()))
     assert body["status"] == "failed"
+    # Unclaimed when read, so the fail must require it still be unclaimed (the race guard).
+    assert stubs["fail_claims"] == [None]
 
 
 def test_poll_leaves_a_run_alone_while_its_worker_can_still_be_running(stubs, monkeypatch):

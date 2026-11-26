@@ -337,6 +337,29 @@ describe("the interim draft (ADR-037 amendment)", () => {
     expect(calls.length - afterDraft).toBeLessThan(5);
   }, 10_000);
 
+  it.each([502, 429])(
+    "keeps watching through a %i on the poll instead of declaring the run failed",
+    async (status) => {
+      // The first poll is throttled or hits a gateway error; the second gets the draft. Before the
+      // transient mapping in getResumeRun, the first response ended the watch as "failed" while
+      // the worker was still running.
+      stubFetch(
+        { status: 200, body: { resumes: [] } },
+        { status: 202, body: { run_id: "01JNEW", status: "pending" } },
+        { status, body: { message: "Too Many Requests" } },
+        { status: 200, body: DRAFT_READY },
+      );
+
+      await startRun();
+
+      expect(
+        await screen.findByText(/Interim summary, still under review/, {}, { timeout: 6_000 }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/couldn.t generate/i)).not.toBeInTheDocument();
+    },
+    10_000,
+  );
+
   /*
    * Deliberately *not* covered here: "a run that fails after showing a draft replaces it with the
    * error". It was written, and it was flaky — `stubFetch` answers by queue position, so which

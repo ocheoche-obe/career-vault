@@ -367,6 +367,13 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
     headers: authHeaders(idToken),
   });
   if (res.status === 404) return { status: "notfound", runId };
+  // A throttle or a server error says nothing about the run, which is very likely still going.
+  // Throw so the poll treats it like a network blip and keeps watching. Before the gateway
+  // responses carried CORS headers these arrived as an opaque TypeError and were retried by
+  // accident; mapping them to `failed` would stop the watch mid-run and invite a second paid run.
+  if (res.status === 429 || res.status >= 500) {
+    throw new Error(`GET /resumes/{run_id} → ${res.status} (transient, poll again)`);
+  }
   const b = await jsonOf(res);
   if (!res.ok) {
     return { status: "failed", runId, message: (b.message as string) ?? `GET /resumes → ${res.status}` };
