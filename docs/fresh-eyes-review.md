@@ -315,7 +315,7 @@ script; the `useEffect` poll loop; dictation never submits and discloses third-p
 ### Two things that changed meaning
 
 - The old file said the dev stack is the MVP and left it there. The new one says to treat it as
-  production, because that is where the data is and the template does not protect it yet.
+  production, because that is where the data is and the template does not protect it yet (fixed since, in #73).
 - The old file told the reader to write an ADR for any decision the architecture doc does not
   cover. The new one says to write one when the decision would be expensive to reverse. This is a
   process change and it is yours to accept or revert.

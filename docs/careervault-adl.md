@@ -3081,7 +3081,7 @@ cheap, not the latency lever B-020 needed.
 
 ## ADR-049: An ADR only for decisions that are expensive to reverse, and project status in one place
 
-**Status:** Accepted (2026-11-26, Oche)
+**Status:** Accepted (2026-11-25, Oche)
 
 ### Context
 

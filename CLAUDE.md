@@ -13,9 +13,9 @@ so and correct the doc.
 
 - **`careervault-dev` is the real, live stack** and holds the user's only copy of their data. There
   is no prod stack and one cannot currently be created (the SES identity collides, B-021). The
-  table, data bucket and user pool have deletion protection and retain policies (ADR-030
-  amendment 1); keep them. Treat dev as production: no table replacement, no `sam delete`, no bulk
-  data changes without asking.
+  table and user pool have deletion protection, and they and the data bucket have retain policies
+  (ADR-030 amendment 1); keep them. Treat dev as production: no table replacement, no
+  `sam delete`, no bulk data changes without asking.
 - Status and what is next live only on the status board in `docs/careervault-plan.md`. Keep status
   out of this file.
 
@@ -63,7 +63,7 @@ Use `./scripts/run-tests.sh`, not bare `pytest`: it builds the venv the tests ne
   task; otherwise use the CLI. Infrastructure changes go in the SAM template, not through one-off
   CLI calls.
 - Never read a secret's value into the conversation: no `secretsmanager get-secret-value` or
-  `batch-get-secret-value`. For any credential task, load the `aws-secrets-manager` skill first and
+  `batch-get-secret-value`, and do not call the Secrets Manager Agent daemon directly. For any credential task, load the `aws-secrets-manager` skill first and
   use `asm-exec` with a `{{resolve:secretsmanager:...}}` reference. The app itself has no secrets.
 
 ## Money
@@ -90,7 +90,8 @@ retrieval, drafting and revision. A résumé run costs roughly $0.08 to $0.35 an
   text. Both are prompt-injection defences. Do not add a tool to that call or a markdown renderer
   to chat.
 - `frontend/src/index.css` is the only file that defines colours. Light and dark themes both ship.
-- Frontend tests stub `fetch` with `src/test/http.ts`; they do not mock the api module.
+- Frontend tests stub `fetch` with `src/test/http.ts`; they do not mock the api module. A `vi.fn()`
+  that returns a rejected promise fails the test even when the component catches the rejection.
 - The design handoff in `docs/design/` includes features that do not exist. Build what the backend
   supports and leave the rest out. Never show invented data.
 - After adding a test, break the code once to confirm the test fails.
