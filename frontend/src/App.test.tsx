@@ -226,9 +226,9 @@ describe("an expired session (B-041)", () => {
     expect(screen.queryByRole("button", { name: "Timeline" })).not.toBeInTheDocument();
   });
 
-  it("does not sign out on a server error, which a new token would not fix", async () => {
+  it.each([403, 404, 500])("does not sign out on a %i, which a new token would not fix", async (status) => {
     const removeUser = authedUntilSignedOut();
-    stubFetch({ status: 500, body: { message: "boom" } });
+    stubFetch({ status, body: { message: "nope" } });
 
     render(<App />);
 

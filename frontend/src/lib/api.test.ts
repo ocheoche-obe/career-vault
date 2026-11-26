@@ -64,6 +64,11 @@ describe("getResumeRun on a transient error (fresh-eyes PR B review)", () => {
     await expect(getResumeRun("tok", "01JR")).rejects.toThrow(/transient/);
   });
 
+  it("throws on 401 so the parked run survives the sign-out and resumes after re-auth", async () => {
+    stubFetch({ status: 401, body: { message: "Unauthorized" } });
+    await expect(getResumeRun("tok", "01JR")).rejects.toThrow(/transient/);
+  });
+
   it("still reports a client error other than 401/404 as failed", async () => {
     stubFetch({ status: 400, body: { message: "Missing run id" } });
     expect((await getResumeRun("tok", "01JR")).status).toBe("failed");

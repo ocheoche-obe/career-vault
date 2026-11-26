@@ -371,7 +371,11 @@ export async function getResumeRun(idToken: string, runId: string): Promise<RunS
   // Throw so the poll treats it like a network blip and keeps watching. Before the gateway
   // responses carried CORS headers these arrived as an opaque TypeError and were retried by
   // accident; mapping them to `failed` would stop the watch mid-run and invite a second paid run.
-  if (res.status === 429 || res.status >= 500) {
+  //
+  // A 401 throws too, for a different reason: `apiFetch` has already started the sign-out, and a
+  // `failed` result here would make the poll clear the parked run before that lands. Throwing
+  // leaves it in sessionStorage, so the watch resumes after the user signs back in.
+  if (res.status === 401 || res.status === 429 || res.status >= 500) {
     throw new Error(`GET /resumes/{run_id} → ${res.status} (transient, poll again)`);
   }
   const b = await jsonOf(res);
