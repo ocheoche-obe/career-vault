@@ -254,8 +254,15 @@ Resources:
   # ---------------------------------------------------------------------------
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
+    # Protected in every environment for the same reason as the table (ADR-030 amendment 1). Every
+    # item's PK is USER#<sub>, and the sub is issued by this pool: a recreated pool gives the same
+    # person a new sub, which strands every retained item. Retaining the table without the pool
+    # would keep the data but lose the only key that reaches it.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub 'careervault-${Environment}'
+      DeletionProtection: ACTIVE
       # Single-tenant MVP: the one user is created administratively (ADR-006 / ADR-025).
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
