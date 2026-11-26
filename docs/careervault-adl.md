@@ -995,7 +995,7 @@ Use **`react-oidc-context`** (the React bindings) on top of **`oidc-client-ts`**
 
 ## ADR-030: Environment-gated table protection + parameterized reserved concurrency
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-11-25: data protection now in every environment)
 **Date:** 2026-06-15
 
 ### Context
@@ -1027,6 +1027,18 @@ Express both as environment/parameter-gated values in the SAM template, preservi
 
 ### Cross-cloud parallel
 The "protect prod, stay nimble in dev" gating is universal: **Azure** uses resource locks (`CanNotDelete`) typically applied only to prod resource groups, and Cosmos DB throughput caps per environment; **GCP** uses `deletion_protection` on resources (e.g. Cloud SQL, BigQuery tables) and per-project quota. On every cloud, account/project-level concurrency and throughput quotas start conservative and are raised via a support/quota request — designing the guardrail as a parameter rather than a constant is the portable lesson.
+
+### Amendment 1 (2026-11-25) — protect the data in every environment, because dev is the real one
+
+**Why it changed.** The decision above rests on "dev data is throwaway". ADR-041 made the dev stack the MVP, so `careervault-dev` now holds the only copy of the user's career history, and the prod-only gate left that copy unprotected against a `sam delete` or a template change that replaces the table.
+
+**What changed.** `CareerVaultTable` gets `DeletionProtectionEnabled: true`, `DeletionPolicy: Retain` and `UpdateReplacePolicy: Retain` in every environment. `DataBucket` (generated résumés) gets both retain policies in every environment. PITR stays on. `SiteBucket` and the billing alarms stay prod-gated: the site is rebuilt from the repo by `make deploy-frontend`, and the alarms are an account-wide resource covered in dev by the AWS Budget.
+
+**Correction to the context above.** Point 1 says protection would wedge "every failed create/update". That overstates it. The 2026-06-15 wedge was the stack's *first create* rolling back, and a create rollback deletes everything it made. An update rollback reverts the resources it changed and does not delete a table that existed before the update. So on an existing stack the cost is nil; it reappears only when a brand-new stack's first create fails. `RetainExceptOnCreate` exists for that case, but it would not help here, because Deletion Protection would still block the rollback's delete, and `UpdateReplacePolicy` does not accept it.
+
+**Why three guards.** Each covers a path the others miss. `DeletionPolicy` acts on stack deletion and on the resource leaving the template. `UpdateReplacePolicy` acts on replacement; without it CloudFormation deletes the old table after creating the new one even when `DeletionPolicy` is `Retain`. The Deletion Protection flag stops a `DeleteTable` call from the console or CLI. None of them stops a bad write; PITR is the recovery path for that.
+
+**Consequences.** ✅ The live data survives `sam delete`, a replacing change and a stray `DeleteTable`. ⚠️ A deleted stack leaves the table and bucket behind under their fixed names, so recreating the same stack fails until they are removed by hand: disable deletion protection, delete the table, then empty and delete the bucket. That friction is intended.
 
 ---
 
