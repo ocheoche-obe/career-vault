@@ -164,8 +164,8 @@ Parameters:
 
 Conditions:
   # IsProd gates the billing alarms and SiteBucket retention. It no longer gates data protection:
-  # ADR-041 made the dev stack the real one, so the table and DataBucket are protected in every
-  # environment (ADR-030 amendment 1, arch §4.7.3).
+  # ADR-041 made the dev stack the real one, so the table, DataBucket and CognitoUserPool are
+  # protected in every environment (ADR-030 amendment 1, arch §4.7.3).
   IsProd: !Equals [!Ref Environment, prod]
   HasSettingsReservedConcurrency: !Not [!Equals [!Ref SettingsReservedConcurrency, -1]]
   HasChatReservedConcurrency: !Not [!Equals [!Ref ChatReservedConcurrency, -1]]
@@ -210,9 +210,9 @@ Resources:
     #   UpdateReplacePolicy: Retain   - a change that forces a new table; Retain alone does not
     #                                   cover replacement, the old table would be deleted
     #   DeletionProtectionEnabled     - any DeleteTable call, console or CLI, outside CloudFormation
-    # Cost of this: a *fresh* stack whose first create fails cannot roll the table back and lands
-    # in ROLLBACK_FAILED (the ADR-030 incident). An existing stack's update rollback never deletes
-    # the table, so day-to-day deploys are unaffected.
+    # Cost of this: Retain also applies when a brand-new stack's first create rolls back, so the
+    # rollback completes but leaves the new table behind, and the next create collides on its name.
+    # An existing stack's update rollback never deletes the table, so routine deploys are unaffected.
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
