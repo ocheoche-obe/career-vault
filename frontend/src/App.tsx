@@ -167,7 +167,12 @@ function App() {
       <main className="app-state app-signin">
         <h1>CareerVault</h1>
         {sessionExpired ? (
-          <p role="status">Your session expired. Sign in again to pick up where you left off.</p>
+          // Honest about what is lost: the 401 means the request never reached a Lambda, so a chat
+          // message sent with the stale token, or an unconfirmed proposal, was not saved (B-050).
+          <p role="status">
+            Your session expired. Sign in again to continue. Anything you had not saved yet will
+            need to be entered again.
+          </p>
         ) : (
           <p>Your career, on the record. Log what you achieve while it is fresh.</p>
         )}

@@ -1605,7 +1605,7 @@ spinner, and it is honest about what the agent is doing.
 
 **Alternative considered.** An on-failure destination pointing back at the function would report timeouts and crashes without the poll's check, but it adds a resource, an event shape and IAM, and still misses an event that never ran. The poll check covers all three cases with no new infrastructure.
 
-**Consequences.** ✅ One click is at most one Sonnet run. ✅ Every run ends in a terminal status the poll can show. ⚠️ A worker that crashes without raising (timeout, out of memory) is reported up to 315s after its claim, not at once; the client's 330s ceiling is now the fallback rather than the only signal. ⚠️ The function's IAM gains `dynamodb:UpdateItem`, which IAM cannot narrow to `RESUMERUN#` (§4.2.3); as with its other writes, that is enforced in `ddb_helpers`.
+**Consequences.** ✅ One click is at most one Sonnet run. ✅ Every run that is polled ends in a terminal status. The `worker_lost` verdict is written by the poll, so a run whose tab was closed stays `pending` until the next poll of it (opening it from history), which is harmless: nothing is running and nothing is billed. ⚠️ A worker that crashes without raising (timeout, out of memory) is reported up to 315s after its claim, not at once; the client's 330s ceiling is now the fallback rather than the only signal. ⚠️ The function's IAM gains `dynamodb:UpdateItem`, which IAM cannot narrow to `RESUMERUN#` (§4.2.3); as with its other writes, that is enforced in `ddb_helpers`.
 
 ## ADR-038: Chat routing — a third control-flow tool (`answer_question`) keeps `toolChoice=any`
 
