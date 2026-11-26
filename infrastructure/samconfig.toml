@@ -40,6 +40,9 @@ parameter_overrides = [
     # anything not listed here, so a template-default change alone wouldn't take effect.
     "SonnetInferenceProfileId=us.anthropic.claude-sonnet-4-6",
     "SonnetFoundationModelId=anthropic.claude-sonnet-4-6",
+    # Pinned to the value the deployed stack already uses (ADR-048), so a future change to the
+    # template default cannot switch the critique model silently on the next deploy.
+    "AgentCritiqueModel=haiku",
 ]
 
 [default.build.parameters]
