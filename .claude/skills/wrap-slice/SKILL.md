@@ -1,11 +1,11 @@
 ---
 name: wrap-slice
-description: End-of-slice checklist for CareerVault — verify tests and deployment, run BOTH reviews (`/security-review` AND `/code-review` — running each is a hard blocker, findings are triaged on judgement), bring all canonical docs current (CLAUDE.md phase marker is blocking), render the slice explainer, commit, push, open the PR, and hand off cleanly.
+description: End-of-slice checklist for CareerVault — verify tests and deployment, run BOTH reviews (`/security-review` AND `/code-review` — running each is a hard blocker, findings are triaged on judgement), bring all canonical docs current (the plan's status board is blocking), render the slice explainer, commit, push, open the PR, and hand off cleanly.
 ---
 
 # Wrap up a slice
 
-Run these steps in order. Three things are **blocking**: both reviews must be *run* (steps 2 and 3), and the docs must be current (step 4) — a slice is not done until the next session can cold-start from `CLAUDE.md` alone.
+Run these steps in order. Three things are **blocking**: both reviews must be *run* (steps 2 and 3), and the docs must be current (step 4) — a slice is not done until the next session can cold-start from `CLAUDE.md` plus the plan's status board.
 
 > **Invoke this skill; do not reproduce it from memory.** Working through these steps by hand — even
 > with the file open — is how a step gets silently dropped, because nothing then enforces the order
@@ -87,9 +87,10 @@ Run a general code review on the slice diff — a different lens than the securi
   ceiling once a slice adds Bedrock — slices 5–8), and one thing to improve. Route any finding
   to a later slice, an ADR, or the parking lot. The full MVP-level scorecard against
   requirements §7 + NFRs lands at slice 9.
-- **`CLAUDE.md` "Current build phase"** — refresh the pointer: current slice, last completed
-  slice. It stays compact; detail belongs in the plan doc.
-- **`docs/careervault-adl.md`** — every decision the slice forced is captured as an ADR (they should already exist from /start-slice step 6; verify). Update the index table and the "Last updated" line.
+- **Status lives only on the plan's status board** (ADR-049): set the next slice there, not in
+  `CLAUDE.md`, which keeps a one-line pointer and no phase marker. Touch `CLAUDE.md` only when the
+  slice changed a convention or added a gotcha a future session would trip over.
+- **`docs/careervault-adl.md`** — every decision the slice forced that would be expensive to reverse is captured as an ADR (ADR-049) (they should already exist from /start-slice step 6; verify). Update the index table and the "Last updated" line.
 - **`docs/careervault-architecture.md`** — if implementation contradicted the doc, correct the doc (don't silently code around it — the user wants these corrections explained), bump the version, add a change-log row.
 - **`docs/careervault-backlog.md`** — append anything deferred this slice: code-review findings
   not fixed in-slice (step 3), UI gaps or tech debt noticed, doc drift spotted. One line per item,

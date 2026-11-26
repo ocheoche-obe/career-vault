@@ -24,7 +24,7 @@
 | `docs/careervault-adl.md` | **Why** — every significant decision, as ADRs |
 | `docs/careervault-requirements.md` | **What** — functional/non-functional requirements (FR/NFR) |
 | **This document** | **What order & what's done** — slice sequence, scope boundaries, status, completion notes |
-| `CLAUDE.md` | Compact session-start context; its phase marker just *points here* |
+| `CLAUDE.md` | Compact session-start context; one line points here, and it holds no status (ADR-049) |
 
 If this doc ever contradicts the architecture doc on a design matter, the architecture doc wins
 and this doc gets fixed (or the contradiction becomes an ADR).
@@ -40,8 +40,8 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 1. **Vertical slices.** Every slice lands deployed to dev and verified end-to-end (real API
    Gateway → Lambda → downstream), not just unit-tested. "Works on localhost" is not an exit
    criterion unless the slice is frontend-only.
-2. **ADR before code.** A decision the architecture doc doesn't cover gets written into
-   `careervault-adl.md` *before* the code that implements it.
+2. **ADR before code, for hard-to-reverse decisions.** A decision that would be expensive to
+   reverse gets written into `careervault-adl.md` *before* the code that implements it (ADR-049).
 3. **Docs current before done.** `/wrap-slice` blocks on this doc, the ADL, and (when reality
    contradicted it) the architecture doc being updated.
 4. **$5/month ceiling.** Bedrock is the dominant cost driver; slices that add Bedrock usage
@@ -73,6 +73,13 @@ and this doc gets fixed (or the contradiction becomes an ADR).
 | v1.1-3 | Redesign — Résumés + résumé history | B-028, B-036, B-022, B-007, ADR-046 | ✅ | [#50](https://github.com/ocheoche-obe/career-vault/pull/50) |
 | v1.1-4 | Voice capture for entry logging | ADR-014, FR-2 | ✅ | [#51](https://github.com/ocheoche-obe/career-vault/pull/51) |
 | v1.1-5 | Résumé speed — measure, then optimise | B-023, B-020, B-004, NFR-2.1/2.2/2.3 | ✅ | [#52](https://github.com/ocheoche-obe/career-vault/pull/52) |
+
+**Next:** not chosen yet. The v1.1 list below puts the UI + mobile pass next;
+[`fresh-eyes-review.md`](fresh-eyes-review.md) §4 proposes the résumé fast path and capture work
+instead. Since slice 5, outside any slice: [#73](https://github.com/ocheoche-obe/career-vault/pull/73)
+(deletion protection, ADR-030 amendment 1), [#74](https://github.com/ocheoche-obe/career-vault/pull/74)
+(housekeeping) and [#75](https://github.com/ocheoche-obe/career-vault/pull/75) (résumé worker runs
+once, ADR-037 amendment 2; expired sign-in, B-041), all merged 2026-11-25; #73 and #75 deployed to dev.
 
 FR coverage cross-check: FR-1 ✅ (slice 1) · FR-2 → 2a/2b · FR-3 → 2a (3.1) + 3 · FR-4 → 8 ·
 FR-5 → 6 · FR-6 → 2a/2b (6.2) + 7 (6.1). Deferred/v1.1 items live in the

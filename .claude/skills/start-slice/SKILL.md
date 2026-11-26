@@ -43,9 +43,10 @@ gh pr list --search "author:app/dependabot" --state open
 
 ## 2. Reload canonical context
 
-- Read **`docs/careervault-plan.md`**: the status board (where are we) and the current slice's
-  detail section (goal, scope in/out, ⚠ decisions, exit criteria). If the board disagrees with
-  git history, the CLAUDE.md phase marker, or the deployed state, flag that before anything else.
+- Read **`docs/careervault-plan.md`**: only the status board (where are we) and the current
+  slice's detail section (goal, scope in/out, ⚠ decisions, exit criteria). The board is the one
+  place status lives (ADR-049). If it disagrees with git history or the deployed state, flag that
+  before anything else.
 - Read the ADRs and architecture-doc sections the slice's "Key refs" line names.
 - **Groom the backlog** — skim [`docs/careervault-backlog.md`](../../../docs/careervault-backlog.md).
   If an `open` item is a natural fit for (or a prerequisite of) this slice, fold it into scope;
@@ -99,9 +100,8 @@ writing code:
 
 - Present them to the user, adjusted for anything learned since the roadmap was written. If
   scope changed materially, edit the plan doc's slice section so it stays authoritative.
-- Resolve the slice's ⚠ decisions with the user. Per project convention, each decision not
-  covered by the architecture doc becomes an ADR in `docs/careervault-adl.md` *before* the code
-  that implements it.
+- Resolve the slice's ⚠ decisions with the user. Each decision that would be expensive to reverse
+  becomes an ADR in `docs/careervault-adl.md` *before* the code that implements it (ADR-049).
 - Flip the slice's status to 🔨 on the plan doc's status board.
 
 Wait for the user to confirm scope and exit criteria before implementation begins.
