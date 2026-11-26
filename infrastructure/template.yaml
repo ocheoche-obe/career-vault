@@ -163,9 +163,9 @@ Parameters:
       (ADR-033). Parameterized so it can be calibrated against real entries without a code change.
 
 Conditions:
-  # Deletion Protection only in prod (arch §4.7.3 protects irreplaceable career history). In dev
-  # it would wedge the stack in ROLLBACK_FAILED whenever a create/update rolls back. PITR stays
-  # on everywhere — it's near-zero cost and does not block deletes.
+  # IsProd gates the billing alarms and SiteBucket retention. It no longer gates data protection:
+  # ADR-041 made the dev stack the real one, so the table, DataBucket and CognitoUserPool are
+  # protected in every environment (ADR-030 amendment 1, arch §4.7.3).
   IsProd: !Equals [!Ref Environment, prod]
   HasSettingsReservedConcurrency: !Not [!Equals [!Ref SettingsReservedConcurrency, -1]]
   HasChatReservedConcurrency: !Not [!Equals [!Ref ChatReservedConcurrency, -1]]
@@ -204,6 +204,17 @@ Resources:
   # ---------------------------------------------------------------------------
   CareerVaultTable:
     Type: AWS::DynamoDB::Table
+    # Every environment holds real career history (ADR-041), so the table is protected everywhere
+    # (ADR-030 amendment 1). Three separate guards, because each covers a different path:
+    #   DeletionPolicy: Retain        - `sam delete`, or the resource leaving the template
+    #   UpdateReplacePolicy: Retain   - a change that forces a new table; Retain alone does not
+    #                                   cover replacement, the old table would be deleted
+    #   DeletionProtectionEnabled     - any DeleteTable call, console or CLI, outside CloudFormation
+    # Cost of this: Retain also applies when a brand-new stack's first create rolls back, so the
+    # rollback completes but leaves the new table behind, and the next create collides on its name.
+    # An existing stack's update rollback never deletes the table, so routine deploys are unaffected.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub 'CareerVaultTable-${Environment}'
       BillingMode: PAY_PER_REQUEST
@@ -217,10 +228,11 @@ Resources:
           KeyType: HASH
         - AttributeName: SK
           KeyType: RANGE
-      # Career history is irreplaceable; both are near-zero cost (Section 4.7.3).
+      # Career history is irreplaceable; both are near-zero cost (Section 4.7.3). PITR is the
+      # recovery path for bad writes, which none of the guards above prevent.
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
-      DeletionProtectionEnabled: !If [IsProd, true, false]
+      DeletionProtectionEnabled: true
       # RESUMERUN# job/trace items self-expire 30 days after creation (§3.2.5 / ADR-037). Only items
       # that carry an `expires_at` epoch attribute are ever deleted; career entries have none.
       TimeToLiveSpecification:
@@ -242,8 +254,15 @@ Resources:
   # ---------------------------------------------------------------------------
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
+    # Protected in every environment for the same reason as the table (ADR-030 amendment 1). Every
+    # item's PK is USER#<sub>, and the sub is issued by this pool: a recreated pool gives the same
+    # person a new sub, which strands every retained item. Retaining the table without the pool
+    # would keep the data but lose the only key that reaches it.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       UserPoolName: !Sub 'careervault-${Environment}'
+      DeletionProtection: ACTIVE
       # Single-tenant MVP: the one user is created administratively (ADR-006 / ADR-025).
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
@@ -595,9 +614,11 @@ Resources:
   # ---------------------------------------------------------------------------
   DataBucket:
     Type: AWS::S3::Bucket
-    # Career uploads/outputs are user data — retain in prod, delete cleanly in dev (arch §4.7.3).
-    DeletionPolicy: !If [IsProd, Retain, Delete]
-    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    # Generated résumés are user data and every environment is real (ADR-041), so retain in every
+    # environment (ADR-030 amendment 1, arch §4.7.3). A retained bucket keeps its name, so a later
+    # fresh create of the same stack fails until the old bucket is emptied and deleted by hand.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub 'careervault-data-${Environment}-${AWS::AccountId}'
       PublicAccessBlockConfiguration:
