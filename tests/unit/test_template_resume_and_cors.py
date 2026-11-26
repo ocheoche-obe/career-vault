@@ -19,6 +19,17 @@ def test_the_resume_worker_is_never_retried(resources):
     assert config["MaximumRetryAttempts"] == 0
 
 
+def test_a_throttled_worker_event_expires_before_the_poll_calls_the_run_lost(resources):
+    # Throttles are requeued for up to 6h regardless of MaximumRetryAttempts. The event must die
+    # before the poll's verdict, or an unpolled run can be claimed and billed hours later.
+    from helpers import load_handler
+
+    handler = load_handler("resume_agent_handler_template", "resume_agent")
+    verdict_after = handler._WORKER_TIMEOUT_SECONDS + handler._WORKER_GRACE_SECONDS
+    config = resources["ResumeAgentFunction"]["Properties"]["EventInvokeConfig"]
+    assert 60 <= config["MaximumEventAgeInSeconds"] < verdict_after
+
+
 def test_the_resume_agent_can_make_its_conditional_updates(resources):
     statements = resources["ResumeAgentFunction"]["Properties"]["Policies"][0]["Statement"]
     table_actions = next(

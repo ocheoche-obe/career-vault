@@ -774,8 +774,15 @@ Resources:
       # on an exception, and the status poll fails a run that has outlived its worker. The claim in
       # the worker (ddb_helpers.claim_resume_run) covers the duplicate delivery that async
       # invocation can still produce with retries off.
+      #
+      # MaximumRetryAttempts covers function errors only. A *throttled* event (reserved concurrency
+      # is 2, shared with the status polls) is requeued for up to 6 hours unless capped here, and a
+      # run nobody polls stays `pending`, so a late event would claim it and spend a full Sonnet run
+      # hours after the user gave up. 300s drops the event before the poll's 315s verdict
+      # (handler._WORKER_TIMEOUT_SECONDS + _WORKER_GRACE_SECONDS); age counts from submission.
       EventInvokeConfig:
         MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 300
       ReservedConcurrentExecutions: !If
         - HasResumeAgentReservedConcurrency
         - !Ref ResumeAgentReservedConcurrency

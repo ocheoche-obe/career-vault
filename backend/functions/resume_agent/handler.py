@@ -23,7 +23,8 @@ outlive the S3 objects it pointed at, and that coupling disappears once a durabl
 
 The agent is read-only over the user's data (§3.2.7): it reads ENTRY/PROFILE and calls Bedrock; the
 only writes are the résumé artifact + the RESUMERUN record. IAM: ``dynamodb:Query`` + ``GetItem`` +
-``PutItem`` + ``UpdateItem`` (the worker's claim and the conditional fail of an unfinished run); ``s3:PutObject`` + ``GetObject`` on ``resumes/*``; ``bedrock:InvokeModel`` on the
+``PutItem`` + ``UpdateItem`` (the worker's claim and the conditional fail of an unfinished run);
+``s3:PutObject`` + ``GetObject`` on ``resumes/*``; ``bedrock:InvokeModel`` on the
 Sonnet + Haiku profiles (+ regional foundation-model ARNs, ADR-031/036) and the Titan ARN;
 ``lambda:InvokeFunction`` on its own ARN (ADR-037).
 """
