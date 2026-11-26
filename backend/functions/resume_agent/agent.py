@@ -738,7 +738,7 @@ def run_agent(
         if on_draft is not None:
             try:
                 on_draft(draft)
-            except Exception:  # pragma: no cover - progress signal, never the run's problem
+            except Exception:  # a progress signal, never the run's problem
                 logger.exception("on_draft callback failed; continuing the run")
         document, verdict = _critique_revise(run, requirements, retrieved, draft)
         run.status = "ok"

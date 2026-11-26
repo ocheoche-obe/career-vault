@@ -132,10 +132,10 @@ that costs money is a suite people avoid, and an avoided test is worse than an a
 still implies coverage ([ADR-042](docs/careervault-adl.md)).
 
 ```bash
-make test                                   # 376 backend unit tests             $0
-cd frontend && npm test                     # 23 component tests (Vitest + RTL)  $0
+make test                                   # backend unit tests                 $0
+cd frontend && npm test                     # component tests (Vitest + RTL)     $0
 
-./scripts/run-integration.sh                # 56 tests: DynamoDB Local + deployed dev  $0
+./scripts/run-integration.sh                # DynamoDB Local + deployed dev      $0
 ./scripts/run-integration.sh --bedrock      # + real Haiku round-trips           ~$0.01
 ./scripts/run-integration.sh --expensive    # + a full Sonnet résumé run         ~$0.11
 ./scripts/run-integration.sh --all          # everything
@@ -144,7 +144,8 @@ cd frontend && npm test                     # 23 component tests (Vitest + RTL) 
 The integration runner starts DynamoDB Local for you. Anything unavailable — Docker down, expired
 SSO, wrong AWS account — **skips with a reason** rather than failing.
 
-Backend unit tests and frontend tests both gate every pull request in CI.
+Backend unit tests and frontend tests both gate every pull request in CI. Each suite prints its own
+test count; this README deliberately does not repeat them, because copied counts drift.
 
 ---
 
