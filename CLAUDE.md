@@ -123,7 +123,7 @@ retrieval, drafting and revision. A résumé run costs roughly $0.08 to $0.35 an
   and it removes S3 objects first, then the record.
 
 **Frontend**
-- Every API call goes through `apiFetch` in `lib/api.ts`, which sends a 401 to the sign-in screen
+- Every API call goes through `apiFetch` in `frontend/src/lib/api.ts`, which sends a 401 to sign-in
   (B-041). Gateway error responses carry CORS headers so the browser can read that 401.
 - The theme is applied by an inline script in `index.html` before first paint. Keep it inline and
   synchronous.
