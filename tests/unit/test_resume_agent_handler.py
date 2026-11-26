@@ -103,8 +103,9 @@ def stubs(monkeypatch):
         state["claims"].append((uid, rid, now))
         return state["claim_wins"]
 
-    def _fail_unfinished(uid, rid, detail, now):
+    def _fail_unfinished(uid, rid, detail, now, *, claimed_at):
         state["failed_unfinished"].append((rid, detail))
+        state.setdefault("fail_claims", []).append(claimed_at)
         return state["fail_wins"]
 
     monkeypatch.setattr(h, "claim_resume_run", _claim)
@@ -741,6 +742,8 @@ def test_an_unexpected_crash_fails_the_run_and_still_raises(stubs, monkeypatch):
         h.handler(_worker_event(), FakeLambdaContext())
 
     assert stubs["failed_unfinished"] == [("01JRUN", "worker_error")]
+    # Only this worker's own claim can be failed.
+    assert stubs["fail_claims"] == [stubs["claims"][0][2]]
 
 
 def test_every_worker_write_keeps_the_claim(stubs, monkeypatch):
@@ -776,6 +779,8 @@ def test_poll_fails_a_run_that_outlived_its_worker(stubs, monkeypatch, status):
     assert body["status"] == "failed"
     assert body["message"] == h._FAILURE_MESSAGES["worker_lost"]
     assert stubs["failed_unfinished"] == [("01JRUN", "worker_lost")]
+    # The fail is conditioned on the claim this read saw, not on status alone.
+    assert stubs["fail_claims"] == [item["worker_claimed_at"]]
 
 
 def test_poll_fails_a_run_whose_worker_never_started(stubs, monkeypatch):
@@ -808,4 +813,17 @@ def test_poll_reports_what_the_worker_wrote_when_it_finished_first(stubs, monkey
     body = body_of(h.handler(_get(), FakeLambdaContext()))
 
     assert body["status"] == "completed"
+    assert len(stubs["failed_unfinished"]) == 1
+
+
+def test_poll_does_not_retry_the_fail_when_the_reread_still_looks_dead(stubs, monkeypatch):
+    # A stale re-read must not turn into a read-write-read loop: one re-read, then report it.
+    stale = {"status": "pending", "created_at": _iso_ago(400)}
+    monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: stale)
+    stubs["fail_wins"] = False
+
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+
+    assert body["status"] == "pending"
+    assert len(stubs["failed_unfinished"]) == 1
 

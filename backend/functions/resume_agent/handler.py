@@ -361,7 +361,7 @@ def _run_worker(payload: dict) -> dict:
         return _run_claimed_worker(payload, claimed_at)
     except Exception:
         logger.exception("Résumé worker crashed")
-        if fail_unfinished_resume_run(user_id, run_id, "worker_error", utcnow_iso()):
+        if fail_unfinished_resume_run(user_id, run_id, "worker_error", utcnow_iso(), claimed_at=claimed_at):
             metrics.add_metric(name="ResumeJobFailed", unit=MetricUnit.Count, value=1)
         raise
 
@@ -622,7 +622,7 @@ def _failed_payload(run_id: str, created_at: str | None, detail: str | None) -> 
     }
 
 
-def _status(user_id: str, run_id: str) -> dict:
+def _status(user_id: str, run_id: str, *, may_fail_lost_run: bool = True) -> dict:
     item = get_resume_run(user_id, run_id)
     if item is None:
         # The trace has aged out (30-day TTL) but the résumé itself has not — ADR-046 removed the
@@ -641,16 +641,23 @@ def _status(user_id: str, run_id: str) -> dict:
     if status == "failed":
         return _response(200, _failed_payload(run_id, created_at, item.get("detail")))
 
-    if status in ("pending", "draft_ready") and _worker_is_dead(item, datetime.now(tz=UTC)):
+    if (
+        may_fail_lost_run
+        and status in ("pending", "draft_ready")
+        and _worker_is_dead(item, datetime.now(tz=UTC))
+    ):
         # Retries are off, so a worker that timed out or ran out of memory wrote nothing and nothing
-        # will run it again. Without this the run would read `pending` for 30 days.
-        if fail_unfinished_resume_run(user_id, run_id, "worker_lost", utcnow_iso()):
+        # will run it again. Without this the run would read `pending` for 30 days. The write names
+        # the claim this read saw, so a worker that claimed the run since then is never failed.
+        if fail_unfinished_resume_run(
+            user_id, run_id, "worker_lost", utcnow_iso(), claimed_at=item.get("worker_claimed_at")
+        ):
             metrics.add_metric(name="ResumeJobLost", unit=MetricUnit.Count, value=1)
             logger.warning("Résumé run outlived its worker; marked failed", extra={"run_id": run_id})
             return _response(200, _failed_payload(run_id, created_at, "worker_lost"))
-        # The condition failed, so the worker finished between our read and our write. Report what
-        # it actually wrote rather than guessing.
-        return _status(user_id, run_id)
+        # The condition failed: a worker finished, or claimed the run, between our read and our
+        # write. Report what is there now, once, without trying to fail it again.
+        return _status(user_id, run_id, may_fail_lost_run=False)
 
     if status == "draft_ready":
         # Non-terminal. The client renders this and keeps polling; `completed` replaces it in place.

@@ -259,7 +259,9 @@ class TestResumeRunClaim:
     def test_an_unfinished_run_is_failed(self, table, user_id, status):
         self.seed_run(table, user_id, status=status, worker_claimed_at="2026-11-25T20:00:01Z")
 
-        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z") is True
+        assert fail_unfinished_resume_run(
+            user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z", claimed_at="2026-11-25T20:00:01Z"
+        ) is True
 
         item = self.stored(table, user_id)
         assert (item["status"], item["detail"]) == ("failed", "worker_lost")
@@ -270,10 +272,30 @@ class TestResumeRunClaim:
     def test_a_finished_run_is_never_overwritten(self, table, user_id, status):
         self.seed_run(table, user_id, status=status, detail="kept")
 
-        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_error", "2026-11-25T20:06:00Z") is False
+        assert fail_unfinished_resume_run(
+            user_id, "01JRUN", "worker_error", "2026-11-25T20:06:00Z", claimed_at=None
+        ) is False
         assert (self.stored(table, user_id)["status"], self.stored(table, user_id)["detail"]) == (status, "kept")
 
     def test_failing_an_expired_trace_creates_nothing(self, table, user_id):
-        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z") is False
+        assert fail_unfinished_resume_run(
+            user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z", claimed_at=None
+        ) is False
         assert self.stored(table, user_id) is None
+
+    def test_a_run_claimed_after_the_poll_read_it_is_not_failed(self, table, user_id):
+        # The poll read an unclaimed run and judged it lost; a throttled event then claims it.
+        self.seed_run(table, user_id)
+        assert claim_resume_run(user_id, "01JRUN", "2026-11-25T20:05:59Z") is True
+
+        assert fail_unfinished_resume_run(
+            user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z", claimed_at=None
+        ) is False
+        assert self.stored(table, user_id)["status"] == "pending"
+
+    def test_a_different_claim_than_the_one_seen_is_not_failed(self, table, user_id):
+        self.seed_run(table, user_id, worker_claimed_at="2026-11-25T20:05:59Z")
+        assert fail_unfinished_resume_run(
+            user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z", claimed_at="2026-11-25T20:00:01Z"
+        ) is False
 

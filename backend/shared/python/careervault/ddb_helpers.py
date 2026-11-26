@@ -483,21 +483,41 @@ def claim_resume_run(user_id: str, run_id: str, now_iso: str) -> bool:
         raise
 
 
-def fail_unfinished_resume_run(user_id: str, run_id: str, detail: str, now_iso: str) -> bool:
-    """Mark a run ``failed`` only if it has not already finished. ``True`` if this call failed it.
+def fail_unfinished_resume_run(
+    user_id: str, run_id: str, detail: str, now_iso: str, *, claimed_at: str | None
+) -> bool:
+    """Mark a run ``failed`` only if it is unfinished *and* still owned as the caller saw it.
+
+    ``True`` if this call failed it.
 
     Used where the worker cannot report its own end: a crash the worker caught too late to finish
     cleanly, and the status poll noticing a worker that must have died (timeout, out of memory, or
-    an event that never ran). The condition is what makes both safe. Neither caller knows whether
-    a ``completed`` write landed a moment earlier, and an unconditional write would turn a finished
-    résumé into a failure. The item's ``attribute_exists(SK)`` half stops this from creating a stub
-    item when the trace has already expired.
+    an event that never ran). Two conditions make that safe:
+
+    - ``status IN (pending, draft_ready)``: neither caller knows whether a ``completed`` write
+      landed a moment earlier, and an unconditional write would turn a finished résumé into a
+      failure.
+    - ``worker_claimed_at`` equals ``claimed_at`` (or is absent when ``claimed_at`` is ``None``):
+      the poll decides a run is dead from what it *read*. A throttled event can claim the run in
+      the gap between that read and this write, and failing it then would tell the user ``failed``
+      while a live worker spends a full Sonnet run and later overwrites the status. Requiring the
+      claim the caller saw means only the worker that was judged dead can be failed.
+
+    ``attribute_exists(SK)`` stops this from creating a stub item when the trace has expired.
     """
+    if claimed_at is None:
+        claim_condition = "attribute_not_exists(worker_claimed_at)"
+        values: dict[str, Any] = {}
+    else:
+        claim_condition = "worker_claimed_at = :claimed_at"
+        values = {":claimed_at": claimed_at}
     try:
         get_table().update_item(
             Key={"PK": pk_for_user(user_id), "SK": f"RESUMERUN#{run_id}"},
             UpdateExpression="SET #s = :failed, detail = :detail, updated_at = :now",
-            ConditionExpression="attribute_exists(SK) AND #s IN (:pending, :draft_ready)",
+            ConditionExpression=(
+                f"attribute_exists(SK) AND #s IN (:pending, :draft_ready) AND {claim_condition}"
+            ),
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={
                 ":failed": "failed",
@@ -505,6 +525,7 @@ def fail_unfinished_resume_run(user_id: str, run_id: str, detail: str, now_iso: 
                 ":now": now_iso,
                 ":pending": "pending",
                 ":draft_ready": "draft_ready",
+                **values,
             },
         )
         return True
