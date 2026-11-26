@@ -44,8 +44,10 @@ const POLL_INTERVAL_MS = 3_000;
 
 /**
  * When to stop watching. The agent self-terminates at a 240s wall-clock budget and the Lambda is
- * capped at 300s, so anything past ~330s means the worker died without writing a terminal status —
- * the item would stay `pending` forever and polling it would never end.
+ * capped at 300s. A worker that dies without writing a terminal status is reported by the server:
+ * the poll marks the run `failed` once it is 315s past the worker's claim, which lands before this
+ * ceiling in the normal case. This is the fallback for when that verdict never arrives (the claim
+ * landed late, or the network is down), so polling can never run forever.
  */
 const POLL_CEILING_MS = 330_000;
 

@@ -160,3 +160,31 @@ def text_response(text: str = "hello") -> dict:
 def body_of(response: dict) -> dict:
     """Parse a Lambda proxy response body."""
     return json.loads(response["body"])
+
+
+def load_template_resources() -> dict:
+    """``Resources`` from infrastructure/template.yaml, with CloudFormation short-form tags kept.
+
+    ``!Ref``/``!If``/``!Sub`` become ``{"!Tag": value}`` dicts, so a test can tell a literal from a
+    conditional: a guard put back behind ``!If [IsProd, ...]`` no longer equals the literal.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    class _CfnLoader(yaml.SafeLoader):
+        pass
+
+    def _tagged(loader, tag_suffix, node):
+        if isinstance(node, yaml.ScalarNode):
+            value = loader.construct_scalar(node)
+        elif isinstance(node, yaml.SequenceNode):
+            value = loader.construct_sequence(node, deep=True)
+        else:
+            value = loader.construct_mapping(node, deep=True)
+        return {f"!{tag_suffix}": value}
+
+    _CfnLoader.add_multi_constructor("!", _tagged)
+    template = Path(__file__).resolve().parents[1] / "infrastructure" / "template.yaml"
+    return yaml.load(template.read_text(encoding="utf-8"), Loader=_CfnLoader)["Resources"]
+

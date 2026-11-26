@@ -6,34 +6,13 @@ that takes the only copy of the data with it. These tests pin the guards on the 
 hold or key the user's data, and pin that they are unconditional, not gated on IsProd again.
 """
 
-from pathlib import Path
-
 import pytest
-import yaml
-
-TEMPLATE = Path(__file__).resolve().parents[2] / "infrastructure" / "template.yaml"
-
-
-class _CfnLoader(yaml.SafeLoader):
-    """SafeLoader that keeps CloudFormation short-form tags (!Ref, !If, ...) as tagged values."""
-
-
-def _tagged(loader, tag_suffix, node):
-    if isinstance(node, yaml.ScalarNode):
-        value = loader.construct_scalar(node)
-    elif isinstance(node, yaml.SequenceNode):
-        value = loader.construct_sequence(node, deep=True)
-    else:
-        value = loader.construct_mapping(node, deep=True)
-    return {f"!{tag_suffix}": value}
-
-
-_CfnLoader.add_multi_constructor("!", _tagged)
+from helpers import load_template_resources
 
 
 @pytest.fixture(scope="module")
 def resources():
-    return yaml.load(TEMPLATE.read_text(encoding="utf-8"), Loader=_CfnLoader)["Resources"]
+    return load_template_resources()
 
 
 @pytest.mark.parametrize("logical_id", ["CareerVaultTable", "DataBucket", "CognitoUserPool"])

@@ -9,6 +9,32 @@
 
 import { apiBaseUrl } from "../auth/oidcConfig";
 
+/**
+ * Called when the API answers 401: the Cognito authorizer rejected the ID token, which in practice
+ * means the session expired while the tab was open (B-041). App registers a handler that clears the
+ * local session and shows the sign-in screen.
+ *
+ * This only works because the API's gateway responses now carry CORS headers. Before that, the
+ * authorizer's 401 had no `Access-Control-Allow-Origin`, so the browser hid it behind an opaque
+ * "Failed to fetch" and this code never saw a status at all.
+ */
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+/**
+ * `fetch` for CareerVault's own API. Every call to `apiBaseUrl` goes through here so a 401 is
+ * noticed in one place; the caller still gets the response and maps it as before. The presigned
+ * S3 upload deliberately does not, since an S3 error there says nothing about the session.
+ */
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.status === 401) unauthorizedHandler?.();
+  return res;
+}
+
 /** A proposed entry: the typed fields vary by entry_type; entry_id travels with it. */
 export type EntryCandidate = {
   entry_type: string;
@@ -80,7 +106,7 @@ export async function postChat(
   idToken: string,
   body: { message: string; session_id?: string; client_message_id: string },
 ): Promise<ChatResponse> {
-  const res = await fetch(`${apiBaseUrl}/chat`, {
+  const res = await apiFetch(`${apiBaseUrl}/chat`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify(body),
@@ -99,7 +125,7 @@ export async function confirmEntry(
   opts: { acknowledge?: boolean } = {},
 ): Promise<ConfirmResult> {
   const body = opts.acknowledge ? { ...candidate, acknowledge_duplicate: true } : candidate;
-  const res = await fetch(`${apiBaseUrl}/entries`, {
+  const res = await apiFetch(`${apiBaseUrl}/entries`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify(body),
@@ -119,7 +145,7 @@ export async function confirmEntry(
 }
 
 export async function listEntries(idToken: string): Promise<Entry[]> {
-  const res = await fetch(`${apiBaseUrl}/entries`, { headers: authHeaders(idToken) });
+  const res = await apiFetch(`${apiBaseUrl}/entries`, { headers: authHeaders(idToken) });
   if (!res.ok) throw new Error(`GET /entries → ${res.status}`);
   const b = await jsonOf(res);
   return (b.entries as Entry[]) ?? [];
@@ -130,7 +156,7 @@ export async function updateEntry(
   entryId: string,
   fields: Record<string, unknown>,
 ): Promise<UpdateResult> {
-  const res = await fetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
+  const res = await apiFetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
     method: "PUT",
     headers: authHeaders(idToken),
     body: JSON.stringify(fields),
@@ -144,7 +170,7 @@ export async function updateEntry(
 
 /** Hard delete (ADR-027). Returns true on success; a 404 (already gone) also resolves the intent. */
 export async function deleteEntry(idToken: string, entryId: string): Promise<boolean> {
-  const res = await fetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
+  const res = await apiFetch(`${apiBaseUrl}/entries/${encodeURIComponent(entryId)}`, {
     method: "DELETE",
     headers: authHeaders(idToken),
   });
@@ -178,7 +204,7 @@ export async function presignUpload(
   idToken: string,
   body: { filename: string; content_type: string },
 ): Promise<PresignedUpload> {
-  const res = await fetch(`${apiBaseUrl}/uploads/presign`, {
+  const res = await apiFetch(`${apiBaseUrl}/uploads/presign`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify(body),
@@ -199,7 +225,7 @@ export async function putFileToS3(upload: PresignedUpload, file: File): Promise<
 }
 
 export async function parseUpload(idToken: string, key: string): Promise<ParseResult> {
-  const res = await fetch(`${apiBaseUrl}/uploads/parse`, {
+  const res = await apiFetch(`${apiBaseUrl}/uploads/parse`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify({ key }),
@@ -292,7 +318,7 @@ export type ResumeSummary = {
  * "empty" from "broken" via the thrown-free `ok` flag.
  */
 export async function listResumes(idToken: string): Promise<{ ok: boolean; resumes: ResumeSummary[] }> {
-  const res = await fetch(`${apiBaseUrl}/resumes`, { headers: authHeaders(idToken) });
+  const res = await apiFetch(`${apiBaseUrl}/resumes`, { headers: authHeaders(idToken) });
   if (!res.ok) return { ok: false, resumes: [] };
   const b = await jsonOf(res);
   const rows = Array.isArray(b.resumes) ? (b.resumes as Record<string, unknown>[]) : [];
@@ -315,7 +341,7 @@ export async function listResumes(idToken: string): Promise<{ ok: boolean; resum
  * for the résumé to be gone, and it is. Racing two deletes should not surface an error.
  */
 export async function deleteResume(idToken: string, runId: string): Promise<boolean> {
-  const res = await fetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
+  const res = await apiFetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
     method: "DELETE",
     headers: authHeaders(idToken),
   });
@@ -323,7 +349,7 @@ export async function deleteResume(idToken: string, runId: string): Promise<bool
 }
 
 export async function startResumeRun(idToken: string, target: string): Promise<StartRunResult> {
-  const res = await fetch(`${apiBaseUrl}/resumes/generate`, {
+  const res = await apiFetch(`${apiBaseUrl}/resumes/generate`, {
     method: "POST",
     headers: authHeaders(idToken),
     body: JSON.stringify({ target }),
@@ -337,7 +363,7 @@ export async function startResumeRun(idToken: string, target: string): Promise<S
 }
 
 export async function getResumeRun(idToken: string, runId: string): Promise<RunStatus> {
-  const res = await fetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
+  const res = await apiFetch(`${apiBaseUrl}/resumes/${encodeURIComponent(runId)}`, {
     headers: authHeaders(idToken),
   });
   if (res.status === 404) return { status: "notfound", runId };
@@ -425,13 +451,13 @@ export type SaveProfileResult =
   | { status: "failed"; message: string };
 
 export async function getSettings(idToken: string): Promise<Profile> {
-  const res = await fetch(`${apiBaseUrl}/settings`, { headers: authHeaders(idToken) });
+  const res = await apiFetch(`${apiBaseUrl}/settings`, { headers: authHeaders(idToken) });
   if (!res.ok) throw new Error(`GET /settings → ${res.status}`);
   return (await res.json()) as Profile;
 }
 
 export async function putSettings(idToken: string, body: ProfileUpdate): Promise<SaveProfileResult> {
-  const res = await fetch(`${apiBaseUrl}/settings`, {
+  const res = await apiFetch(`${apiBaseUrl}/settings`, {
     method: "PUT",
     headers: authHeaders(idToken),
     body: JSON.stringify(body),

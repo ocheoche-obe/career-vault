@@ -455,6 +455,65 @@ def get_resume_run(user_id: str, run_id: str) -> dict[str, Any] | None:
     return response.get("Item")
 
 
+def claim_resume_run(user_id: str, run_id: str, now_iso: str) -> bool:
+    """Claim a pending run for one worker. ``True`` if claimed, ``False`` if another delivery owns it.
+
+    Lambda's async invocation is at-least-once even with retries off, so the same worker payload
+    can arrive twice. Each delivery would run the Sonnet agent at full cost. This conditional write
+    runs before any Bedrock call, so the second delivery loses here instead.
+
+    The condition needs both halves. ``status = pending`` alone would let a duplicate in while the
+    first worker is still running, because the item stays ``pending`` until the draft lands;
+    ``attribute_not_exists(worker_claimed_at)`` is what closes that window. A run the status poll
+    has already declared dead (:func:`fail_unfinished_resume_run`) is no longer ``pending``, so a
+    worker that starts late refuses it rather than spending on a run the user was told failed.
+    """
+    try:
+        get_table().update_item(
+            Key={"PK": pk_for_user(user_id), "SK": f"RESUMERUN#{run_id}"},
+            UpdateExpression="SET worker_claimed_at = :now, updated_at = :now",
+            ConditionExpression="#s = :pending AND attribute_not_exists(worker_claimed_at)",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":now": now_iso, ":pending": "pending"},
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
+def fail_unfinished_resume_run(user_id: str, run_id: str, detail: str, now_iso: str) -> bool:
+    """Mark a run ``failed`` only if it has not already finished. ``True`` if this call failed it.
+
+    Used where the worker cannot report its own end: a crash the worker caught too late to finish
+    cleanly, and the status poll noticing a worker that must have died (timeout, out of memory, or
+    an event that never ran). The condition is what makes both safe. Neither caller knows whether
+    a ``completed`` write landed a moment earlier, and an unconditional write would turn a finished
+    résumé into a failure. The item's ``attribute_exists(SK)`` half stops this from creating a stub
+    item when the trace has already expired.
+    """
+    try:
+        get_table().update_item(
+            Key={"PK": pk_for_user(user_id), "SK": f"RESUMERUN#{run_id}"},
+            UpdateExpression="SET #s = :failed, detail = :detail, updated_at = :now",
+            ConditionExpression="attribute_exists(SK) AND #s IN (:pending, :draft_ready)",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={
+                ":failed": "failed",
+                ":detail": detail,
+                ":now": now_iso,
+                ":pending": "pending",
+                ":draft_ready": "draft_ready",
+            },
+        )
+        return True
+    except ClientError as exc:
+        if exc.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+            return False
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Résumé history — RESUME# prefix (resume_agent only, ADR-046)
 #

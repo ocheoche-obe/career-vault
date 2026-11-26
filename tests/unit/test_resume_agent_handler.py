@@ -91,6 +91,24 @@ def stubs(monkeypatch):
             state.setdefault("presigned", []).append(Params)
             return f"https://s3.example/{Params['Key']}"
 
+    # The worker's claim (default: this delivery wins) and the conditional fail. `fail_wins` stands
+    # in for DynamoDB's condition; the condition itself is proven against DynamoDB Local in
+    # tests/integration/local/test_conditional_writes.py.
+    state["claims"] = []
+    state["claim_wins"] = True
+    state["failed_unfinished"] = []
+    state["fail_wins"] = True
+
+    def _claim(uid, rid, now):
+        state["claims"].append((uid, rid, now))
+        return state["claim_wins"]
+
+    def _fail_unfinished(uid, rid, detail, now):
+        state["failed_unfinished"].append((rid, detail))
+        return state["fail_wins"]
+
+    monkeypatch.setattr(h, "claim_resume_run", _claim)
+    monkeypatch.setattr(h, "fail_unfinished_resume_run", _fail_unfinished)
     monkeypatch.setattr(h, "_lambda", lambda: _Lambda())
     monkeypatch.setattr(h, "_s3", lambda: _S3())
     return state
@@ -685,3 +703,109 @@ def test_the_worker_publishes_the_draft_before_critique_and_writes_no_record(stu
     # exist (ADR-046), and this one has not been critiqued yet.
     assert stubs["records"] == []
     assert stubs["finalized"] == []
+
+
+# --- one worker per run, and a crash ends in `failed` (async retries off) ------------------------
+
+def test_a_duplicate_delivery_exits_before_any_bedrock_call(stubs, monkeypatch):
+    calls = []
+    monkeypatch.setattr(h.agent, "run_agent", lambda **kw: calls.append("agent") or _ok_result())
+    stubs["claim_wins"] = False
+
+    result = h.handler(_worker_event(), FakeLambdaContext())
+
+    assert result == {"status": "skipped", "run_id": "01JRUN"}
+    assert calls == []
+    assert stubs["finalized"] == [] and stubs["overwritten"] == [] and stubs["records"] == []
+
+
+def test_the_worker_claims_the_run_before_running_the_agent(stubs, monkeypatch):
+    order = []
+    stubs_claim = h.claim_resume_run
+    monkeypatch.setattr(h, "claim_resume_run", lambda *a: order.append("claim") or stubs_claim(*a))
+    monkeypatch.setattr(h.agent, "run_agent", lambda **kw: order.append("agent") or _ok_result())
+
+    h.handler(_worker_event(), FakeLambdaContext())
+
+    assert order == ["claim", "agent"]
+    assert stubs["claims"][0][:2] == ("user-sub-1", "01JRUN")
+
+
+def test_an_unexpected_crash_fails_the_run_and_still_raises(stubs, monkeypatch):
+    def _boom(**kw):
+        raise KeyError("a bug nobody named")
+
+    monkeypatch.setattr(h.agent, "run_agent", _boom)
+
+    with pytest.raises(KeyError):
+        h.handler(_worker_event(), FakeLambdaContext())
+
+    assert stubs["failed_unfinished"] == [("01JRUN", "worker_error")]
+
+
+def test_every_worker_write_keeps_the_claim(stubs, monkeypatch):
+    class _Draft:
+        def model_dump(self, **kw):
+            return {"summary": "draft"}
+
+    def _agent(**kw):
+        kw["on_draft"](_Draft())
+        return _ok_result()
+
+    monkeypatch.setattr(h.agent, "run_agent", _agent)
+    h.handler(_worker_event(), FakeLambdaContext())
+
+    claimed_at = stubs["claims"][0][2]
+    assert stubs["overwritten"][0]["worker_claimed_at"] == claimed_at
+    assert stubs["finalized"][0]["worker_claimed_at"] == claimed_at
+
+
+def _iso_ago(seconds):
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(tz=UTC) - timedelta(seconds=seconds)).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+@pytest.mark.parametrize("status", ["pending", "draft_ready"])
+def test_poll_fails_a_run_that_outlived_its_worker(stubs, monkeypatch, status):
+    item = {"status": status, "created_at": _iso_ago(400), "worker_claimed_at": _iso_ago(399)}
+    monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: item)
+
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+
+    assert body["status"] == "failed"
+    assert body["message"] == h._FAILURE_MESSAGES["worker_lost"]
+    assert stubs["failed_unfinished"] == [("01JRUN", "worker_lost")]
+
+
+def test_poll_fails_a_run_whose_worker_never_started(stubs, monkeypatch):
+    monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: {"status": "pending", "created_at": _iso_ago(400)})
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+    assert body["status"] == "failed"
+
+
+def test_poll_leaves_a_run_alone_while_its_worker_can_still_be_running(stubs, monkeypatch):
+    # Created long ago but claimed recently: the 300s clock starts at the claim, not the create.
+    item = {"status": "pending", "created_at": _iso_ago(400), "worker_claimed_at": _iso_ago(200)}
+    monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: item)
+
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+
+    assert body["status"] == "pending"
+    assert stubs["failed_unfinished"] == []
+
+
+def test_poll_reports_what_the_worker_wrote_when_it_finished_first(stubs, monkeypatch):
+    reads = iter(
+        [
+            {"status": "pending", "created_at": _iso_ago(400), "worker_claimed_at": _iso_ago(399)},
+            {"status": "completed", "created_at": "t", "html_key": "k.html", "pdf_key": "k.pdf"},
+        ]
+    )
+    monkeypatch.setattr(h, "get_resume_run", lambda uid, rid: next(reads))
+    stubs["fail_wins"] = False  # the condition lost: a `completed` write landed first
+
+    body = body_of(h.handler(_get(), FakeLambdaContext()))
+
+    assert body["status"] == "completed"
+

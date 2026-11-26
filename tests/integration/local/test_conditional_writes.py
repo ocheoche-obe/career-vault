@@ -14,6 +14,8 @@ import pytest
 
 from careervault.ddb_helpers import (
     claim_checkin_slot,
+    claim_resume_run,
+    fail_unfinished_resume_run,
     delete_entry,
     get_entry,
     put_conversation_message,
@@ -211,3 +213,67 @@ class TestCheckinSlotClaim:
         assert claim_checkin_slot(
             user_id, "2027-01-07T23:00:00Z", "2027-01-14T23:00:00Z", "2027-01-07T11:00:00Z"
         ) is True
+
+
+class TestResumeRunClaim:
+    """Async retries are off for the résumé worker; these conditions are what keep one run to one
+    Sonnet bill and make a dead worker end in `failed` (fresh-eyes review risk 2)."""
+
+    @staticmethod
+    def seed_run(table, user_id, status="pending", **extra):
+        table.put_item(
+            Item={
+                "PK": pk_for_user(user_id),
+                "SK": "RESUMERUN#01JRUN",
+                "run_id": "01JRUN",
+                "status": status,
+                "created_at": "2026-11-25T20:00:00Z",
+                **extra,
+            }
+        )
+
+    @staticmethod
+    def stored(table, user_id):
+        return table.get_item(Key={"PK": pk_for_user(user_id), "SK": "RESUMERUN#01JRUN"}).get("Item")
+
+    def test_the_first_delivery_claims_and_a_duplicate_loses(self, table, user_id):
+        self.seed_run(table, user_id)
+
+        first = claim_resume_run(user_id, "01JRUN", "2026-11-25T20:00:01Z")
+        # Same payload delivered again while the first worker is still running: still `pending`.
+        second = claim_resume_run(user_id, "01JRUN", "2026-11-25T20:00:02Z")
+
+        assert (first, second) == (True, False)
+        assert self.stored(table, user_id)["worker_claimed_at"] == "2026-11-25T20:00:01Z"
+
+    @pytest.mark.parametrize("status", ["draft_ready", "completed", "failed"])
+    def test_a_run_that_is_no_longer_pending_cannot_be_claimed(self, table, user_id, status):
+        self.seed_run(table, user_id, status=status)
+        assert claim_resume_run(user_id, "01JRUN", "2026-11-25T20:10:00Z") is False
+
+    def test_a_claim_never_creates_a_run(self, table, user_id):
+        assert claim_resume_run(user_id, "01JRUN", "2026-11-25T20:00:01Z") is False
+        assert self.stored(table, user_id) is None
+
+    @pytest.mark.parametrize("status", ["pending", "draft_ready"])
+    def test_an_unfinished_run_is_failed(self, table, user_id, status):
+        self.seed_run(table, user_id, status=status, worker_claimed_at="2026-11-25T20:00:01Z")
+
+        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z") is True
+
+        item = self.stored(table, user_id)
+        assert (item["status"], item["detail"]) == ("failed", "worker_lost")
+        # An update, not a replace: the rest of the trace survives.
+        assert item["created_at"] == "2026-11-25T20:00:00Z"
+
+    @pytest.mark.parametrize("status", ["completed", "failed"])
+    def test_a_finished_run_is_never_overwritten(self, table, user_id, status):
+        self.seed_run(table, user_id, status=status, detail="kept")
+
+        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_error", "2026-11-25T20:06:00Z") is False
+        assert (self.stored(table, user_id)["status"], self.stored(table, user_id)["detail"]) == (status, "kept")
+
+    def test_failing_an_expired_trace_creates_nothing(self, table, user_id):
+        assert fail_unfinished_resume_run(user_id, "01JRUN", "worker_lost", "2026-11-25T20:06:00Z") is False
+        assert self.stored(table, user_id) is None
+

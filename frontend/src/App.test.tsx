@@ -199,3 +199,42 @@ describe("shell accessibility (pre-redesign audit §A1, §A2, §A10)", () => {
     expect(screen.getByText("dev@example.com")).toBeInTheDocument();
   });
 });
+
+describe("an expired session (B-041)", () => {
+  /** Authed, until `removeUser` runs, exactly as react-oidc-context behaves. */
+  function authedUntilSignedOut() {
+    let signedIn = true;
+    const removeUser = vi.fn(async () => {
+      signedIn = false;
+    });
+    mockAuth.mockImplementation(() =>
+      signedIn ? { ...AUTHED, removeUser } : { isLoading: false, isAuthenticated: false, removeUser },
+    );
+    return removeUser;
+  }
+
+  it("clears the session and shows sign-in with the reason when the API answers 401", async () => {
+    const removeUser = authedUntilSignedOut();
+    // The shell's first call is GET /entries; the authorizer rejects the stale token.
+    stubFetch({ status: 401, body: { message: "Unauthorized" } });
+
+    render(<App />);
+
+    expect(await screen.findByText(/your session expired/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /sign in/i })).toBeInTheDocument();
+    expect(removeUser).toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Timeline" })).not.toBeInTheDocument();
+  });
+
+  it("does not sign out on a server error, which a new token would not fix", async () => {
+    const removeUser = authedUntilSignedOut();
+    stubFetch({ status: 500, body: { message: "boom" } });
+
+    render(<App />);
+
+    expect(await screen.findByText("home-view")).toBeInTheDocument();
+    expect(removeUser).not.toHaveBeenCalled();
+    expect(screen.queryByText(/your session expired/i)).not.toBeInTheDocument();
+  });
+});
+
